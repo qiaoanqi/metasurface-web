@@ -272,7 +272,6 @@ def get_engine():
 engine = get_engine()
 
 st.title("AI Metasurface Structural Color Design")
-st.caption("TiO2 ??? Lorentzian ?? + CIE 1931 ??????")
 st.caption("v3.0 | Spectral Pipeline | CIE 1931")
 st.caption("TiO₂ 纳米柱 Lorentzian 共振 + CIE 1931 光谱色彩管线")
 
