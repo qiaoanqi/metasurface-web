@@ -185,7 +185,17 @@ class MetaSurfaceColorEngine:
         self.d_min, self.d_max = 60.0, 320.0
         self.h_min, self.h_max = 120.0, 720.0
         self.p_min, self.p_max = 360.0, 560.0
-        self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
+        try:
+            self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
+        except Exception as e:
+            import traceback
+            st.error(f"Library build failed: {e}")
+            st.code(traceback.format_exc())
+            # Fallback: empty library
+            self.grid_params = np.zeros((0, 3))
+            self.grid_rgb = np.zeros((0, 3))
+            self.grid_lab = np.zeros((0, 3))
+            self.grid_xy = np.zeros((0, 2))
 
     def physical_color(self, param: MetaSurfaceParam) -> np.ndarray:
         wls = np.arange(380, 785, 5)  # 81 wavelength points
@@ -294,7 +304,12 @@ class MetaSurfaceColorEngine:
 def get_engine():
     return MetaSurfaceColorEngine()
 
-engine = get_engine()
+try:
+    engine = get_engine()
+except Exception as e:
+    st.error(f"Engine init failed: {e}")
+    import traceback; st.code(traceback.format_exc())
+    st.stop()
 
 st.title("AI Metasurface Structural Color Design")
 st.caption("v3.0 | Spectral Pipeline | CIE 1931")
