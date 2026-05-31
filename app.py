@@ -330,9 +330,15 @@ with st.sidebar:
     st.divider()
     st.header('📏 纳米柱尺寸')
 
-    diameter = st.slider('直径 D (nm)', 60.0, 320.0, 200.0, 0.5, key='slider_d')
-    height = st.slider('高度 H (nm)', 120.0, 720.0, 400.0, 0.5, key='slider_h')
+    if 'd_val' not in st.session_state:
+        st.session_state.d_val = 200.0
+    if 'h_val' not in st.session_state:
+        st.session_state.h_val = 400.0
+    diameter = st.slider('直径 D (nm)', 60.0, 320.0, value=st.session_state.d_val, step=0.5)
+    height = st.slider('高度 H (nm)', 120.0, 720.0, value=st.session_state.h_val, step=0.5)
     period = st.slider('周期 P (nm)', 360.0, 560.0, 420.0, 0.5)
+    st.session_state.d_val = diameter
+    st.session_state.h_val = height
 
     if diameter > period:
         st.warning('⚠️ D > P：纳米柱会重叠，请调整')
@@ -348,8 +354,8 @@ with st.sidebar:
         with cols[i % 4]:
             if st.button(name, key=f'preset_{name}', use_container_width=True,
                          help=f'D={d_val}nm H={h_val}nm'):
-                st.session_state.slider_d = d_val
-                st.session_state.slider_h = h_val
+                st.session_state.d_val = d_val
+                st.session_state.h_val = h_val
                 st.rerun()
 
 
