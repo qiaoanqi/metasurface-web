@@ -587,7 +587,7 @@ with tab5:
         ax_cie.grid(True, alpha=0.2)
         fig_cie.tight_layout()
         st.pyplot(fig_cie)
-        plt.close(fig_cie)
+        _get_plt().close(fig_cie)
 st.sidebar.markdown("---")
 st.sidebar.caption("AI Metasurface Color Design v2.0 (Web)")
 st.sidebar.caption("Physics: Lorentzian Resonance + CIE 1931 Pipeline")
