@@ -240,11 +240,11 @@ class MetaSurfaceColorEngine:
         theta = param.angle_deg * 3.14159265 / 180.0
         sin2 = np.sin(theta)**2
         if param.polarization.startswith("TE"):
-            angle_shift = -90 * sin2
-            amp_angle = 1.0 - 0.30 * sin2
+            angle_shift = -45 * sin2
+            amp_angle = 1.0 - 0.08 * sin2
         else:
-            angle_shift = +60 * sin2
-            amp_angle = 1.0 - 0.50 * sin2
+            angle_shift = -18 * sin2
+            amp_angle = 1.0 - 0.20 * sin2
 
         # Single dominant Lorentzian-like resonance
         amp = 1.0 / (1.0 + ((wl_nm - (lam_peak + angle_shift))/sigma)**2)
