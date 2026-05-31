@@ -334,11 +334,41 @@ with st.sidebar:
         st.session_state.d_val = 200.0
     if 'h_val' not in st.session_state:
         st.session_state.h_val = 400.0
-    diameter = st.slider('直径 D (nm)', 60.0, 320.0, st.session_state.d_val, 0.5)
-    height = st.slider('高度 H (nm)', 120.0, 720.0, st.session_state.h_val, 0.5)
-    period = st.slider('周期 P (nm)', 360.0, 560.0, 420.0, 0.5)
-    st.session_state.d_val = diameter
-    st.session_state.h_val = height
+    if 'p_val' not in st.session_state:
+        st.session_state.p_val = 420.0
+
+    col_d1, col_d2 = st.columns([3, 1])
+    with col_d1:
+        diameter = st.slider('直径 D (nm)', 60.0, 320.0, st.session_state.d_val, 0.1)
+    with col_d2:
+        d_input = st.number_input('精确输入 D', 60.0, 320.0, st.session_state.d_val, 0.1)
+    if d_input != st.session_state.d_val:
+        st.session_state.d_val = d_input
+        diameter = d_input
+    elif diameter != st.session_state.d_val:
+        st.session_state.d_val = diameter
+
+    col_h1, col_h2 = st.columns([3, 1])
+    with col_h1:
+        height = st.slider('高度 H (nm)', 120.0, 720.0, st.session_state.h_val, 0.1)
+    with col_h2:
+        h_input = st.number_input('精确输入 H', 120.0, 720.0, st.session_state.h_val, 0.1)
+    if h_input != st.session_state.h_val:
+        st.session_state.h_val = h_input
+        height = h_input
+    elif height != st.session_state.h_val:
+        st.session_state.h_val = height
+
+    col_p1, col_p2 = st.columns([3, 1])
+    with col_p1:
+        period = st.slider('周期 P (nm)', 360.0, 560.0, st.session_state.p_val, 0.1)
+    with col_p2:
+        p_input = st.number_input('精确输入 P', 360.0, 560.0, st.session_state.p_val, 0.1)
+    if p_input != st.session_state.p_val:
+        st.session_state.p_val = p_input
+        period = p_input
+    elif period != st.session_state.p_val:
+        st.session_state.p_val = period
 
     if diameter > period:
         st.warning('⚠️ D > P：纳米柱会重叠，请调整')
