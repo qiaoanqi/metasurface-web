@@ -330,8 +330,8 @@ with st.sidebar:
     st.divider()
     st.header('📏 纳米柱尺寸')
 
-    diameter = st.slider('直径 D (nm)', 60.0, 320.0, 200.0, 0.5)
-    height = st.slider('高度 H (nm)', 120.0, 720.0, 400.0, 0.5)
+    diameter = st.slider('直径 D (nm)', 60.0, 320.0, 200.0, 0.5, key='slider_d')
+    height = st.slider('高度 H (nm)', 120.0, 720.0, 400.0, 0.5, key='slider_h')
     period = st.slider('周期 P (nm)', 360.0, 560.0, 420.0, 0.5)
 
     if diameter > period:
