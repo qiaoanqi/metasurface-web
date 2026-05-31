@@ -51,9 +51,10 @@ _CIE_Z = np.array([0.006450,0.010550,0.020050,0.036210,0.067850,0.110200,0.20740
 
 
 def spectrum_to_xyz(wavelengths_nm, reflectance):
-    x_bar = np.interp(wavelengths_nm, _CIE_WAVELENGTHS, _CIE_X, left=0, right=0)
-    y_bar = np.interp(wavelengths_nm, _CIE_WAVELENGTHS, _CIE_Y, left=0, right=0)
-    z_bar = np.interp(wavelengths_nm, _CIE_WAVELENGTHS, _CIE_Z, left=0, right=0)
+    # Direct indexing: wavelengths_nm == _CIE_WAVELENGTHS (both 380-780nm @ 5nm)
+    x_bar = _CIE_X
+    y_bar = _CIE_Y
+    z_bar = _CIE_Z
     dwl = 5.0
     X = dwl * np.sum(reflectance * x_bar)
     Y = dwl * np.sum(reflectance * y_bar)
