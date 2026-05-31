@@ -533,8 +533,8 @@ with tab4:
     rows_html += '</table>'
 
     st.markdown(rows_html, unsafe_allow_html=True)
-    st.caption(f"??: {material} | ??: {substrate} | P={period:.0f}nm")
-    st.caption("??: H (??) | ??: D (??)")
+    st.caption(f"🔴: {material} | ⚪: {substrate} | 周期 P={period:.0f}nm")
+    st.caption("⬅️: 高度 H (nm) | ⬇️: 直径 D (nm)")
 # Tab 5: Spectrum & CIE Chromaticity
 with tab5:
     col_spec, col_cie = st.columns([3, 2])
