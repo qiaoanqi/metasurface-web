@@ -5,9 +5,13 @@ import io
 import numpy as np
 from PIL import Image
 import streamlit as st
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
+def _get_plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
+# matplotlib imported lazily to avoid cloud startup issues
 from dataclasses import dataclass
 from typing import Tuple, List
 
@@ -485,14 +489,14 @@ with tab3:
             with st.spinner("逐像素匹配最优纳米柱参数..."):
                 orig, mapped, params_arr = engine.image_to_metasurface_map(image, max_s)
 
-            fig3, (ax_o, ax_m, ax_d) = plt.subplots(1, 3, figsize=(14, 4))
+            fig3, (ax_o, ax_m, ax_d) = _get_plt().subplots(1, 3, figsize=(14, 4))
             ax_o.imshow(orig); ax_o.set_title("原图"); ax_o.axis("off")
             ax_m.imshow(mapped); ax_m.set_title("超表面图案"); ax_m.axis("off")
             im = ax_d.imshow(params_arr[:,:,0], cmap="viridis")
             ax_d.set_title("直径分布 (nm)"); ax_d.axis("off")
-            plt.colorbar(im, ax=ax_d, fraction=0.046)
+            _get_plt().colorbar(im, ax=ax_d, fraction=0.046)
             fig3.tight_layout()
-            st.pyplot(fig3); plt.close(fig3)
+            st.pyplot(fig3); _get_plt().close(fig3)
 
             mean_err = float(np.mean(np.linalg.norm(orig - mapped, axis=2)))
             st.info(f"图案: {params_arr.shape[1]}×{params_arr.shape[0]} 像素 | 平均 RGB 误差: {mean_err:.4f}")
@@ -533,7 +537,7 @@ with tab5:
         st.subheader("反射光谱 (380-780 nm)")
         wls, refl = engine.compute_spectrum(param, 380, 780, 81)
 
-        fig5, ax5 = plt.subplots(figsize=(10, 4))
+        fig5, ax5 = _get_plt().subplots(figsize=(10, 4))
         # Color the spectrum curve with the actual computed color
         hex_c = rgb_to_hex(rgb)
         ax5.plot(wls, refl, color=hex_c, lw=2.5,
@@ -547,13 +551,12 @@ with tab5:
         ax5.grid(True, alpha=0.25)
         ax5.legend(loc='upper right')
         fig5.tight_layout()
-        st.pyplot(fig5)
-        plt.close(fig5)
+        st.pyplot(fig5); _get_plt().close(fig5)
 
     with col_cie:
         st.subheader("CIE 1931 色度图")
         # Draw CIE 1931 chromaticity diagram with current color point
-        fig_cie, ax_cie = plt.subplots(figsize=(5, 5))
+        fig_cie, ax_cie = _get_plt().subplots(figsize=(5, 5))
 
         # Spectrum locus (from CIE data)
         x_xy = _CIE_X / (_CIE_X + _CIE_Y + _CIE_Z + 1e-12)
