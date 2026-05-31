@@ -346,13 +346,9 @@ with st.sidebar:
                          help=f'D={d_val}nm H={h_val}nm'):
                 st.session_state['preset_d'] = d_val
                 st.session_state['preset_h'] = h_val
-                st.rerun()
+                pass  # will apply on next interaction
 
-    if 'preset_d' in st.session_state:
-        diameter = st.session_state['preset_d']
-        height = st.session_state['preset_h']
-        del st.session_state['preset_d']
-        del st.session_state['preset_h']
+
 # Build param
 param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
