@@ -323,7 +323,20 @@ with st.sidebar:
     with st.expander("debug info"):
         st.caption(f"pipeline: v3 spectral")
         st.caption(f"computed RGB: ({rgb[0]:.3f}, {rgb[1]:.3f}, {rgb[2]:.3f})")
-        st.caption(f"peak wl: {380 + 0.65*(diameter-60) + 0.18*(height-120) + 30*(MaterialLibrary.n_at_wavelength(material,550)-2.0):.0f} nm")
+        # Step-by-step diagnostics
+        n550 = MaterialLibrary.n_at_wavelength(material, 550)
+        lam = 380 + 0.65*(diameter-60) + 0.18*(height-120) + 30*(n550-2.0)
+        st.caption(f"n@550nm: {n550:.4f} | peak wl: {lam:.0f} nm")
+        # Check first few reflectance values
+        wls_check = [400, 500, 550, 600, 700]
+        engine2 = engine
+        p2 = param
+        vals = [engine2._single_wl_response(p2, w) for w in wls_check]
+        st.caption(f"refl@400,500,550,600,700: {[f'{v:.4f}' for v in vals]}")
+        # Check CIE data integrity
+        st.caption(f"_CIE_X len={len(_CIE_X)} sum={_CIE_X.sum():.1f}")
+        st.caption(f"_CIE_Y len={len(_CIE_Y)} sum={_CIE_Y.sum():.1f}")
+        st.caption(f"_CIE_Z len={len(_CIE_Z)} sum={_CIE_Z.sum():.1f}")
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
