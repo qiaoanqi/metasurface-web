@@ -455,7 +455,7 @@ with tab2:
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.markdown("**🎯 ??**")
+            st.markdown("**🎯 目标颜色**")
             hex_t = rgb_to_hex(target_rgb_norm)
             st.markdown(f"""
             <div style="width:100px;height:100px;background:{hex_t};
@@ -465,7 +465,7 @@ with tab2:
             """, unsafe_allow_html=True)
 
         with col_b:
-            st.markdown("**✅ ??**")
+            st.markdown("**✅ 匹配结果**")
             hex_m = rgb_to_hex(matched_rgb)
             mr, mg, mb = rgb_255(matched_rgb)
             st.markdown(f"""
