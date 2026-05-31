@@ -596,5 +596,5 @@ with tab5:
         st.pyplot(fig_cie)
         _get_plt().close(fig_cie)
 st.sidebar.markdown("---")
-st.sidebar.caption("AI Metasurface Color Design v2.0 (Web)")
-st.sidebar.caption("Physics: Lorentzian Resonance + CIE 1931 Pipeline")
+st.sidebar.caption("AI超表面结构色设计 v3.0")
+st.sidebar.caption("物理模型: Lorentzian 共振 + CIE 1931 光谱管线")
