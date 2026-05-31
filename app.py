@@ -342,35 +342,6 @@ with st.sidebar:
 param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
 
-# Debug: verify color pipeline is working
-with st.sidebar:
-    st.divider()
-    with st.expander("debug info"):
-        st.caption(f"pipeline: v3 spectral")
-        st.caption(f"computed RGB: ({rgb[0]:.3f}, {rgb[1]:.3f}, {rgb[2]:.3f})")
-        n550 = MaterialLibrary.n_at_wavelength(material, 550)
-        lam = 380 + 0.65*(diameter-60) + 0.18*(height-120) + 30*(n550-2.0)
-        st.caption(f"n@550nm: {n550:.4f} | peak wl: {lam:.0f} nm")
-        wls_check = [400, 500, 550, 600, 700]
-        vals = [engine._single_wl_response(param, w) for w in wls_check]
-        st.caption(f"refl@400,500,550,600,700: {[round(v,4) for v in vals]}")
-        # Show actual CIE values at 550nm index (index 34 = 550nm)
-        idx34 = 34
-        st.caption(f"CIE@550nm X={_CIE_X[idx34]:.4f} Y={_CIE_Y[idx34]:.4f} Z={_CIE_Z[idx34]:.4f}")
-        # Check if X and Z arrays equal Y
-        x_eq_y = bool(np.allclose(_CIE_X, _CIE_Y))
-        z_eq_y = bool(np.allclose(_CIE_Z, _CIE_Y))
-        st.caption(f"X==Y: {x_eq_y} | Z==Y: {z_eq_y}")
-        # Full pipeline trace
-        test_wls = np.arange(380, 785, 5)
-        test_refl = np.array([engine._single_wl_response(param, w) for w in test_wls])
-        test_refl_n = test_refl / max(test_refl.max(), 1e-12)
-        test_xyz = spectrum_to_xyz(test_wls, test_refl_n)
-        test_rgb = xyz_to_srgb(test_xyz)
-        st.caption(f"XYZ raw: ({test_xyz[0]:.4f}, {test_xyz[1]:.4f}, {test_xyz[2]:.4f})")
-        st.caption(f"RGB linear: ({test_rgb[0]:.4f}, {test_rgb[1]:.4f}, {test_rgb[2]:.4f})")
-        st.caption(f"refl max raw: {test_refl.max():.6f} at idx {test_refl.argmax()}")
-
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔬 Live Preview", "🎯 逆设计", "🖼️ 图案生成",
