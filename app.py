@@ -249,14 +249,6 @@ class MetaSurfaceColorEngine:
         # Single dominant Lorentzian-like resonance
         amp = 1.0 / (1.0 + ((wl_nm - (lam_peak + angle_shift))/sigma)**2)
 
-                # --- TEST: force red when angle > 0 ---
-        if param.angle_deg > 0.5:
-            wl_nm_norm = (wl_nm - 380) / 400.0
-            if wl_nm > 600:
-                return 1.0
-            else:
-                return 0.01
-        # --- END TEST ---
         return float(amp * (0.30 + 0.80*fill) * loss * amp_angle)
 
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
@@ -424,7 +416,7 @@ with tab1:
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
           {material} on {substrate}<br>
           D={diameter:.0f}nm &nbsp; H={height:.0f}nm &nbsp; P={period:.0f}nm<br>
-          {polarization} &nbsp; &theta;={angle:.0f}&deg;<br><span style="color:#ff0;font-size:11px;">[DEBUG] angle={angle:.1f} pol={polarization}</span>
+          {polarization} &nbsp; &theta;={angle:.0f}&deg;
         </div>
       </div>
     </div>
