@@ -330,6 +330,9 @@ with st.sidebar:
     st.divider()
     st.header('📏 纳米柱尺寸')
 
+    def _sync_rerun():
+        st.rerun()
+
     if 'd_val' not in st.session_state:
         st.session_state.d_val = 200.0
     if 'h_val' not in st.session_state:
@@ -339,23 +342,23 @@ with st.sidebar:
 
     col_d1, col_d2 = st.columns([3, 1])
     with col_d1:
-        st.session_state.d_val = st.slider('直径 D (nm)', 60.0, 320.0, st.session_state.d_val, 0.1)
+        st.session_state.d_val = st.slider('直径 D (nm)', 60.0, 320.0, st.session_state.d_val, 0.1, on_change=_sync_rerun)
     with col_d2:
-        st.session_state.d_val = st.number_input('精确输入 D', 60.0, 320.0, st.session_state.d_val, 0.1)
+        st.session_state.d_val = st.number_input('精确输入 D', 60.0, 320.0, st.session_state.d_val, 0.1, on_change=_sync_rerun)
     diameter = st.session_state.d_val
 
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
-        st.session_state.h_val = st.slider('高度 H (nm)', 120.0, 720.0, st.session_state.h_val, 0.1)
+        st.session_state.h_val = st.slider('高度 H (nm)', 120.0, 720.0, st.session_state.h_val, 0.1, on_change=_sync_rerun)
     with col_h2:
-        st.session_state.h_val = st.number_input('精确输入 H', 120.0, 720.0, st.session_state.h_val, 0.1)
+        st.session_state.h_val = st.number_input('精确输入 H', 120.0, 720.0, st.session_state.h_val, 0.1, on_change=_sync_rerun)
     height = st.session_state.h_val
 
     col_p1, col_p2 = st.columns([3, 1])
     with col_p1:
-        st.session_state.p_val = st.slider('周期 P (nm)', 360.0, 560.0, st.session_state.p_val, 0.1)
+        st.session_state.p_val = st.slider('周期 P (nm)', 360.0, 560.0, st.session_state.p_val, 0.1, on_change=_sync_rerun)
     with col_p2:
-        st.session_state.p_val = st.number_input('精确输入 P', 360.0, 560.0, st.session_state.p_val, 0.1)
+        st.session_state.p_val = st.number_input('精确输入 P', 360.0, 560.0, st.session_state.p_val, 0.1, on_change=_sync_rerun)
     period = st.session_state.p_val
 
     if diameter > period:
