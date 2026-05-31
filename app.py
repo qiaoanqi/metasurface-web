@@ -272,6 +272,8 @@ def get_engine():
 engine = get_engine()
 
 st.title("AI Metasurface Structural Color Design")
+st.caption("TiO2 ??? Lorentzian ?? + CIE 1931 ??????")
+st.caption("v3.0 | Spectral Pipeline | CIE 1931")
 st.caption("TiO₂ 纳米柱 Lorentzian 共振 + CIE 1931 光谱色彩管线")
 
 # Sidebar controls
@@ -315,6 +317,14 @@ with st.sidebar:
 # Build param
 param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
+
+# Debug: verify color pipeline is working
+with st.sidebar:
+    st.divider()
+    with st.expander("debug info"):
+        st.caption(f"pipeline: v3 spectral")
+        st.caption(f"computed RGB: ({rgb[0]:.3f}, {rgb[1]:.3f}, {rgb[2]:.3f})")
+        st.caption(f"peak wl: {380 + 0.65*(diameter-60) + 0.18*(height-120) + 30*(MaterialLibrary.n_at_wavelength(material,550)-2.0):.0f} nm")
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
