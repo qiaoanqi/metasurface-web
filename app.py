@@ -360,6 +360,15 @@ with st.sidebar:
         x_eq_y = bool(np.allclose(_CIE_X, _CIE_Y))
         z_eq_y = bool(np.allclose(_CIE_Z, _CIE_Y))
         st.caption(f"X==Y: {x_eq_y} | Z==Y: {z_eq_y}")
+        # Full pipeline trace
+        test_wls = np.arange(380, 785, 5)
+        test_refl = np.array([engine._single_wl_response(param, w) for w in test_wls])
+        test_refl_n = test_refl / max(test_refl.max(), 1e-12)
+        test_xyz = spectrum_to_xyz(test_wls, test_refl_n)
+        test_rgb = xyz_to_srgb(test_xyz)
+        st.caption(f"XYZ raw: ({test_xyz[0]:.4f}, {test_xyz[1]:.4f}, {test_xyz[2]:.4f})")
+        st.caption(f"RGB linear: ({test_rgb[0]:.4f}, {test_rgb[1]:.4f}, {test_rgb[2]:.4f})")
+        st.caption(f"refl max raw: {test_refl.max():.6f} at idx {test_refl.argmax()}")
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
