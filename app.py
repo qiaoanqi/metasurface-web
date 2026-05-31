@@ -354,8 +354,8 @@ with st.sidebar:
         with cols[i % 4]:
             if st.button(name, key=f'preset_{name}', use_container_width=True,
                          help=f'D={d_val}nm H={h_val}nm'):
-                st.session_state.d_val = d_val
-                st.session_state.h_val = h_val
+                st.session_state.d_val = float(d_val)
+                st.session_state.h_val = float(h_val)
                 st.rerun()
 
 
