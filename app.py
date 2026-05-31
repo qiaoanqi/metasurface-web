@@ -233,8 +233,8 @@ class MetaSurfaceColorEngine:
         return wls, refl
 
     def _build_library(self):
-        d_vals = np.linspace(self.d_min, self.d_max, 150)
-        h_vals = np.linspace(self.h_min, self.h_max, 180)
+        d_vals = np.linspace(self.d_min, self.d_max, 60)
+        h_vals = np.linspace(self.h_min, self.h_max, 72)
         default = MetaSurfaceParam(180, 380, 420)
         rgbs = []
         for d in d_vals:
@@ -251,8 +251,8 @@ class MetaSurfaceColorEngine:
         if key in self._cache:
             self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy = self._cache[key]
             return
-        d_vals = np.linspace(self.d_min, self.d_max, 150)
-        h_vals = np.linspace(self.h_min, self.h_max, 180)
+        d_vals = np.linspace(self.d_min, self.d_max, 60)
+        h_vals = np.linspace(self.h_min, self.h_max, 72)
         rgbs = []
         for d in d_vals:
             for h in h_vals:
@@ -345,7 +345,7 @@ rgb = engine.physical_color(param)
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔬 Live Preview", "🎯 逆设计", "🖼️ 图案生成",
-    "📊 FDTD 仿真", "🌈 光谱"
+    "📊 颜色映射", "🌈 光谱"
 ])
 
 # Tab 1: Live Preview
@@ -416,7 +416,7 @@ with tab2:
 
     col_pick, col_btn = st.columns([3, 1])
     with col_pick:
-        picker_hex = st.color_picker("目标颜色", "#80c8ff", label_visibility="collapsed")
+        picker_hex = st.color_picker("目标颜色", "#80c8ff")
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button("🔍 搜索匹配", use_container_width=True)
@@ -513,7 +513,7 @@ with tab4:
 
     st.markdown(rows_html, unsafe_allow_html=True)
     st.caption(f"??: {material} | ??: {substrate} | P={period:.0f}nm")
-    st.caption("??: H (??) &nbsp;|&nbsp; ??: D (??)")
+    st.caption("??: H (??) | ??: D (??)")
 # Tab 5: Spectrum & CIE Chromaticity
 with tab5:
     col_spec, col_cie = st.columns([3, 2])
