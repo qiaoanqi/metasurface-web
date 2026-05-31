@@ -350,7 +350,7 @@ with st.sidebar:
                          help=f'D={d_val}nm H={h_val}nm'):
                 st.session_state['preset_d'] = d_val
                 st.session_state['preset_h'] = h_val
-                pass  # will apply on next interaction
+                st.rerun()
 
 
 # Build param
