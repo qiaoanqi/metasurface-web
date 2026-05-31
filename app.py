@@ -15,7 +15,7 @@ def _get_plt():
 from dataclasses import dataclass
 from typing import Tuple, List
 
-st.set_page_config(page_title="AI Metasurface Color Design", layout="wide")
+st.set_page_config(page_title="AI超表面结构色设计", layout="wide")
 
 # ===================== Constants & Helpers =====================
 D65 = np.array([0.95047, 1.00000, 1.08883], dtype=float)
@@ -315,8 +315,8 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
-st.title("AI Metasurface Structural Color Design")
-st.caption("v3.0 | Spectral Pipeline | CIE 1931")
+st.title("🎨 AI超表面结构色设计助手")
+st.caption("v3.0 | 光谱管线 | CIE 1931 色度学")
 st.caption("TiO₂ 纳米柱 Lorentzian 共振 + CIE 1931 光谱色彩管线")
 
 # Sidebar controls
@@ -365,11 +365,11 @@ rgb = engine.physical_color(param)
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🔬 Live Preview", "🎯 逆设计", "🖼️ 图案生成",
+    "🔬 实时预览", "🎯 逆设计", "🖼️ 图案生成",
     "📊 颜色映射", "🌈 光谱"
 ])
 
-# Tab 1: Live Preview
+# Tab 1: 实时预览
 with tab1:
     hex_color = rgb_to_hex(rgb)
     r255, g255, b255 = rgb_255(rgb)
@@ -461,7 +461,7 @@ with tab2:
             <div style="width:100px;height:100px;background:{hex_t};
                         border-radius:12px;box-shadow:0 4px 16px {hex_t}44;
                         border:2px solid rgba(255,255,255,0.1);margin:0 auto;"></div>
-            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_t}</p>
+            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_t}<br>RGB({target_r}, {target_g}, {target_b})</p>
             """, unsafe_allow_html=True)
 
         with col_b:
@@ -472,14 +472,14 @@ with tab2:
             <div style="width:100px;height:100px;background:{hex_m};
                         border-radius:12px;box-shadow:0 4px 16px {hex_m}44;
                         border:2px solid rgba(255,255,255,0.1);margin:0 auto;"></div>
-            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_m}</p>
+            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_m}<br>RGB({mr}, {mg}, {mb})</p>
             """, unsafe_allow_html=True)
 
         st.success(f"""
         **D = {best_param.diameter_nm:.1f} nm** &nbsp;|&nbsp;
         **H = {best_param.height_nm:.1f} nm** &nbsp;|&nbsp;
         **P = {best_param.period_nm:.1f} nm** &nbsp;|&nbsp;
-        dE76 = {de_val:.2f}
+        dE76 = {de_val:.2f} (数值越小越接近，<2 人眼不可分辨)
         """)
 # Tab 3: Pattern Generation
 with tab3:
@@ -528,7 +528,8 @@ with tab4:
             test_param = MetaSurfaceParam(d, h, period, material, substrate, polarization, angle)
             test_rgb = engine.physical_color(test_param)
             hex_t = rgb_to_hex(test_rgb)
-            rows_html += f'<td style="padding:2px;"><div style="width:40px;height:32px;background:{hex_t};border-radius:4px;border:1px solid rgba(255,255,255,0.08);"></div></td>'
+            tr, tg, tb = rgb_255(test_rgb)
+            rows_html += f'<td style="padding:2px;"><div title="D={d:.0f}nm H={h:.0f}nm RGB({tr},{tg},{tb})" style="width:40px;height:32px;background:{hex_t};border-radius:4px;border:1px solid rgba(255,255,255,0.08);"></div></td>'
         rows_html += '</tr>'
     rows_html += '</table>'
 
