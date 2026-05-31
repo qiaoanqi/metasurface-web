@@ -416,7 +416,7 @@ with tab1:
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
           {material} on {substrate}<br>
           D={diameter:.0f}nm &nbsp; H={height:.0f}nm &nbsp; P={period:.0f}nm<br>
-          {polarization} &nbsp; &theta;={angle:.0f}&deg;
+          {polarization} &nbsp; &theta;={angle:.0f}&deg;<br><span style="color:#ff0;font-size:11px;">[DEBUG] angle={angle:.1f} pol={polarization}</span>
         </div>
       </div>
     </div>
