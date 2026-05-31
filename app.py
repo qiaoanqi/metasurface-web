@@ -236,10 +236,20 @@ class MetaSurfaceColorEngine:
         # Height-dependent loss (taller pillars have more absorption)
         loss = np.exp(-0.0006*max(h-600, 0))
 
-        # Single dominant Lorentzian-like resonance
-        amp = 1.0 / (1.0 + ((wl_nm - lam_peak)/sigma)**2)
+        # --- Angle & polarization dependence ---
+        theta = param.angle_deg * 3.14159265 / 180.0
+        sin2 = np.sin(theta)**2
+        if param.polarization.startswith("TE"):
+            angle_shift = -30 * sin2
+            amp_angle = 1.0 - 0.10 * sin2
+        else:
+            angle_shift = -12 * sin2
+            amp_angle = 1.0 - 0.25 * sin2
 
-        return float(amp * (0.30 + 0.80*fill) * loss)
+        # Single dominant Lorentzian-like resonance
+        amp = 1.0 / (1.0 + ((wl_nm - (lam_peak + angle_shift))/sigma)**2)
+
+        return float(amp * (0.30 + 0.80*fill) * loss * amp_angle)
 
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
         wls = np.linspace(wl_start, wl_end, n_pts)
