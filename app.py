@@ -210,10 +210,10 @@ class MetaSurfaceColorEngine:
 
         # --- Dominant resonance wavelength as a function of D, H, material ---
         # Small D/H -> blue, large D/H -> red (Mie resonance red-shifts with size)
-        lam_peak = 380 + 0.65*(d-60) + 0.18*(h-120) + 30*(n-2.0)
+        lam_peak = 370 + 0.68*(d-60) + 0.20*(h-120) + 32*(n-2.0)
 
         # Broaden at very large sizes (higher-order modes mix in)
-        sigma = max(28 + 0.02*(d-200), 18)
+        sigma = max(18 + 0.02*(d-200), 12)
 
         # Fill factor: how much of the period is covered by the pillar
         fill = np.clip((d/p)**2, 0.04, 0.90)
