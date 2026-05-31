@@ -334,8 +334,8 @@ with st.sidebar:
         st.session_state.d_val = 200.0
     if 'h_val' not in st.session_state:
         st.session_state.h_val = 400.0
-    diameter = st.slider('直径 D (nm)', 60.0, 320.0, value=st.session_state.d_val, step=0.5)
-    height = st.slider('高度 H (nm)', 120.0, 720.0, value=st.session_state.h_val, step=0.5)
+    diameter = st.slider('直径 D (nm)', 60.0, 320.0, st.session_state.d_val, 0.5)
+    height = st.slider('高度 H (nm)', 120.0, 720.0, st.session_state.h_val, 0.5)
     period = st.slider('周期 P (nm)', 360.0, 560.0, 420.0, 0.5)
     st.session_state.d_val = diameter
     st.session_state.h_val = height
