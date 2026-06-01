@@ -204,9 +204,14 @@ class MetaSurfaceParam:
 class MetaSurfaceColorEngine:
     def __init__(self):
         self._cache = {}
-        self.d_min, self.d_max = 60.0, 320.0
-        self.h_min, self.h_max = 120.0, 720.0
-        self.p_min, self.p_max = 360.0, 560.0
+        self.d_min, self.d_max = 50.0, 350.0
+        self.h_min, self.h_max = 80.0, 600.0
+        self.p_min, self.p_max = 200.0, 600.0
+        self._coarse_grid_cache = {}
+        self._last_material = "TiO2 (anatase)"
+        self._last_substrate = "SiO2 (fused silica)"
+        self._last_polarization = "TE (s-pol)"
+        self._last_angle = 0.0
         try:
             self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
         except Exception as e:
@@ -274,34 +279,64 @@ class MetaSurfaceColorEngine:
         refl = np.array([self._single_wl_response(param, w) for w in wls])
         return wls, refl
 
+    def _peak_wl(self, d, h, n550=2.4157):
+        return 370 + 0.68*(d-60) + 0.20*(h-120) + 32*(n550-2.0)
+
+    def _wl_to_approx_rgb(self, wl_nm):
+        idx = int(round((wl_nm - 380.0) / 5.0))
+        idx = max(0, min(80, idx))
+        xyz = np.array([_CIE_X[idx], _CIE_Y[idx], _CIE_Z[idx]])
+        norm = _CIE_Y.sum() * 5.0
+        xyz = xyz / (norm if norm > 1e-12 else 1.0)
+        return np.clip(xyz_to_srgb(xyz * 80), 0, 1)
+
     def _build_library(self):
-        d_vals = np.linspace(self.d_min, self.d_max, 60)
-        h_vals = np.linspace(self.h_min, self.h_max, 72)
+        d_vals = np.arange(self.d_min, self.d_max + 0.1, 5.0)
+        h_vals = np.arange(self.h_min, self.h_max + 0.1, 10.0)
+        p_vals = np.arange(self.p_min, self.p_max + 0.1, 20.0)
         default = MetaSurfaceParam(180, 380, 420)
-        rgbs = []
+        # Fast: use peak wavelength approximation for coarse grid
+        params_list, rgbs_list = [], []
+        n550 = MaterialLibrary.n_at_wavelength(default.material, 550.0)
         for d in d_vals:
             for h in h_vals:
-                p = MetaSurfaceParam(d, h, 420, default.material, default.substrate,
-                                     default.polarization, default.angle_deg)
-                rgbs.append(self.ai_predict_color(p))
-        rgbs = np.array(rgbs, dtype=float)
-        params = np.array([[d, h, 420.0] for d in d_vals for h in h_vals], dtype=float)
+                lam_peak = self._peak_wl(d, h, n550)
+                rgb = self._wl_to_approx_rgb(lam_peak)
+                for p in p_vals:
+                    fill = np.clip((d/p)**2, 0.04, 0.90)
+                    amp = 0.30 + 0.80 * fill
+                    params_list.append([d, h, p])
+                    rgbs_list.append(np.clip(rgb * amp, 0, 1))
+        rgbs = np.array(rgbs_list, dtype=float)
+        params = np.array(params_list, dtype=float)
         return params, rgbs, rgb_to_lab(rgbs), rgb_to_xy(rgbs)
 
     def rebuild_library(self, material: str, substrate: str, polarization: str, angle_deg: float):
         key = (material, substrate, polarization, angle_deg)
+        self._last_material = material
+        self._last_substrate = substrate
+        self._last_polarization = polarization
+        self._last_angle = angle_deg
         if key in self._cache:
             self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy = self._cache[key]
             return
-        d_vals = np.linspace(self.d_min, self.d_max, 60)
-        h_vals = np.linspace(self.h_min, self.h_max, 72)
-        rgbs = []
+        d_vals = np.arange(self.d_min, self.d_max + 0.1, 5.0)
+        h_vals = np.arange(self.h_min, self.h_max + 0.1, 10.0)
+        p_vals = np.arange(self.p_min, self.p_max + 0.1, 20.0)
+        default = MetaSurfaceParam(180, 380, 420, material, substrate, polarization, angle_deg)
+        n550 = MaterialLibrary.n_at_wavelength(material, 550.0)
+        params_list, rgbs_list = [], []
         for d in d_vals:
             for h in h_vals:
-                p = MetaSurfaceParam(d, h, 420, material, substrate, polarization, angle_deg)
-                rgbs.append(self.ai_predict_color(p))
-        self.grid_rgb = np.array(rgbs, dtype=float)
-        self.grid_params = np.array([[d, h, 420.0] for d in d_vals for h in h_vals], dtype=float)
+                lam_peak = self._peak_wl(d, h, n550)
+                rgb = self._wl_to_approx_rgb(lam_peak)
+                for p in p_vals:
+                    fill = np.clip((d/p)**2, 0.04, 0.90)
+                    amp = 0.30 + 0.80 * fill
+                    params_list.append([d, h, p])
+                    rgbs_list.append(np.clip(rgb * amp, 0, 1))
+        self.grid_rgb = np.array(rgbs_list, dtype=float)
+        self.grid_params = np.array(params_list, dtype=float)
         self.grid_lab = rgb_to_lab(self.grid_rgb)
         self.grid_xy = rgb_to_xy(self.grid_rgb)
         self._cache[key] = (self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy)
@@ -314,11 +349,45 @@ class MetaSurfaceColorEngine:
     def inverse_design(self, target_rgb: np.ndarray):
         target_rgb = clamp01(np.asarray(target_rgb, dtype=float))
         target_lab = rgb_to_lab(target_rgb[None, :])[0]
-        idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
-        p = self.grid_params[idx]
-        rgb = self.grid_rgb[idx]
-        de = delta_e76(target_lab, self.grid_lab[idx])
-        return MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2])), rgb, de
+        target_xy = rgb_to_xy(target_rgb)
+        # Stage 1: coarse scan - top 20 by LAB distance
+        diff = target_lab[None, :] - self.grid_lab
+        dists = np.sum(diff * diff, axis=1)
+        top_k = min(20, len(dists))
+        top_idx = np.argpartition(dists, top_k)[:top_k]
+        # Stage 2: fine search with full spectrum, peak-wavelength priority
+        best_score = 1e12
+        best_param, best_rgb, best_de = None, None, None
+        for idx in top_idx:
+            d, h, p_val = self.grid_params[idx]
+            # Search neighbors with finer steps
+            for dd in np.arange(max(50, d-4), min(350, d+5), 2.0):
+                for dh in np.arange(max(80, h-8), min(600, h+10), 5.0):
+                    for dp in np.arange(max(200, p_val-15), min(600, p_val+18), 10.0):
+                        param = MetaSurfaceParam(dd, dh, dp,
+                            self._last_material, self._last_substrate,
+                            self._last_polarization, self._last_angle)
+                        rgb = self.physical_color(param)
+                        lab = rgb_to_lab(rgb[None, :])[0]
+                        de = delta_e76(target_lab, lab)
+                        # Peak wavelength from Lorentzian (fast)
+                        lam_peak = self._peak_wl(dd, dh)
+                        # Target dominant wavelength from CIE xy
+                        target_wl = 380 + (target_xy[0] + target_xy[1]) * 200
+                        wl_diff = abs(lam_peak - target_wl) / 100.0
+                        score = wl_diff * 0.6 + de / 30.0 * 0.4
+                        if score < best_score:
+                            best_score = score
+                            best_param = param
+                            best_rgb = rgb
+                            best_de = de
+        if best_param is None:
+            idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
+            p = self.grid_params[idx]
+            best_param = MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2]))
+            best_rgb = self.grid_rgb[idx]
+            best_de = delta_e76(target_lab, self.grid_lab[idx])
+        return best_param, best_rgb, best_de
 
     def image_to_metasurface_map(self, image: Image.Image, max_size: int = 80):
         img = image.convert("RGB")
