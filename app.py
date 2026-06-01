@@ -525,7 +525,7 @@ with tab2:
         **D = {best_param.diameter_nm:.1f} nm** &nbsp;|&nbsp;
         **H = {best_param.height_nm:.1f} nm** &nbsp;|&nbsp;
         **P = {best_param.period_nm:.1f} nm** &nbsp;|&nbsp;
-        dE76 = {de_val:.2f} (数值越小越接近，<2 人眼不可分辨)
+        dE76 = {de_val:.1f} (数值越小越接近，<2 人眼不可分辨)
         """)
 # Tab 3: Pattern Generation
 with tab3:
