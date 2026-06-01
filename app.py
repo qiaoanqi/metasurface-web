@@ -669,7 +669,7 @@ with tab2:
         with st.spinner("搜索 27,000 种参数组合..."):
             engine.rebuild_library(material, substrate, polarization, angle)
             target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
-            top3_results = engine.inverse_design(target_rgb_norm)
+            st.session_state.top3_results = engine.inverse_design(target_rgb_norm)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -686,7 +686,7 @@ with tab2:
             st.markdown("**✅ Top3 匹配结果**")
             # Build radio options
             options = []
-            for i, (_, bp, brgb, bde, bde2k) in enumerate(top3_results):
+            for i, (_, bp, brgb, bde, bde2k) in enumerate(st.session_state.top3_results):
                 hx = rgb_to_hex(brgb)
                 r, g, b = rgb_255(brgb)
                 lbl = f"#{i+1} {hx} | D={bp.diameter_nm:.0f} H={bp.height_nm:.0f} P={bp.period_nm:.0f} | ΔE={bde2k:.1f}"
@@ -694,7 +694,7 @@ with tab2:
             choice = st.radio("选择结果", options, horizontal=False, index=0,
                               key=f'result_choice_{picker_hex}')
             idx = options.index(choice)
-            best_param, matched_rgb, de_val, de2k_val = top3_results[idx][1], top3_results[idx][2], top3_results[idx][3], top3_results[idx][4]
+            best_param, matched_rgb, de_val, de2k_val = st.session_state.top3_results[idx][1], top3_results[idx][2], top3_results[idx][3], top3_results[idx][4]
             hex_m = rgb_to_hex(matched_rgb)
             mr, mg, mb = rgb_255(matched_rgb)
 
