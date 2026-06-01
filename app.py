@@ -654,7 +654,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v14_fast"):
+def get_engine(_cache_key="v15_progress"):
     return MetaSurfaceColorEngine()
 
 try:
@@ -827,16 +827,17 @@ with tab2:
 
     if run_btn:
         engine.rebuild_library(material, substrate, polarization, angle)
-        progress_bar = st.progress(0, "正在初始化...")
+        progress_bar = st.progress(0)
         status_text = st.empty()
 
         def update_progress(current, total, label):
             pct = min(current / max(total, 1), 1.0)
-            progress_bar.progress(pct, f"{label}: {current}/{total}")
+            progress_bar.progress(pct)
+            status_text.caption(f"{label}: {current}/{total}")
 
         st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
-        progress_bar.progress(1.0, "搜索完成!")
-        status_text.empty()
+        progress_bar.progress(1.0)
+        status_text.caption("搜索完成!")
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
