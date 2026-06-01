@@ -1122,10 +1122,10 @@ with tab5:
     _get_plt().close(fig_ang)
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🗑️ 清除搜索缓存", use_container_width=True):
-    st.session_state.pop("search_cache", None)
-    st.session_state.pop("search_history", None)
-    st.session_state.pop("top3_results", None)
-    st.success("缓存已清除")
+if st.sidebar.button("清除搜索缓存", use_container_width=True):
+    for k in ("search_cache", "search_history", "top3_results"):
+        if k in st.session_state:
+            del st.session_state[k]
+    st.toast("缓存已清除")
 st.sidebar.caption("AI超表面结构色设计 v3.0")
 st.sidebar.caption("物理模型: Lorentzian 共振 + CIE 1931 光谱管线")
