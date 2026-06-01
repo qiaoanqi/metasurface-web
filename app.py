@@ -425,7 +425,7 @@ class MetaSurfaceColorEngine:
             de2k = delta_e2000(target_lab, lab)
             lam_peak = self._peak_wl(d, h)
             wl_diff = abs(lam_peak - target_wl) / 100.0
-            score = de2k / 5.0 * 0.7 + wl_diff * 0.3
+            score = de2k  # pure DeltaE2000 optimization
             real_scores.append((score, d, h, p_val, rgb, lab, de2k))
         real_scores.sort(key=lambda x: x[0])
         # Stage 2: fine search around top 15, collect top 3
@@ -453,7 +453,7 @@ class MetaSurfaceColorEngine:
                         de76 = delta_e76(target_lab, lab)
                         lam_peak = self._peak_wl(dd, dh)
                         wl_diff = abs(lam_peak - target_wl) / 100.0
-                        score = de2k / 5.0 * 0.7 + wl_diff * 0.3
+                        score = de2k  # pure DeltaE2000 optimization
                         top3.append((score, param, rgb, de76, de2k))
         top3.sort(key=lambda x: x[0])
         # Deduplicate: param diversity (D>=15nm, H>=20nm, P>=30nm) + color diversity (ΔE>=1.5)
@@ -490,7 +490,7 @@ class MetaSurfaceColorEngine:
                     self._last_material, self._last_substrate,
                     self._last_polarization, self._last_angle)
                 de76 = delta_e76(target_lab, lab)
-                score = de2k / 5.0 * 0.7
+                score = de2k  # pure DeltaE2000
                 is_dup = False
                 for _, up, _, _, _ in unique_top3:
                     if (abs(d - up.diameter_nm) < D_DUP and
@@ -522,7 +522,7 @@ class MetaSurfaceColorEngine:
                 lab = rgb_to_lab(rgb[None, :])[0]
                 de2k = delta_e2000(target_lab, lab)
                 de76 = delta_e76(target_lab, lab)
-                score = de2k / 5.0 * 0.7
+                score = de2k  # pure DeltaE2000
                 is_dup = False
                 for _, up, _, _, _ in unique_top3:
                     if (abs(d - up.diameter_nm) < D_DUP and
