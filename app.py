@@ -534,12 +534,17 @@ class MetaSurfaceColorEngine:
                     unique_top3.append((score, param, rgb, de76, de2k))
         # Adaptive broad search: if best DeltaE still large, scan full space at medium steps
         if unique_top3 and unique_top3[0][4] > 10.0:
-            broad_d = np.arange(max(50, self.d_min), self.d_max + 0.1, 5.0)
-            broad_h = np.arange(self.h_min, self.h_max + 0.1, 15.0)
-            broad_p = np.arange(self.p_min, self.p_max + 0.1, 15.0)
+            broad_d = np.arange(max(50, self.d_min), self.d_max + 0.1, 10.0)
+            broad_h = np.arange(self.h_min, self.h_max + 0.1, 20.0)
+            broad_p = np.arange(self.p_min, self.p_max + 0.1, 20.0)
+            n550 = MaterialLibrary.n_at_wavelength(self._last_material, 550.0)
             broad_candidates = []
             for bd in broad_d:
                 for bh in broad_h:
+                    # Pre-filter by approximate peak wavelength proximity
+                    approx_peak = self._peak_wl(bd, bh, n550)
+                    if abs(approx_peak - target_wl) > 80:
+                        continue
                     for bp in broad_p:
                         if bd >= bp:
                             continue
