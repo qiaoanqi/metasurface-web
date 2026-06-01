@@ -1070,7 +1070,7 @@ with tab5:
     ax1.grid(True, alpha=0.3)
     ax1.set_title("RGB分量 vs 角度")
     for i, a in enumerate(angles_scan):
-        ax2.add_patch(matplotlib.patches.Rectangle((i, 0), 1, 1, facecolor=scan_hex[i], edgecolor="white", lw=0.3))
+        ax2.add_patch(_get_plt().Rectangle((i, 0), 1, 1, facecolor=scan_hex[i], edgecolor="white", lw=0.3))
     ax2.set_xlim(0, len(angles_scan))
     ax2.set_ylim(0, 1)
     ax2.set_xticks(np.arange(len(angles_scan)) + 0.5)
