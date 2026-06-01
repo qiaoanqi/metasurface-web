@@ -454,7 +454,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v2"):
+def get_engine(_cache_key="v3"):
     return MetaSurfaceColorEngine()
 
 try:
