@@ -694,7 +694,7 @@ with tab2:
             choice = st.radio("选择结果", options, horizontal=False, index=0,
                               key=f'result_choice_{picker_hex}')
             idx = options.index(choice)
-            best_param, matched_rgb, de_val, de2k_val = st.session_state.top3_results[idx][1], top3_results[idx][2], top3_results[idx][3], top3_results[idx][4]
+            best_param, matched_rgb, de_val, de2k_val = st.session_state.top3_results[idx][1], st.session_state.top3_results[idx][2], st.session_state.top3_results[idx][3], st.session_state.top3_results[idx][4]
             hex_m = rgb_to_hex(matched_rgb)
             mr, mg, mb = rgb_255(matched_rgb)
 
