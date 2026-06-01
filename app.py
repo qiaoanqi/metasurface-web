@@ -400,7 +400,7 @@ class MetaSurfaceColorEngine:
         # Stage 1: coarse scan - top 20 by LAB distance
         diff = target_lab[None, :] - self.grid_lab
         dists = np.sum(diff * diff, axis=1)
-        top_k = min(20, len(dists))
+        top_k = min(50, len(dists))
         top_idx = np.argpartition(dists, top_k)[:top_k]
         # Stage 2: fine search with full spectrum, peak-wavelength priority
         best_score = 1e12
@@ -408,9 +408,9 @@ class MetaSurfaceColorEngine:
         for idx in top_idx:
             d, h, p_val = self.grid_params[idx]
             # Search neighbors with finer steps
-            for dd in np.arange(max(50, d-4), min(350, d+5), 2.0):
-                for dh in np.arange(max(80, h-8), min(600, h+10), 5.0):
-                    for dp in np.arange(max(200, p_val-15), min(600, p_val+18), 10.0):
+            for dd in np.arange(max(50, d-6), min(350, d+7), 2.0):
+                for dh in np.arange(max(80, h-12), min(600, h+15), 5.0):
+                    for dp in np.arange(max(200, p_val-25), min(600, p_val+30), 10.0):
                         param = MetaSurfaceParam(dd, dh, dp,
                             self._last_material, self._last_substrate,
                             self._last_polarization, self._last_angle)
