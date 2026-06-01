@@ -10,6 +10,25 @@ def _get_plt():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.font_manager as fm
+    import os
+
+    # --- Configure Chinese font for matplotlib ---
+    _FONT_CONFIGURED = getattr(_get_plt, '_configured', False)
+    if not _FONT_CONFIGURED:
+        _CHINESE = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei',
+                    'Noto Sans CJK SC', 'Noto Sans SC', 'WenQuanYi Zen Hei',
+                    'AR PL UMing CN', 'sans-serif']
+        available = {f.name for f in fm.fontManager.ttflist}
+        chosen = 'sans-serif'
+        for fn in _CHINESE:
+            if fn in available:
+                chosen = fn
+                break
+        plt.rcParams['font.sans-serif'] = [chosen, 'DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+        _get_plt._configured = True
+
     return plt
 # matplotlib imported lazily to avoid cloud startup issues
 from dataclasses import dataclass
