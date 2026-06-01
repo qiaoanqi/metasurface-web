@@ -418,37 +418,72 @@ class MetaSurfaceColorEngine:
             score = de2k / 5.0 * 0.7 + wl_diff * 0.3
             real_scores.append((score, d, h, p_val, rgb, lab, de2k))
         real_scores.sort(key=lambda x: x[0])
-        # Stage 2: fine search around top 15
-        best_score = 1e12
-        best_param, best_rgb, best_de, best_de2k = None, None, None, 999
+        # Stage 2: fine search around top 15, collect top 3
+        top3 = []  # (score, param, rgb, de76, de2k)
+        seen = set()
         for _, d, h, p_val, _, _, _ in real_scores[:15]:
             for dd in np.arange(max(50, d-5), min(350, d+6), 1.0):
                 for dh in np.arange(max(80, h-10), min(600, h+12), 2.0):
                     for dp in np.arange(max(200, p_val-20), min(600, p_val+25), 5.0):
+                        key = (round(dd,1), round(dh,1), round(dp,1))
+                        if key in seen:
+                            continue
+                        seen.add(key)
                         param = MetaSurfaceParam(dd, dh, dp,
                             self._last_material, self._last_substrate,
                             self._last_polarization, self._last_angle)
                         rgb = self.physical_color(param)
                         lab = rgb_to_lab(rgb[None, :])[0]
                         de2k = delta_e2000(target_lab, lab)
+                        de76 = delta_e76(target_lab, lab)
                         lam_peak = self._peak_wl(dd, dh)
                         wl_diff = abs(lam_peak - target_wl) / 100.0
                         score = de2k / 5.0 * 0.7 + wl_diff * 0.3
-                        if score < best_score:
-                            best_score = score
-                            best_param = param
-                            best_rgb = rgb
-                            best_de = delta_e76(target_lab, lab)
-                            best_de2k = de2k
-        if best_param is None:
+                        top3.append((score, param, rgb, de76, de2k))
+        top3.sort(key=lambda x: x[0])
+        # Deduplicate by similar params
+        unique_top3 = []
+        for item in top3:
+            if len(unique_top3) >= 3:
+                break
+            _, p, _, _, _ = item
+            is_dup = False
+            for _, up, _, _, _ in unique_top3:
+                if (abs(p.diameter_nm - up.diameter_nm) < 5 and
+                    abs(p.height_nm - up.height_nm) < 5 and
+                    abs(p.period_nm - up.period_nm) < 10):
+                    is_dup = True
+                    break
+            if not is_dup:
+                unique_top3.append(item)
+        if len(unique_top3) < 3:
+            # Fallback: take from real_scores
+            for _, d, h, p_val, rgb, lab, de2k in real_scores:
+                if len(unique_top3) >= 3:
+                    break
+                param = MetaSurfaceParam(float(d), float(h), float(p_val),
+                    self._last_material, self._last_substrate,
+                    self._last_polarization, self._last_angle)
+                de76 = delta_e76(target_lab, lab)
+                score = de2k / 5.0 * 0.7
+                is_dup = False
+                for _, up, _, _, _ in unique_top3:
+                    if (abs(d - up.diameter_nm) < 5 and
+                        abs(h - up.height_nm) < 5 and
+                        abs(p_val - up.period_nm) < 10):
+                        is_dup = True
+                        break
+                if not is_dup:
+                    unique_top3.append((score, param, rgb, de76, de2k))
+        # Ensure we have at least 1 result
+        if not unique_top3:
             idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
             p = self.grid_params[idx]
-            best_param = MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2]))
-            best_rgb = self.physical_color(best_param)
-            best_lab = rgb_to_lab(best_rgb[None, :])[0]
-            best_de = delta_e76(target_lab, best_lab)
-            best_de2k = delta_e2000(target_lab, best_lab)
-        return best_param, best_rgb, best_de, best_de2k
+            param = MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2]))
+            rgb = self.physical_color(param)
+            lab = rgb_to_lab(rgb[None, :])[0]
+            unique_top3.append((0, param, rgb, delta_e76(target_lab, lab), delta_e2000(target_lab, lab)))
+        return unique_top3
 
     def image_to_metasurface_map(self, image: Image.Image, max_size: int = 80):
         img = image.convert("RGB")
@@ -463,7 +498,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v4"):
+def get_engine(_cache_key="v5"):
     return MetaSurfaceColorEngine()
 
 try:
@@ -634,7 +669,7 @@ with tab2:
         with st.spinner("搜索 27,000 种参数组合..."):
             engine.rebuild_library(material, substrate, polarization, angle)
             target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
-            best_param, matched_rgb, de_val, de2k_val = engine.inverse_design(target_rgb_norm)
+            top3_results = engine.inverse_design(target_rgb_norm)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -648,21 +683,31 @@ with tab2:
             """, unsafe_allow_html=True)
 
         with col_b:
-            st.markdown("**✅ 匹配结果**")
+            st.markdown("**✅ Top3 匹配结果**")
+            # Build radio options
+            options = []
+            for i, (_, bp, brgb, bde, bde2k) in enumerate(top3_results):
+                hx = rgb_to_hex(brgb)
+                r, g, b = rgb_255(brgb)
+                lbl = f"#{i+1} {hx} | D={bp.diameter_nm:.0f} H={bp.height_nm:.0f} P={bp.period_nm:.0f} | ΔE={bde2k:.1f}"
+                options.append(lbl)
+            choice = st.radio("选择结果", options, horizontal=False, index=0,
+                              key=f'result_choice_{picker_hex}')
+            idx = options.index(choice)
+            best_param, matched_rgb, de_val, de2k_val = top3_results[idx][1], top3_results[idx][2], top3_results[idx][3], top3_results[idx][4]
             hex_m = rgb_to_hex(matched_rgb)
             mr, mg, mb = rgb_255(matched_rgb)
-            st.markdown(f"""
-            <div style="width:100px;height:100px;background:{hex_m};
-                        border-radius:12px;box-shadow:0 4px 16px {hex_m}44;
-                        border:2px solid rgba(255,255,255,0.1);margin:0 auto;"></div>
-            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_m}<br>RGB({mr}, {mg}, {mb})</p>
-            """, unsafe_allow_html=True)
 
-        st.success(f"""
-        **D = {best_param.diameter_nm:.1f} nm** &nbsp;|&nbsp;
-        **H = {best_param.height_nm:.1f} nm** &nbsp;|&nbsp;
-        **P = {best_param.period_nm:.1f} nm**
-        """)
+        st.markdown(f"""
+        <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;">
+          <div style="width:60px;height:60px;background:{hex_m};border-radius:8px;
+                      box-shadow:0 3px 12px {hex_m}44;border:1px solid rgba(255,255,255,0.1);"></div>
+          <div style="font-size:14px;">
+            <b>{hex_m}</b> &nbsp; RGB({mr}, {mg}, {mb})<br>
+            <span style="font-size:12px;opacity:0.7;">D={best_param.diameter_nm:.1f}nm H={best_param.height_nm:.1f}nm P={best_param.period_nm:.1f}nm</span>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
         st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
 # Tab 3: Pattern Generation
 with tab3:
