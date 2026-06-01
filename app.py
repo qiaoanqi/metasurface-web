@@ -10,6 +10,11 @@ def _get_plt():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    _CONFIGURED = getattr(_get_plt, '_cfg', False)
+    if not _CONFIGURED:
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+        _get_plt._cfg = True
     return plt
 # matplotlib imported lazily to avoid cloud startup issues
 from dataclasses import dataclass
