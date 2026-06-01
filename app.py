@@ -397,48 +397,57 @@ class MetaSurfaceColorEngine:
         target_rgb = clamp01(np.asarray(target_rgb, dtype=float))
         target_lab = rgb_to_lab(target_rgb[None, :])[0]
         target_xy = rgb_to_xy(target_rgb)
-        # Stage 1: coarse scan - top 20 by LAB distance
+        target_wl = 380 + (target_xy[0] + target_xy[1]) * 200
+        # Stage 1: coarse scan top 100 by approximate LAB
         diff = target_lab[None, :] - self.grid_lab
         dists = np.sum(diff * diff, axis=1)
-        top_k = min(50, len(dists))
+        top_k = min(100, len(dists))
         top_idx = np.argpartition(dists, top_k)[:top_k]
-        # Stage 2: fine search with full spectrum, peak-wavelength priority
-        best_score = 1e12
-        best_param, best_rgb, best_de, best_de2k = None, None, None, 999
+        # Re-rank top 100 using real physical_color
+        real_scores = []
         for idx in top_idx:
             d, h, p_val = self.grid_params[idx]
-            # Search neighbors with finer steps
-            for dd in np.arange(max(50, d-6), min(350, d+7), 2.0):
-                for dh in np.arange(max(80, h-12), min(600, h+15), 5.0):
-                    for dp in np.arange(max(200, p_val-25), min(600, p_val+30), 10.0):
+            param = MetaSurfaceParam(float(d), float(h), float(p_val),
+                self._last_material, self._last_substrate,
+                self._last_polarization, self._last_angle)
+            rgb = self.physical_color(param)
+            lab = rgb_to_lab(rgb[None, :])[0]
+            de2k = delta_e2000(target_lab, lab)
+            lam_peak = self._peak_wl(d, h)
+            wl_diff = abs(lam_peak - target_wl) / 100.0
+            score = de2k / 5.0 * 0.7 + wl_diff * 0.3
+            real_scores.append((score, d, h, p_val, rgb, lab, de2k))
+        real_scores.sort(key=lambda x: x[0])
+        # Stage 2: fine search around top 15
+        best_score = 1e12
+        best_param, best_rgb, best_de, best_de2k = None, None, None, 999
+        for _, d, h, p_val, _, _, _ in real_scores[:15]:
+            for dd in np.arange(max(50, d-5), min(350, d+6), 1.0):
+                for dh in np.arange(max(80, h-10), min(600, h+12), 2.0):
+                    for dp in np.arange(max(200, p_val-20), min(600, p_val+25), 5.0):
                         param = MetaSurfaceParam(dd, dh, dp,
                             self._last_material, self._last_substrate,
                             self._last_polarization, self._last_angle)
                         rgb = self.physical_color(param)
                         lab = rgb_to_lab(rgb[None, :])[0]
-                        de = delta_e76(target_lab, lab)
-                        # Peak wavelength from Lorentzian (fast)
-                        lam_peak = self._peak_wl(dd, dh)
-                        # Target dominant wavelength from CIE xy
-                        target_wl = 380 + (target_xy[0] + target_xy[1]) * 200
-                        wl_diff = abs(lam_peak - target_wl) / 100.0
                         de2k = delta_e2000(target_lab, lab)
-                        score = wl_diff * 0.4 + de2k / 5.0 * 0.6
+                        lam_peak = self._peak_wl(dd, dh)
+                        wl_diff = abs(lam_peak - target_wl) / 100.0
+                        score = de2k / 5.0 * 0.7 + wl_diff * 0.3
                         if score < best_score:
                             best_score = score
                             best_param = param
                             best_rgb = rgb
-                            best_de = de
+                            best_de = delta_e76(target_lab, lab)
                             best_de2k = de2k
         if best_param is None:
             idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
             p = self.grid_params[idx]
             best_param = MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2]))
-            best_rgb = self.grid_rgb[idx]
-            best_de = delta_e76(target_lab, self.grid_lab[idx])
-            best_de2k = delta_e2000(target_lab, self.grid_lab[idx])
-        else:
-            best_de2k = delta_e2000(target_lab, rgb_to_lab(best_rgb[None,:])[0])
+            best_rgb = self.physical_color(best_param)
+            best_lab = rgb_to_lab(best_rgb[None, :])[0]
+            best_de = delta_e76(target_lab, best_lab)
+            best_de2k = delta_e2000(target_lab, best_lab)
         return best_param, best_rgb, best_de, best_de2k
 
     def image_to_metasurface_map(self, image: Image.Image, max_size: int = 80):
@@ -454,7 +463,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v3"):
+def get_engine(_cache_key="v4"):
     return MetaSurfaceColorEngine()
 
 try:
