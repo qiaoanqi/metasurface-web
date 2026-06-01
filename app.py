@@ -292,34 +292,48 @@ class MetaSurfaceColorEngine:
     def _single_wl_response(self, param, wl_nm):
         d, h, p = param.diameter_nm, param.height_nm, param.period_nm
         n = MaterialLibrary.n_at_wavelength(param.material, wl_nm)
+        dn = n - 2.0
 
-        # --- Dominant resonance wavelength as a function of D, H, material ---
-        # Small D/H -> blue, large D/H -> red (Mie resonance red-shifts with size)
-        lam_peak = 370 + 0.68*(d-60) + 0.20*(h-120) + 32*(n-2.0)
+        # --- Dual Lorentzian: ED (electric dipole) + MD (magnetic dipole) ---
+        # ED resonance: shorter wavelength, narrower, moderate size sensitivity
+        lam_ed = 340 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
+        sigma_ed = max(15 + 0.015*(d-200), 10)
 
-        # Broaden at very large sizes (higher-order modes mix in)
-        sigma = max(18 + 0.02*(d-200), 12)
+        # MD resonance: longer wavelength, broader, higher size sensitivity
+        lam_md = 420 + 0.82*(d-60) + 0.28*(h-120) + 32*dn
+        sigma_md = max(22 + 0.03*(d-200), 15)
 
-        # Fill factor: how much of the period is covered by the pillar
+        # Fill factor
         fill = np.clip((d/p)**2, 0.04, 0.90)
+        fill_amp = 0.30 + 0.80*fill
 
-        # Height-dependent loss (taller pillars have more absorption)
+        # Height-dependent loss
         loss = np.exp(-0.0006*max(h-600, 0))
 
         # --- Angle & polarization dependence ---
         theta = param.angle_deg * 3.14159265 / 180.0
         sin2 = np.sin(theta)**2
         if param.polarization.startswith("TE"):
-            angle_shift = -45 * sin2
-            amp_angle = 1.0 - 0.08 * sin2
+            # ED shifts more with angle, MD is more robust
+            ed_shift = -45 * sin2
+            md_shift = -20 * sin2
+            ed_amp_angle = 1.0 - 0.10 * sin2
+            md_amp_angle = 1.0 - 0.04 * sin2
         else:
-            angle_shift = -18 * sin2
-            amp_angle = 1.0 - 0.20 * sin2
+            ed_shift = -18 * sin2
+            md_shift = -8 * sin2
+            ed_amp_angle = 1.0 - 0.25 * sin2
+            md_amp_angle = 1.0 - 0.12 * sin2
 
-        # Single dominant Lorentzian-like resonance
-        amp = 1.0 / (1.0 + ((wl_nm - (lam_peak + angle_shift))/sigma)**2)
+        # ED Lorentzian
+        ed = 1.0 / (1.0 + ((wl_nm - (lam_ed + ed_shift))/sigma_ed)**2)
+        # MD Lorentzian
+        md = 1.0 / (1.0 + ((wl_nm - (lam_md + md_shift))/sigma_md)**2)
 
-        return float(amp * (0.30 + 0.80*fill) * loss * amp_angle)
+        # Combined: ED ~55% weight, MD ~45% weight
+        combined = 0.55 * ed * ed_amp_angle + 0.45 * md * md_amp_angle
+
+        return float(combined * fill_amp * loss)
 
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
         wls = np.linspace(wl_start, wl_end, n_pts)
@@ -327,7 +341,14 @@ class MetaSurfaceColorEngine:
         return wls, refl
 
     def _peak_wl(self, d, h, n550=2.4157):
-        return 370 + 0.68*(d-60) + 0.20*(h-120) + 32*(n550-2.0)
+        # Return dominant peak: ED for blue-green, MD for red
+        dn = n550 - 2.0
+        lam_ed = 340 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
+        # MD has higher amplitude for D > 200 due to broader resonance
+        if d > 200 and h > 200:
+            lam_md = 420 + 0.82*(d-60) + 0.28*(h-120) + 32*dn
+            return lam_md
+        return lam_ed
 
     def _wl_to_approx_rgb(self, wl_nm):
         idx = int(round((wl_nm - 380.0) / 5.0))
@@ -624,7 +645,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v5"):
+def get_engine(_cache_key="v7_dual_lorentz"):
     return MetaSurfaceColorEngine()
 
 try:
