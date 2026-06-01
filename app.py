@@ -712,19 +712,21 @@ with st.sidebar:
         st.warning('⚠️ D > P：纳米柱会重叠，请调整')
 
     st.divider()
-    st.caption('🎨 快速预设（仅适用于 材料TiO₂&衬底SiO₂&入射角0°）')
     presets = {
         '紫罗兰': (150, 100), '蓝色': (80, 250), '青色': (140, 200),
         '翠绿': (180, 250), '黄色': (250, 220), '橙色': (290, 200), '红色': (310, 160),
     }
-    cols = st.columns(4)
-    for i, (name, (d_val, h_val)) in enumerate(presets.items()):
-        with cols[i % 4]:
-            if st.button(name, key=f'preset_{name}', use_container_width=True,
-                         help=f'D={d_val}nm H={h_val}nm'):
-                st.session_state.d_val = float(d_val)
-                st.session_state.h_val = float(h_val)
-                st.rerun()
+    # Quick presets removed: dual-Lorentzian model limits prevent accurate preset colors.
+    # Use the inverse design tab for precise color matching.
+    st.caption('精准颜色请用「逆设计」标签页搜索匹配')
+    # cols = st.columns(4)
+    # for i, (name, (d_val, h_val)) in enumerate(presets.items()):
+    #     with cols[i % 4]:
+    #         if st.button(name, key=f'preset_{name}', use_container_width=True,
+    #                      help=f'D={d_val}nm H={h_val}nm'):
+    #             st.session_state.d_val = float(d_val)
+    #             st.session_state.h_val = float(h_val)
+    #             st.rerun()
 
 
 # Build param
