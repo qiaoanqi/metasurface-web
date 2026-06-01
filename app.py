@@ -557,8 +557,7 @@ class MetaSurfaceColorEngine:
                 if not is_dup:
                     unique_top3.append((score, param, rgb, de76, de2k))
         # Broad search disabled: too expensive for marginal gains
-        if False:  # was: adaptive broad search
-        if unique_top3 and unique_top3[0][4] > 10.0:
+        if False and unique_top3 and unique_top3[0][4] > 10.0:
             broad_d = np.arange(max(50, self.d_min), self.d_max + 0.1, 10.0)
             broad_h = np.arange(self.h_min, self.h_max + 0.1, 20.0)
             broad_p = np.arange(self.p_min, self.p_max + 0.1, 20.0)
