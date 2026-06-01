@@ -330,8 +330,11 @@ class MetaSurfaceColorEngine:
         # MD Lorentzian
         md = 1.0 / (1.0 + ((wl_nm - (lam_md + md_shift))/sigma_md)**2)
 
-        # Combined: ED ~55% weight, MD ~45% weight
-        combined = 0.55 * ed * ed_amp_angle + 0.45 * md * md_amp_angle
+        # Dynamic weights: ED dominates for small pillars, MD for large
+        # Small D -> ED is stronger (magnetic response weak at small sizes)
+        w_ed = np.clip(0.75 - 0.0015*(d-60), 0.35, 0.75)
+        w_md = 1.0 - w_ed
+        combined = w_ed * ed * ed_amp_angle + w_md * md * md_amp_angle
 
         return float(combined * fill_amp * loss)
 
@@ -645,7 +648,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v7_dual_lorentz"):
+def get_engine(_cache_key="v8_dynamic_weights"):
     return MetaSurfaceColorEngine()
 
 try:
