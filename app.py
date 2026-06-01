@@ -296,7 +296,7 @@ class MetaSurfaceColorEngine:
 
         # --- Dual Lorentzian: ED (electric dipole) + MD (magnetic dipole) ---
         # ED resonance: shorter wavelength, narrower, moderate size sensitivity
-        lam_ed = 340 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
+        lam_ed = 360 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
         sigma_ed = max(15 + 0.015*(d-200), 10)
 
         # MD resonance: longer wavelength, broader, higher size sensitivity
@@ -332,7 +332,7 @@ class MetaSurfaceColorEngine:
 
         # Dynamic weights: ED dominates for small pillars, MD for large
         # Small D -> ED is stronger (magnetic response weak at small sizes)
-        w_ed = np.clip(0.75 - 0.0015*(d-60), 0.35, 0.75)
+        w_ed = np.clip(0.80 - 0.0025*(d-60), 0.10, 0.80)
         w_md = 1.0 - w_ed
         combined = w_ed * ed * ed_amp_angle + w_md * md * md_amp_angle
 
@@ -346,7 +346,7 @@ class MetaSurfaceColorEngine:
     def _peak_wl(self, d, h, n550=2.4157):
         # Return dominant peak: ED for blue-green, MD for red
         dn = n550 - 2.0
-        lam_ed = 340 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
+        lam_ed = 360 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
         # MD has higher amplitude for D > 200 due to broader resonance
         if d > 200 and h > 200:
             lam_md = 400 + 0.75*(d-60) + 0.25*(h-120) + 32*dn
@@ -648,7 +648,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v11_circular"):
+def get_engine(_cache_key="v12_ed_shift"):
     return MetaSurfaceColorEngine()
 
 try:
