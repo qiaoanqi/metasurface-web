@@ -432,9 +432,9 @@ class MetaSurfaceColorEngine:
         top3 = []  # (score, param, rgb, de76, de2k)
         seen = set()
         for _, d, h, p_val, _, _, _ in real_scores[:15]:
-            for dd in np.arange(max(50, d-15), min(350, d+16), 1.0):
-                for dh in np.arange(max(80, h-30), min(600, h+32), 2.0):
-                    for dp in np.arange(max(200, p_val-40), min(600, p_val+45), 5.0):
+            for dd in np.arange(max(50, d-20), min(350, d+21), 1.0):
+                for dh in np.arange(max(80, h-60), min(600, h+62), 2.0):
+                    for dp in np.arange(max(200, p_val-80), min(600, p_val+85), 5.0):
                         if dd >= dp:  # physical: D must be < P
                             continue
                         fill_ratio = (dd/dp)**2
@@ -532,6 +532,70 @@ class MetaSurfaceColorEngine:
                         break
                 if not is_dup:
                     unique_top3.append((score, param, rgb, de76, de2k))
+        # Adaptive broad search: if best DeltaE still large, scan full space at medium steps
+        if unique_top3 and unique_top3[0][4] > 10.0:
+            broad_d = np.arange(max(50, self.d_min), self.d_max + 0.1, 5.0)
+            broad_h = np.arange(self.h_min, self.h_max + 0.1, 15.0)
+            broad_p = np.arange(self.p_min, self.p_max + 0.1, 15.0)
+            broad_candidates = []
+            for bd in broad_d:
+                for bh in broad_h:
+                    for bp in broad_p:
+                        if bd >= bp:
+                            continue
+                        fr = (bd/bp)**2
+                        if fr < 0.15 or fr > 0.85:
+                            continue
+                        param = MetaSurfaceParam(float(bd), float(bh), float(bp),
+                            self._last_material, self._last_substrate,
+                            self._last_polarization, self._last_angle)
+                        rgb = self.physical_color(param)
+                        lab = rgb_to_lab(rgb[None, :])[0]
+                        de2k = delta_e2000(target_lab, lab)
+                        de76 = delta_e76(target_lab, lab)
+                        broad_candidates.append((de2k, param, rgb, de76, de2k))
+            broad_candidates.sort(key=lambda x: x[0])
+            # Merge with existing results, keeping diversity constraints
+            for item in broad_candidates:
+                if len(unique_top3) >= 3:
+                    break
+                _, p, prgb, _, _ = item
+                is_dup = False
+                for _, up, urgb, _, _ in unique_top3:
+                    if (abs(p.diameter_nm - up.diameter_nm) < D_DUP and
+                        abs(p.height_nm - up.height_nm) < H_DUP and
+                        abs(p.period_nm - up.period_nm) < P_DUP):
+                        is_dup = True
+                        break
+                    if delta_e2000(rgb_to_lab(prgb[None,:])[0], rgb_to_lab(urgb[None,:])[0]) < DE_COLOR_DUP:
+                        is_dup = True
+                        break
+                if not is_dup:
+                    unique_top3.append(item)
+            # If broad search found a better #1, replace
+            if broad_candidates and broad_candidates[0][0] < unique_top3[0][4] - 1.0:
+                better = broad_candidates[0]
+                unique_top3.insert(0, better)
+                # Re-dedup
+                final = [unique_top3[0]]
+                for item in unique_top3[1:]:
+                    if len(final) >= 3:
+                        break
+                    _, p, prgb, _, _ = item
+                    is_dup = False
+                    for _, up, urgb, _, _ in final:
+                        if (abs(p.diameter_nm - up.diameter_nm) < D_DUP and
+                            abs(p.height_nm - up.height_nm) < H_DUP and
+                            abs(p.period_nm - up.period_nm) < P_DUP):
+                            is_dup = True
+                            break
+                        if delta_e2000(rgb_to_lab(prgb[None,:])[0], rgb_to_lab(urgb[None,:])[0]) < DE_COLOR_DUP:
+                            is_dup = True
+                            break
+                    if not is_dup:
+                        final.append(item)
+                unique_top3 = final[:3]
+
         # Ensure we have at least 1 result
         if not unique_top3:
             idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
