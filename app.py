@@ -1,5 +1,7 @@
+# v5.3.1
 # ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
+# Deploy trigger
 
 import io
 import numpy as np
@@ -498,7 +500,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v5"):
+def get_engine(_cache_key="v6"):
     return MetaSurfaceColorEngine()
 
 try:
