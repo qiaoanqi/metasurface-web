@@ -953,14 +953,15 @@ with tab2:
     if "search_history" in st.session_state and st.session_state.search_history:
         st.divider()
         st.caption("📋 搜索历史 (最近10次)")
-        cols_h = st.columns([1, 1, 2, 4, 2])
+        cols_h = st.columns([1, 1, 2, 3, 1, 1])
         cols_h[0].caption("目标")
         cols_h[1].caption("匹配")
         cols_h[2].caption("参数")
         cols_h[3].caption("")
-        cols_h[4].caption("ΔE2000")
-        for h in st.session_state.search_history:
-            c0, c1, c2, c3, c4 = st.columns([1, 1, 2, 4, 2])
+        cols_h[4].caption("ΔE")
+        cols_h[5].caption("")
+        for hi, h in enumerate(st.session_state.search_history):
+            c0, c1, c2, c3, c4, c5 = st.columns([1, 1, 2, 3, 1, 1])
             with c0:
                 st.markdown(f'<div style="width:24px;height:24px;background:{h["target_hex"]};border-radius:4px;border:1px solid #fff3;"></div>', unsafe_allow_html=True)
             with c1:
@@ -968,9 +969,31 @@ with tab2:
             with c2:
                 st.caption(f"D={h['D']:.0f} H={h['H']:.0f} P={h['P']:.0f}")
             with c3:
-                st.caption(f"{h['target_hex']} → {h['matched_hex']}")
+                st.caption(f"{h['target_hex']}  {h['matched_hex']}")
             with c4:
                 st.caption(f"{h['dE']:.1f}")
+            with c5:
+                if st.button("查看", key=f"hist_{hi}"):
+                    st.session_state.history_view = h
+                    st.rerun()
+
+    # Show history detail if selected
+    if "history_view" in st.session_state and st.session_state.history_view:
+        hv = st.session_state.history_view
+        st.divider()
+        st.markdown(f"**历史回看: {hv['target_hex']} → {hv['matched_hex']}**")
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            st.markdown(f'<div style="width:80px;height:80px;background:{hv["target_hex"]};border-radius:12px;"></div>', unsafe_allow_html=True)
+            st.caption(f"目标 {hv['target_hex']}")
+        with col_h2:
+            st.markdown(f'<div style="width:80px;height:80px;background:{hv["matched_hex"]};border-radius:12px;"></div>', unsafe_allow_html=True)
+            st.caption(f"匹配 {hv['matched_hex']}")
+        st.code(f"D={hv['D']:.1f}nm  H={hv['H']:.1f}nm  P={hv['P']:.1f}nm")
+        st.caption(f"ΔE2000 = {hv['dE']:.1f}")
+        if st.button("关闭回看"):
+            st.session_state.pop("history_view", None)
+            st.rerun()
 
 # Tab 3: Pattern Generation
 with tab3:
