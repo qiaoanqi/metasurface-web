@@ -767,7 +767,7 @@ with tab2:
         refl_ideal = 1.0 / (1.0 + ((wls_ideal - target_peak_wl) / sigma_ideal)**2)
         refl_m_norm = refl_m / (refl_m.max() if refl_m.max() > 1e-12 else 1.0)
 
-        fig_spec, ax_spec = plt.subplots(figsize=(6, 3))
+        fig_spec, ax_spec = _get_plt().subplots(figsize=(6, 3))
         ax_spec.plot(wls_ideal, refl_ideal, "#80c8ff", linewidth=2, label="理想目标光谱")
         ax_spec.plot(wls_m, refl_m_norm, "#007e97", linewidth=2, label="匹配计算光谱")
         ax_spec.axvline(target_peak_wl, color="#80c8ff", linestyle="--", alpha=0.5)
@@ -783,9 +783,9 @@ with tab2:
         ax_spec.set_ylim(0, 1.1)
         ax_spec.legend(fontsize=8, loc="upper right")
         ax_spec.grid(True, alpha=0.3)
-        plt.tight_layout()
+        fig_spec.tight_layout()
         st.pyplot(fig_spec)
-        plt.close(fig_spec)
+        _get_plt().close(fig_spec)
 # Tab 3: Pattern Generation
 with tab3:
     st.subheader("上传图片，生成超表面纳米柱图案")
