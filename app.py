@@ -441,7 +441,8 @@ class MetaSurfaceColorEngine:
                         score = de2k / 5.0 * 0.7 + wl_diff * 0.3
                         top3.append((score, param, rgb, de76, de2k))
         top3.sort(key=lambda x: x[0])
-        # Deduplicate by similar params
+        # Deduplicate: require meaningful parameter diversity (D>=15nm, H>=20nm, P>=30nm)
+        D_DUP, H_DUP, P_DUP = 15.0, 20.0, 30.0
         unique_top3 = []
         for item in top3:
             if len(unique_top3) >= 3:
@@ -449,15 +450,15 @@ class MetaSurfaceColorEngine:
             _, p, _, _, _ = item
             is_dup = False
             for _, up, _, _, _ in unique_top3:
-                if (abs(p.diameter_nm - up.diameter_nm) < 5 and
-                    abs(p.height_nm - up.height_nm) < 5 and
-                    abs(p.period_nm - up.period_nm) < 10):
+                if (abs(p.diameter_nm - up.diameter_nm) < D_DUP and
+                    abs(p.height_nm - up.height_nm) < H_DUP and
+                    abs(p.period_nm - up.period_nm) < P_DUP):
                     is_dup = True
                     break
             if not is_dup:
                 unique_top3.append(item)
+        # Fallback: scan diverse candidates from real_scores with aggressive dedup
         if len(unique_top3) < 3:
-            # Fallback: take from real_scores
             for _, d, h, p_val, rgb, lab, de2k in real_scores:
                 if len(unique_top3) >= 3:
                     break
@@ -468,9 +469,34 @@ class MetaSurfaceColorEngine:
                 score = de2k / 5.0 * 0.7
                 is_dup = False
                 for _, up, _, _, _ in unique_top3:
-                    if (abs(d - up.diameter_nm) < 5 and
-                        abs(h - up.height_nm) < 5 and
-                        abs(p_val - up.period_nm) < 10):
+                    if (abs(d - up.diameter_nm) < D_DUP and
+                        abs(h - up.height_nm) < H_DUP and
+                        abs(p_val - up.period_nm) < P_DUP):
+                        is_dup = True
+                        break
+                if not is_dup:
+                    unique_top3.append((score, param, rgb, de76, de2k))
+        # Second fallback: scan full grid for diverse alternatives
+        if len(unique_top3) < 3:
+            all_scores = list(zip(dists, range(len(dists))))
+            all_scores.sort()
+            for _, idx in all_scores:
+                if len(unique_top3) >= 3:
+                    break
+                d, h, p_val = self.grid_params[idx]
+                param = MetaSurfaceParam(float(d), float(h), float(p_val),
+                    self._last_material, self._last_substrate,
+                    self._last_polarization, self._last_angle)
+                rgb = self.physical_color(param)
+                lab = rgb_to_lab(rgb[None, :])[0]
+                de2k = delta_e2000(target_lab, lab)
+                de76 = delta_e76(target_lab, lab)
+                score = de2k / 5.0 * 0.7
+                is_dup = False
+                for _, up, _, _, _ in unique_top3:
+                    if (abs(d - up.diameter_nm) < D_DUP and
+                        abs(h - up.height_nm) < H_DUP and
+                        abs(p_val - up.period_nm) < P_DUP):
                         is_dup = True
                         break
                 if not is_dup:
