@@ -762,12 +762,12 @@ with tab1:
     <div style="display:flex;align-items:center;gap:24px;padding:20px;
                 background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                 border-radius:16px;margin-bottom:20px;">
-      <div style="width:220px;height:220px;background:{hex_color};
+      <div style="width:130px;height:130px;background:{hex_color};
                   border-radius:16px;box-shadow:0 8px 32px {hex_color}66,
                   inset 0 1px 0 rgba(255,255,255,0.3);flex-shrink:0;"></div>
       <div style="color:#e0e0e0;">
-        <div style="font-size:36px;font-weight:700;margin-bottom:6px;">{hex_color}</div>
-        <div style="font-size:18px;opacity:0.85;">RGB({r255}, {g255}, {b255})</div>
+        <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{hex_color}</div>
+        <div style="font-size:14px;opacity:0.85;">RGB({r255}, {g255}, {b255})</div>
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
           {material} on {substrate}<br>
           D={diameter:.0f}nm &nbsp; H={height:.0f}nm &nbsp; P={period:.0f}nm<br>
