@@ -826,18 +826,28 @@ with tab2:
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
     if run_btn:
-        engine.rebuild_library(material, substrate, polarization, angle)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        # Result cache: skip search for previously-searched colors
+        cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
+        if "search_cache" not in st.session_state:
+            st.session_state.search_cache = {}
 
-        def update_progress(current, total, label):
-            pct = min(current / max(total, 1), 1.0)
-            progress_bar.progress(pct)
-            status_text.caption(f"{label}: {current}/{total}")
+        if cache_key in st.session_state.search_cache:
+            st.session_state.top3_results = st.session_state.search_cache[cache_key]
+            st.success("从缓存加载，瞬间完成!")
+        else:
+            engine.rebuild_library(material, substrate, polarization, angle)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-        st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
-        progress_bar.progress(1.0)
-        status_text.caption("搜索完成!")
+            def update_progress(current, total, label):
+                pct = min(current / max(total, 1), 1.0)
+                progress_bar.progress(pct)
+                status_text.caption(f"{label}: {current}/{total}")
+
+            st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
+            st.session_state.search_cache[cache_key] = st.session_state.top3_results
+            progress_bar.progress(1.0)
+            status_text.caption("搜索完成!")
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
