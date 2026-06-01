@@ -435,7 +435,7 @@ class MetaSurfaceColorEngine:
         # Stage 1: coarse scan top 100 by approximate LAB
         diff = target_lab[None, :] - self.grid_lab
         dists = np.sum(diff * diff, axis=1)
-        top_k = min(100, len(dists))
+        top_k = min(50, len(dists))
         top_idx = np.argpartition(dists, top_k)[:top_k]
         # Re-rank top 100 using real physical_color
         real_scores = []
@@ -455,10 +455,10 @@ class MetaSurfaceColorEngine:
         # Stage 2: fine search around top 15, collect top 3
         top3 = []  # (score, param, rgb, de76, de2k)
         seen = set()
-        for _, d, h, p_val, _, _, _ in real_scores[:15]:
-            for dd in np.arange(max(50, d-20), min(350, d+21), 1.0):
-                for dh in np.arange(max(80, h-60), min(600, h+62), 2.0):
-                    for dp in np.arange(max(200, p_val-80), min(600, p_val+85), 5.0):
+        for _, d, h, p_val, _, _, _ in real_scores[:8]:
+            for dd in np.arange(max(50, d-10), min(350, d+11), 2.0):
+                for dh in np.arange(max(80, h-30), min(600, h+32), 4.0):
+                    for dp in np.arange(max(200, p_val-30), min(600, p_val+35), 10.0):
                         if dd >= dp:  # physical: D must be < P
                             continue
                         fill_ratio = np.pi*(dd/2)**2/(dp**2)
@@ -556,7 +556,8 @@ class MetaSurfaceColorEngine:
                         break
                 if not is_dup:
                     unique_top3.append((score, param, rgb, de76, de2k))
-        # Adaptive broad search: if best DeltaE still large, scan full space at medium steps
+        # Broad search disabled: too expensive for marginal gains
+        if False:  # was: adaptive broad search
         if unique_top3 and unique_top3[0][4] > 10.0:
             broad_d = np.arange(max(50, self.d_min), self.d_max + 0.1, 10.0)
             broad_h = np.arange(self.h_min, self.h_max + 0.1, 20.0)
@@ -648,7 +649,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v13_zero_floor"):
+def get_engine(_cache_key="v14_fast"):
     return MetaSurfaceColorEngine()
 
 try:
