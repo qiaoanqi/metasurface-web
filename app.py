@@ -300,7 +300,7 @@ class MetaSurfaceColorEngine:
         sigma_ed = max(15 + 0.015*(d-200), 10)
 
         # MD resonance: longer wavelength, broader, higher size sensitivity
-        lam_md = 420 + 0.82*(d-60) + 0.28*(h-120) + 32*dn
+        lam_md = 400 + 0.75*(d-60) + 0.25*(h-120) + 32*dn
         sigma_md = max(22 + 0.03*(d-200), 15)
 
         # Fill factor
@@ -349,7 +349,7 @@ class MetaSurfaceColorEngine:
         lam_ed = 340 + 0.55*(d-60) + 0.12*(h-120) + 32*dn
         # MD has higher amplitude for D > 200 due to broader resonance
         if d > 200 and h > 200:
-            lam_md = 420 + 0.82*(d-60) + 0.28*(h-120) + 32*dn
+            lam_md = 400 + 0.75*(d-60) + 0.25*(h-120) + 32*dn
             return lam_md
         return lam_ed
 
@@ -648,7 +648,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v8_dynamic_weights"):
+def get_engine(_cache_key="v9_md_shift"):
     return MetaSurfaceColorEngine()
 
 try:
