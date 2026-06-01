@@ -1047,6 +1047,40 @@ with tab5:
         fig_cie.tight_layout()
         st.pyplot(fig_cie)
         _get_plt().close(fig_cie)
+
+    # Angle scan: color vs incident angle
+    st.divider()
+    st.subheader("入射角扫描 (0° → 80°)")
+    angles_scan = np.arange(0, 85, 5)
+    scan_rgbs = []
+    for a in angles_scan:
+        param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))
+        scan_rgbs.append(engine.physical_color(param_a))
+    scan_rgbs = np.array(scan_rgbs)
+    scan_hex = [rgb_to_hex(c) for c in scan_rgbs]
+
+    fig_ang, (ax1, ax2) = _get_plt().subplots(1, 2, figsize=(10, 3))
+    ax1.plot(angles_scan, scan_rgbs[:, 0], "r-", lw=1.5, label="R")
+    ax1.plot(angles_scan, scan_rgbs[:, 1], "g-", lw=1.5, label="G")
+    ax1.plot(angles_scan, scan_rgbs[:, 2], "b-", lw=1.5, label="B")
+    ax1.set_xlabel("入射角 (°)")
+    ax1.set_ylabel("sRGB")
+    ax1.set_ylim(0, 1.05)
+    ax1.legend(fontsize=7)
+    ax1.grid(True, alpha=0.3)
+    ax1.set_title("RGB分量 vs 角度")
+    for i, a in enumerate(angles_scan):
+        ax2.add_patch(matplotlib.patches.Rectangle((i, 0), 1, 1, facecolor=scan_hex[i], edgecolor="white", lw=0.3))
+    ax2.set_xlim(0, len(angles_scan))
+    ax2.set_ylim(0, 1)
+    ax2.set_xticks(np.arange(len(angles_scan)) + 0.5)
+    ax2.set_xticklabels([f"{int(a)}" for a in angles_scan], fontsize=6)
+    ax2.set_yticks([])
+    ax2.set_title("色块 vs 角度 (°)")
+    fig_ang.tight_layout()
+    st.pyplot(fig_ang)
+    _get_plt().close(fig_ang)
+
 st.sidebar.markdown("---")
 st.sidebar.caption("AI超表面结构色设计 v3.0")
 st.sidebar.caption("物理模型: Lorentzian 共振 + CIE 1931 光谱管线")
