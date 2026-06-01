@@ -350,7 +350,12 @@ class MetaSurfaceColorEngine:
                 lam_peak = self._peak_wl(d, h, n550)
                 rgb = self._wl_to_approx_rgb(lam_peak)
                 for p in p_vals:
-                    fill = np.clip((d/p)**2, 0.04, 0.90)
+                    if d >= p:  # physical: D must be strictly less than P
+                        continue
+                    fill_ratio = (d/p)**2
+                    if fill_ratio < 0.15 or fill_ratio > 0.85:
+                        continue
+                    fill = fill_ratio
                     amp = 0.30 + 0.80 * fill
                     params_list.append([d, h, p])
                     rgbs_list.append(np.clip(rgb * amp, 0, 1))
@@ -378,7 +383,12 @@ class MetaSurfaceColorEngine:
                 lam_peak = self._peak_wl(d, h, n550)
                 rgb = self._wl_to_approx_rgb(lam_peak)
                 for p in p_vals:
-                    fill = np.clip((d/p)**2, 0.04, 0.90)
+                    if d >= p:  # physical: D must be strictly less than P
+                        continue
+                    fill_ratio = (d/p)**2
+                    if fill_ratio < 0.15 or fill_ratio > 0.85:
+                        continue
+                    fill = fill_ratio
                     amp = 0.30 + 0.80 * fill
                     params_list.append([d, h, p])
                     rgbs_list.append(np.clip(rgb * amp, 0, 1))
@@ -425,6 +435,11 @@ class MetaSurfaceColorEngine:
             for dd in np.arange(max(50, d-15), min(350, d+16), 1.0):
                 for dh in np.arange(max(80, h-30), min(600, h+32), 2.0):
                     for dp in np.arange(max(200, p_val-40), min(600, p_val+45), 5.0):
+                        if dd >= dp:  # physical: D must be < P
+                            continue
+                        fill_ratio = (dd/dp)**2
+                        if fill_ratio < 0.15 or fill_ratio > 0.85:
+                            continue
                         key = (round(dd,1), round(dh,1), round(dp,1))
                         if key in seen:
                             continue
