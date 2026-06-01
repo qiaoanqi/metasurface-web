@@ -846,6 +846,22 @@ with tab2:
 
             st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
             st.session_state.search_cache[cache_key] = st.session_state.top3_results
+            # Save to history
+            if "search_history" not in st.session_state:
+                st.session_state.search_history = []
+            best = st.session_state.top3_results[0]
+            entry = {
+                "target_hex": picker_hex,
+                "target_rgb": (target_r, target_g, target_b),
+                "matched_hex": rgb_to_hex(best[2]),
+                "matched_rgb": rgb_255(best[2]),
+                "D": best[1].diameter_nm,
+                "H": best[1].height_nm,
+                "P": best[1].period_nm,
+                "dE": best[4],
+            }
+            st.session_state.search_history.insert(0, entry)
+            st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
 
@@ -925,6 +941,30 @@ with tab2:
         fig_spec.tight_layout()
         st.pyplot(fig_spec)
         _get_plt().close(fig_spec)
+
+    # Search history
+    if "search_history" in st.session_state and st.session_state.search_history:
+        st.divider()
+        st.caption("📋 搜索历史 (最近10次)")
+        cols_h = st.columns([1, 1, 2, 4, 2])
+        cols_h[0].caption("目标")
+        cols_h[1].caption("匹配")
+        cols_h[2].caption("参数")
+        cols_h[3].caption("")
+        cols_h[4].caption("ΔE2000")
+        for h in st.session_state.search_history:
+            c0, c1, c2, c3, c4 = st.columns([1, 1, 2, 4, 2])
+            with c0:
+                st.markdown(f'<div style="width:24px;height:24px;background:{h["target_hex"]};border-radius:4px;border:1px solid #fff3;"></div>', unsafe_allow_html=True)
+            with c1:
+                st.markdown(f'<div style="width:24px;height:24px;background:{h["matched_hex"]};border-radius:4px;border:1px solid #fff3;"></div>', unsafe_allow_html=True)
+            with c2:
+                st.caption(f"D={h['D']:.0f} H={h['H']:.0f} P={h['P']:.0f}")
+            with c3:
+                st.caption(f"{h['target_hex']} → {h['matched_hex']}")
+            with c4:
+                st.caption(f"{h['dE']:.1f}")
+
 # Tab 3: Pattern Generation
 with tab3:
     st.subheader("上传图片，生成超表面纳米柱图案")
