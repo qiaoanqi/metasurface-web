@@ -671,6 +671,7 @@ with tab2:
             target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
             st.session_state.top3_results = engine.inverse_design(target_rgb_norm)
 
+    if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**🎯 目标颜色**")
