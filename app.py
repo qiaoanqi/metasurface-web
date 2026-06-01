@@ -810,7 +810,7 @@ with tab2:
         picker_hex = st.color_picker("目标颜色", "#80c8ff")
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_btn = st.button("🔍 搜索匹配", use_container_width=True, help="全参数空间扫描约需30-60秒，请耐心等待")
+        run_btn = st.button("🔍 搜索匹配", use_container_width=True, help="全参数空间扫描约需10-30秒，请耐心等待")
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
