@@ -647,7 +647,14 @@ class MetaSurfaceColorEngine:
         arr = np.asarray(img).astype(float) / 255.0
         flat = arr.reshape(-1, 3)
         target_lab = rgb_to_lab(flat)
-        indices = self.nearest_lab_indices(target_lab)
+        # Batch search to avoid memory explosion on large images
+        batch_size = 500
+        indices = np.empty(len(flat), dtype=int)
+        for start in range(0, len(flat), batch_size):
+            end = min(start + batch_size, len(flat))
+            batch_lab = target_lab[start:end]
+            diff = batch_lab[:, None, :] - self.grid_lab[None, :, :]
+            indices[start:end] = np.argmin(np.sum(diff * diff, axis=2), axis=1)
         params = self.grid_params[indices].reshape(arr.shape[0], arr.shape[1], 3)
         mapped_rgb = self.grid_rgb[indices].reshape(arr.shape[0], arr.shape[1], 3)
         return arr, mapped_rgb, params
