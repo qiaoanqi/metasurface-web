@@ -332,7 +332,7 @@ class MetaSurfaceColorEngine:
 
         # Dynamic weights: ED dominates for small pillars, MD for large
         # Small D -> ED is stronger (magnetic response weak at small sizes)
-        w_ed = np.clip(0.80 - 0.0025*(d-60), 0.10, 0.80)
+        w_ed = np.clip(0.80 - 0.003*(d-60), 0.0, 0.80)
         w_md = 1.0 - w_ed
         combined = w_ed * ed * ed_amp_angle + w_md * md * md_amp_angle
 
@@ -648,7 +648,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v12_ed_shift"):
+def get_engine(_cache_key="v13_zero_floor"):
     return MetaSurfaceColorEngine()
 
 try:
