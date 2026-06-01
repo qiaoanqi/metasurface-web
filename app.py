@@ -422,9 +422,9 @@ class MetaSurfaceColorEngine:
         top3 = []  # (score, param, rgb, de76, de2k)
         seen = set()
         for _, d, h, p_val, _, _, _ in real_scores[:15]:
-            for dd in np.arange(max(50, d-5), min(350, d+6), 1.0):
-                for dh in np.arange(max(80, h-10), min(600, h+12), 2.0):
-                    for dp in np.arange(max(200, p_val-20), min(600, p_val+25), 5.0):
+            for dd in np.arange(max(50, d-15), min(350, d+16), 1.0):
+                for dh in np.arange(max(80, h-30), min(600, h+32), 2.0):
+                    for dp in np.arange(max(200, p_val-40), min(600, p_val+45), 5.0):
                         key = (round(dd,1), round(dh,1), round(dp,1))
                         if key in seen:
                             continue
@@ -441,13 +441,14 @@ class MetaSurfaceColorEngine:
                         score = de2k / 5.0 * 0.7 + wl_diff * 0.3
                         top3.append((score, param, rgb, de76, de2k))
         top3.sort(key=lambda x: x[0])
-        # Deduplicate: require meaningful parameter diversity (D>=15nm, H>=20nm, P>=30nm)
-        D_DUP, H_DUP, P_DUP = 15.0, 20.0, 30.0
+        # Deduplicate: param diversity (D>=15nm, H>=20nm, P>=30nm) + color diversity (ΔE>=1.5)
+        D_DUP, H_DUP, P_DUP, DE_COLOR_DUP = 15.0, 20.0, 30.0, 1.5
         unique_top3 = []
         for item in top3:
             if len(unique_top3) >= 3:
                 break
-            _, p, _, _, _ = item
+            _, p, prgb, _, _ = item
+            # Check param similarity
             is_dup = False
             for _, up, _, _, _ in unique_top3:
                 if (abs(p.diameter_nm - up.diameter_nm) < D_DUP and
@@ -455,7 +456,15 @@ class MetaSurfaceColorEngine:
                     abs(p.period_nm - up.period_nm) < P_DUP):
                     is_dup = True
                     break
-            if not is_dup:
+            if is_dup:
+                continue
+            # Check color similarity: skip if too close to any selected result
+            color_dup = False
+            for _, _, urgb, _, _ in unique_top3:
+                if delta_e2000(rgb_to_lab(prgb[None,:])[0], rgb_to_lab(urgb[None,:])[0]) < DE_COLOR_DUP:
+                    color_dup = True
+                    break
+            if not color_dup:
                 unique_top3.append(item)
         # Fallback: scan diverse candidates from real_scores with aggressive dedup
         if len(unique_top3) < 3:
@@ -474,7 +483,14 @@ class MetaSurfaceColorEngine:
                         abs(p_val - up.period_nm) < P_DUP):
                         is_dup = True
                         break
-                if not is_dup:
+                if is_dup:
+                    continue
+                color_dup = False
+                for _, _, urgb, _, _ in unique_top3:
+                    if delta_e2000(lab, rgb_to_lab(urgb[None,:])[0]) < DE_COLOR_DUP:
+                        color_dup = True
+                        break
+                if not color_dup:
                     unique_top3.append((score, param, rgb, de76, de2k))
         # Second fallback: scan full grid for diverse alternatives
         if len(unique_top3) < 3:
