@@ -353,7 +353,14 @@ with st.sidebar:
     material = st.selectbox('材料 (Pillar)', MaterialLibrary.pillar_materials(), index=1)
     substrate = st.selectbox('衬底 (Substrate)', MaterialLibrary.substrate_materials(), index=0)
     polarization = st.selectbox('偏振', ['TE (s-pol)', 'TM (p-pol)'], index=0)
-    angle = st.slider('入射角 (°)', 0.0, 80.0, 0.0, 0.5)
+    if 'a_val' not in st.session_state:
+        st.session_state.a_val = 0.0
+    col_a1, col_a2 = st.columns([3, 1])
+    with col_a1:
+        st.session_state.a_val = st.slider('入射角 (°)', 0.0, 80.0, st.session_state.a_val, 0.1)
+    with col_a2:
+        st.session_state.a_val = st.number_input('精确输入 角度', 0.0, 80.0, st.session_state.a_val, 0.1)
+    angle = st.session_state.a_val
 
     st.divider()
     st.header('📏 纳米柱尺寸')
