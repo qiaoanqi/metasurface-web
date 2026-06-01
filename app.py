@@ -889,6 +889,10 @@ with tab2:
         """, unsafe_allow_html=True)
         st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
 
+        # Copyable parameters
+        param_text = f"D={best_param.diameter_nm:.1f}nm  H={best_param.height_nm:.1f}nm  P={best_param.period_nm:.1f}nm"
+        st.code(param_text, language=None)
+
         # --- Spectral comparison chart ---
         st.markdown("📊 光谱对比")
         wls_m, refl_m = engine.compute_spectrum(best_param)
