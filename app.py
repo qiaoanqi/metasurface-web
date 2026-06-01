@@ -1020,6 +1020,14 @@ with tab5:
         ax_cie.plot(srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
                     'k--', lw=0.8, alpha=0.5, label='sRGB gamut')
 
+        # TiO2 metasurface gamut (sampled from grid)
+        if len(engine.grid_xy) > 0:
+            sample_step = max(1, len(engine.grid_xy) // 2000)
+            gx = engine.grid_xy[::sample_step, 0]
+            gy = engine.grid_xy[::sample_step, 1]
+            ax_cie.scatter(gx, gy, c='#ff6b35', s=1, alpha=0.15, label='TiO2 gamut')
+        ax_cie.legend(fontsize=6, loc='lower left')
+
         # D65 white point
         ax_cie.plot(0.3127, 0.3290, 'k+', ms=8, alpha=0.5)
 
