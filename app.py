@@ -753,6 +753,39 @@ with tab2:
         </div>
         """, unsafe_allow_html=True)
         st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
+
+        # --- Spectral comparison chart ---
+        st.markdown("📊 光谱对比")
+        wls_m, refl_m = engine.compute_spectrum(best_param)
+        target_xy = rgb_to_xy(target_rgb_norm)
+        locus_xy = np.array([xyz_to_xy(np.array([_CIE_X[i], _CIE_Y[i], _CIE_Z[i]])) for i in range(81)])
+        dists_locus = np.sum((locus_xy - target_xy)**2, axis=1)
+        dominant_idx = int(np.argmin(dists_locus))
+        target_peak_wl = float(_CIE_WAVELENGTHS[dominant_idx])
+        sigma_ideal = 15.0
+        wls_ideal = np.linspace(380, 780, 200)
+        refl_ideal = 1.0 / (1.0 + ((wls_ideal - target_peak_wl) / sigma_ideal)**2)
+        refl_m_norm = refl_m / (refl_m.max() if refl_m.max() > 1e-12 else 1.0)
+
+        fig_spec, ax_spec = plt.subplots(figsize=(6, 3))
+        ax_spec.plot(wls_ideal, refl_ideal, "#80c8ff", linewidth=2, label="理想目标光谱")
+        ax_spec.plot(wls_m, refl_m_norm, "#007e97", linewidth=2, label="匹配计算光谱")
+        ax_spec.axvline(target_peak_wl, color="#80c8ff", linestyle="--", alpha=0.5)
+        ax_spec.axvline(wls_m[np.argmax(refl_m_norm)], color="#007e97", linestyle="--", alpha=0.5)
+        ax_spec.annotate(f"目标峰值 {target_peak_wl:.0f}nm", xy=(target_peak_wl, 0.95),
+                         fontsize=8, color="#80c8ff", ha="center")
+        ax_spec.annotate(f"匹配峰值 {wls_m[np.argmax(refl_m_norm)]:.0f}nm",
+                         xy=(wls_m[np.argmax(refl_m_norm)], 0.85),
+                         fontsize=8, color="#007e97", ha="center")
+        ax_spec.set_xlabel("波长 (nm)")
+        ax_spec.set_ylabel("归一化反射率")
+        ax_spec.set_xlim(380, 780)
+        ax_spec.set_ylim(0, 1.1)
+        ax_spec.legend(fontsize=8, loc="upper right")
+        ax_spec.grid(True, alpha=0.3)
+        plt.tight_layout()
+        st.pyplot(fig_spec)
+        plt.close(fig_spec)
 # Tab 3: Pattern Generation
 with tab3:
     st.subheader("上传图片，生成超表面纳米柱图案")
@@ -822,7 +855,7 @@ with tab5:
         ax5.plot(wls, refl, color=hex_c, lw=2.5,
                  label=f"D={diameter:.0f} H={height:.0f}nm")
         ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
-        ax5.set_xlabel("Wavelength (nm)")
+        ax5.set_xlabel("波长 (nm)")
         ax5.set_ylabel("Reflectance")
         ax5.set_title(f"Spectrum: {material} on {substrate}")
         ax5.set_xlim(380, 780)
