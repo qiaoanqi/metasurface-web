@@ -529,10 +529,10 @@ with tab3:
                 orig, mapped, params_arr = engine.image_to_metasurface_map(image, max_s)
 
             fig3, (ax_o, ax_m, ax_d) = _get_plt().subplots(1, 3, figsize=(14, 4))
-            ax_o.imshow(orig); ax_o.set_title("原图"); ax_o.axis("off")
-            ax_m.imshow(mapped); ax_m.set_title("超表面图案"); ax_m.axis("off")
+            ax_o.imshow(orig); ax_o.set_title("Original"); ax_o.axis("off")
+            ax_m.imshow(mapped); ax_m.set_title("Metasurface Pattern"); ax_m.axis("off")
             im = ax_d.imshow(params_arr[:,:,0], cmap="viridis")
-            ax_d.set_title("直径分布 (nm)"); ax_d.axis("off")
+            ax_d.set_title("Diameter Map (nm)"); ax_d.axis("off")
             _get_plt().colorbar(im, ax=ax_d, fraction=0.046)
             fig3.tight_layout()
             st.pyplot(fig3); _get_plt().close(fig3)
