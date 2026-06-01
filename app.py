@@ -150,6 +150,53 @@ def rgb_255(rgb):
 def delta_e76(lab1, lab2):
     return float(np.linalg.norm(np.asarray(lab1) - np.asarray(lab2)))
 
+def delta_e2000(lab1, lab2):
+    L1, a1, b1 = np.asarray(lab1, dtype=float)
+    L2, a2, b2 = np.asarray(lab2, dtype=float)
+    C1 = np.sqrt(a1**2 + b1**2)
+    C2 = np.sqrt(a2**2 + b2**2)
+    Cbar = (C1 + C2) / 2.0
+    G = 0.5 * (1 - np.sqrt(Cbar**7 / (Cbar**7 + 25**7)))
+    a1p = (1 + G) * a1
+    a2p = (1 + G) * a2
+    C1p = np.sqrt(a1p**2 + b1**2)
+    C2p = np.sqrt(a2p**2 + b2**2)
+    h1p = np.degrees(np.arctan2(b1, a1p)) % 360
+    h2p = np.degrees(np.arctan2(b2, a2p)) % 360
+    dLp = L2 - L1
+    dCp = C2p - C1p
+    if C1p * C2p == 0:
+        dhp = 0.0
+    else:
+        dh = h2p - h1p
+        if abs(dh) <= 180:
+            dhp = dh
+        elif dh > 180:
+            dhp = dh - 360
+        else:
+            dhp = dh + 360
+    dHp = 2 * np.sqrt(C1p * C2p) * np.sin(np.radians(dhp / 2.0))
+    Lpbar = (L1 + L2) / 2.0
+    Cpbar = (C1p + C2p) / 2.0
+    if C1p * C2p == 0:
+        hpbar = h1p + h2p
+    else:
+        hpbar = (h1p + h2p) / 2.0
+        if abs(h1p - h2p) > 180:
+            hpbar = (h1p + h2p + 360) / 2.0
+    T = (1 - 0.17 * np.cos(np.radians(hpbar - 30))
+         + 0.24 * np.cos(np.radians(2 * hpbar))
+         + 0.32 * np.cos(np.radians(3 * hpbar + 6))
+         - 0.20 * np.cos(np.radians(4 * hpbar - 63)))
+    dtheta = 30 * np.exp(-((hpbar - 275) / 25)**2)
+    RC = 2 * np.sqrt(Cpbar**7 / (Cpbar**7 + 25**7))
+    SL = 1 + (0.015 * (Lpbar - 50)**2) / np.sqrt(20 + (Lpbar - 50)**2)
+    SC = 1 + 0.045 * Cpbar
+    SH = 1 + 0.015 * Cpbar * T
+    RT = -np.sin(np.radians(2 * dtheta)) * RC
+    dE = np.sqrt((dLp/SL)**2 + (dCp/SC)**2 + (dHp/SH)**2 + RT * (dCp/SC) * (dHp/SH))
+    return float(dE)
+
 # ===================== Material Library =====================
 class MaterialLibrary:
     CAUCHY: dict = {
@@ -357,7 +404,7 @@ class MetaSurfaceColorEngine:
         top_idx = np.argpartition(dists, top_k)[:top_k]
         # Stage 2: fine search with full spectrum, peak-wavelength priority
         best_score = 1e12
-        best_param, best_rgb, best_de = None, None, None
+        best_param, best_rgb, best_de, best_de2k = None, None, None, 999
         for idx in top_idx:
             d, h, p_val = self.grid_params[idx]
             # Search neighbors with finer steps
@@ -375,19 +422,24 @@ class MetaSurfaceColorEngine:
                         # Target dominant wavelength from CIE xy
                         target_wl = 380 + (target_xy[0] + target_xy[1]) * 200
                         wl_diff = abs(lam_peak - target_wl) / 100.0
-                        score = wl_diff * 0.6 + de / 30.0 * 0.4
+                        de2k = delta_e2000(target_lab, lab)
+                        score = wl_diff * 0.4 + de2k / 5.0 * 0.6
                         if score < best_score:
                             best_score = score
                             best_param = param
                             best_rgb = rgb
                             best_de = de
+                            best_de2k = de2k
         if best_param is None:
             idx = int(self.nearest_lab_indices(target_lab[None, :])[0])
             p = self.grid_params[idx]
             best_param = MetaSurfaceParam(float(p[0]), float(p[1]), float(p[2]))
             best_rgb = self.grid_rgb[idx]
             best_de = delta_e76(target_lab, self.grid_lab[idx])
-        return best_param, best_rgb, best_de
+            best_de2k = delta_e2000(target_lab, self.grid_lab[idx])
+        else:
+            best_de2k = delta_e2000(target_lab, rgb_to_lab(best_rgb[None,:])[0])
+        return best_param, best_rgb, best_de, best_de2k
 
     def image_to_metasurface_map(self, image: Image.Image, max_size: int = 80):
         img = image.convert("RGB")
@@ -573,7 +625,7 @@ with tab2:
         with st.spinner("搜索 27,000 种参数组合..."):
             engine.rebuild_library(material, substrate, polarization, angle)
             target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
-            best_param, matched_rgb, de_val = engine.inverse_design(target_rgb_norm)
+            best_param, matched_rgb, de_val, de2k_val = engine.inverse_design(target_rgb_norm)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -600,9 +652,9 @@ with tab2:
         st.success(f"""
         **D = {best_param.diameter_nm:.1f} nm** &nbsp;|&nbsp;
         **H = {best_param.height_nm:.1f} nm** &nbsp;|&nbsp;
-        **P = {best_param.period_nm:.1f} nm** &nbsp;|&nbsp;
-        dE76 = {de_val:.1f} (数值越小越接近，<2 人眼不可分辨)
+        **P = {best_param.period_nm:.1f} nm**
         """)
+        st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
 # Tab 3: Pattern Generation
 with tab3:
     st.subheader("上传图片，生成超表面纳米柱图案")
