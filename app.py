@@ -1,7 +1,5 @@
-# v5.3.1
 # ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
-# Deploy trigger
 
 import io
 import numpy as np
@@ -500,7 +498,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v6"):
+def get_engine(_cache_key="v5"):
     return MetaSurfaceColorEngine()
 
 try:
@@ -667,10 +665,11 @@ with tab2:
     target_b = int(picker_hex[5:7], 16)
     st.caption(f"RGB({target_r}, {target_g}, {target_b})  |  {picker_hex}")
 
+    target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
+
     if run_btn:
         with st.spinner("搜索 27,000 种参数组合..."):
             engine.rebuild_library(material, substrate, polarization, angle)
-            target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
             st.session_state.top3_results = engine.inverse_design(target_rgb_norm)
 
     if 'top3_results' in st.session_state:
