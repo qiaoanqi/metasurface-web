@@ -304,7 +304,7 @@ class MetaSurfaceColorEngine:
         sigma_md = max(22 + 0.03*(d-200), 15)
 
         # Fill factor
-        fill = np.clip((d/p)**2, 0.04, 0.90)
+        fill = np.clip(np.pi*(d/2)**2/(p**2), 0.03, 0.70)
         fill_amp = 0.30 + 0.80*fill
 
         # Height-dependent loss
@@ -376,8 +376,8 @@ class MetaSurfaceColorEngine:
                 for p in p_vals:
                     if d >= p:  # physical: D must be strictly less than P
                         continue
-                    fill_ratio = (d/p)**2
-                    if fill_ratio < 0.15 or fill_ratio > 0.85:
+                    fill_ratio = np.pi*(d/2)**2/(p**2)
+                    if fill_ratio < 0.03 or fill_ratio > 0.70:
                         continue
                     fill = fill_ratio
                     amp = 0.30 + 0.80 * fill
@@ -409,8 +409,8 @@ class MetaSurfaceColorEngine:
                 for p in p_vals:
                     if d >= p:  # physical: D must be strictly less than P
                         continue
-                    fill_ratio = (d/p)**2
-                    if fill_ratio < 0.15 or fill_ratio > 0.85:
+                    fill_ratio = np.pi*(d/2)**2/(p**2)
+                    if fill_ratio < 0.03 or fill_ratio > 0.70:
                         continue
                     fill = fill_ratio
                     amp = 0.30 + 0.80 * fill
@@ -461,8 +461,8 @@ class MetaSurfaceColorEngine:
                     for dp in np.arange(max(200, p_val-80), min(600, p_val+85), 5.0):
                         if dd >= dp:  # physical: D must be < P
                             continue
-                        fill_ratio = (dd/dp)**2
-                        if fill_ratio < 0.15 or fill_ratio > 0.85:
+                        fill_ratio = np.pi*(dd/2)**2/(dp**2)
+                        if fill_ratio < 0.03 or fill_ratio > 0.70:
                             continue
                         key = (round(dd,1), round(dh,1), round(dp,1))
                         if key in seen:
@@ -648,7 +648,7 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v9_md_shift"):
+def get_engine(_cache_key="v11_circular"):
     return MetaSurfaceColorEngine()
 
 try:
