@@ -427,7 +427,7 @@ class MetaSurfaceColorEngine:
         diff = target_lab[:, None, :] - self.grid_lab[None, :, :]
         return np.argmin(np.sum(diff * diff, axis=2), axis=1)
 
-    def inverse_design(self, target_rgb: np.ndarray):
+    def inverse_design(self, target_rgb: np.ndarray, progress_callback=None):
         target_rgb = clamp01(np.asarray(target_rgb, dtype=float))
         target_lab = rgb_to_lab(target_rgb[None, :])[0]
         target_xy = rgb_to_xy(target_rgb)
@@ -437,9 +437,12 @@ class MetaSurfaceColorEngine:
         dists = np.sum(diff * diff, axis=1)
         top_k = min(50, len(dists))
         top_idx = np.argpartition(dists, top_k)[:top_k]
-        # Re-rank top 100 using real physical_color
+        # Re-rank top 50 using real physical_color
         real_scores = []
-        for idx in top_idx:
+        total_rerank = len(top_idx)
+        for ri, idx in enumerate(top_idx):
+            if progress_callback:
+                progress_callback(ri, total_rerank, "粗扫重排")
             d, h, p_val = self.grid_params[idx]
             param = MetaSurfaceParam(float(d), float(h), float(p_val),
                 self._last_material, self._last_substrate,
@@ -455,7 +458,10 @@ class MetaSurfaceColorEngine:
         # Stage 2: fine search around top 15, collect top 3
         top3 = []  # (score, param, rgb, de76, de2k)
         seen = set()
-        for _, d, h, p_val, _, _, _ in real_scores[:8]:
+        fine_count = len(real_scores[:8])
+        for fi, (_, d, h, p_val, _, _, _) in enumerate(real_scores[:8]):
+            if progress_callback:
+                progress_callback(fi, fine_count, "精细搜索")
             for dd in np.arange(max(50, d-10), min(350, d+11), 2.0):
                 for dh in np.arange(max(80, h-30), min(600, h+32), 4.0):
                     for dp in np.arange(max(200, p_val-30), min(600, p_val+35), 10.0):
@@ -820,9 +826,17 @@ with tab2:
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
     if run_btn:
-        with st.spinner("搜索 27,000 种参数组合..."):
-            engine.rebuild_library(material, substrate, polarization, angle)
-            st.session_state.top3_results = engine.inverse_design(target_rgb_norm)
+        engine.rebuild_library(material, substrate, polarization, angle)
+        progress_bar = st.progress(0, "正在初始化...")
+        status_text = st.empty()
+
+        def update_progress(current, total, label):
+            pct = min(current / max(total, 1), 1.0)
+            progress_bar.progress(pct, f"{label}: {current}/{total}")
+
+        st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
+        progress_bar.progress(1.0, "搜索完成!")
+        status_text.empty()
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
