@@ -1048,6 +1048,24 @@ with st.sidebar:
     if 'h2_val' not in st.session_state:
         st.session_state.h2_val = 350.0
     if st.session_state.dual_pillar:
+        # 预验证: 在渲染滑块前先修正参数, 确保滑块显示修正后的值
+        try:
+            pre = DualPillarParam(
+                st.session_state.get('d1_val', 120.0),
+                st.session_state.get('h1_val', 250.0),
+                st.session_state.get('d2_val', 200.0),
+                st.session_state.get('h2_val', 350.0),
+                st.session_state.p_val,
+                material, substrate, polarization, angle
+            )
+            if pre._corrected:
+                st.session_state.p_val = pre.period_nm
+                st.session_state.d1_val = pre.d1_nm
+                st.session_state.d2_val = pre.d2_nm
+                st.session_state._dual_correction = pre._correction_msg
+        except Exception:
+            pass
+
         # --- Dual-Pillar Controls ---
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
@@ -1144,14 +1162,8 @@ if st.session_state.get('dual_pillar', False):
         material=material, substrate=substrate,
         polarization=polarization, angle_deg=angle
     )
-    # 修正值同步回侧边栏滑块 + 持久化提示
-    if param._corrected:
-        st.session_state.p_val = param.period_nm
-        st.session_state.d1_val = param.d1_nm
-        st.session_state.d2_val = param.d2_nm
-        st.session_state._dual_correction = param._correction_msg
-    elif st.session_state.get('_dual_correction'):
-        # 用户手动拖了滑块 → 清除旧提示
+    # 检测用户手动拖滑块 → 清除旧修正提示
+    if st.session_state.get('_dual_correction'):
         prev = st.session_state.get('_prev_dual_params', ())
         curr = (st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val)
         if curr != prev:
