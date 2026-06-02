@@ -1144,6 +1144,11 @@ if st.session_state.get('dual_pillar', False):
         material=material, substrate=substrate,
         polarization=polarization, angle_deg=angle
     )
+    # 修正值同步回侧边栏滑块
+    if param._corrected:
+        st.session_state.p_val = param.period_nm
+        st.session_state.d1_val = param.d1_nm
+        st.session_state.d2_val = param.d2_nm
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
