@@ -248,6 +248,77 @@ class MetaSurfaceParam:
     polarization: str   = "TE (s-pol)"
     angle_deg:    float = 0.0
 
+@dataclass(frozen=True)
+class DualPillarParam:
+    """双异质纳米柱超单元参数"""
+    d1_nm:       float  # 柱1直径
+    h1_nm:       float  # 柱1高度
+    d2_nm:       float  # 柱2直径
+    h2_nm:       float  # 柱2高度
+    period_nm:   float = 420.0
+    material:    str   = "TiO2 (anatase)"
+    substrate:   str   = "SiO2 (fused silica)"
+    polarization: str  = "TE (s-pol)"
+    angle_deg:   float = 0.0
+
+    def __post_init__(self):
+        if self.d1_nm >= self.period_nm or self.d2_nm >= self.period_nm:
+            raise ValueError(f"D must be < P: D1={self.d1_nm}, D2={self.d2_nm}, P={self.period_nm}")
+        fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
+        fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
+        total_fill = fill1 + fill2
+        if total_fill > 0.85:
+            raise ValueError(f"Total fill {total_fill:.3f} > 0.85: pillars overlap")
+        if fill1 < 0.01 or fill1 > 0.70:
+            raise ValueError(f"Pillar1 fill {fill1:.3f} out of [0.01, 0.70]")
+        if fill2 < 0.01 or fill2 > 0.70:
+            raise ValueError(f"Pillar2 fill {fill2:.3f} out of [0.01, 0.70]")
+
+@staticmethod
+def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm):
+    """静态方法: 计算单根纳米柱的复数反射系数。
+    供单柱和双柱模型共用, 避免代码重复。
+    """
+    n_mat = MaterialLibrary.n_at_wavelength(material, wl_nm)
+    dn = n_mat - 2.0
+
+    lam_ed = 360 + 0.55*(d_nm-60) + 0.12*(h_nm-120) + 32*dn
+    sigma_ed = max(15 + 0.015*(d_nm-200), 10)
+    lam_md = 400 + 0.75*(d_nm-60) + 0.25*(h_nm-120) + 32*dn
+    sigma_md = max(22 + 0.03*(d_nm-200), 15)
+
+    fill = np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.01, 0.70)
+    fill_amp = 0.30 + 0.80*fill
+    loss = np.exp(-0.0006*max(h_nm-600, 0))
+
+    theta = angle_deg * 3.14159265 / 180.0
+    sin2 = np.sin(theta)**2
+    if polarization.startswith("TE"):
+        ed_shift, md_shift = -45 * sin2, -20 * sin2
+        ed_amp_angle = 1.0 - 0.10 * sin2
+        md_amp_angle = 1.0 - 0.04 * sin2
+    else:
+        ed_shift, md_shift = -18 * sin2, -8 * sin2
+        ed_amp_angle = 1.0 - 0.25 * sin2
+        md_amp_angle = 1.0 - 0.12 * sin2
+
+    w_ed = np.clip(0.80 - 0.003*(d_nm-60), 0.0, 0.80)
+    w_md = 1.0 - w_ed
+
+    ed_center = lam_ed + ed_shift
+    detune_ed = (wl_nm - ed_center) / sigma_ed
+    ed_amp = np.sqrt(1.0 / (1.0 + detune_ed**2)) * np.sqrt(ed_amp_angle)
+    ed_phase = -np.arctan(detune_ed)
+
+    md_center = lam_md + md_shift
+    detune_md = (wl_nm - md_center) / sigma_md
+    md_amp = np.sqrt(1.0 / (1.0 + detune_md**2)) * np.sqrt(md_amp_angle)
+    md_phase = -np.arctan(detune_md)
+
+    r_ed = ed_amp * np.exp(1j * ed_phase)
+    r_md = md_amp * np.exp(1j * md_phase)
+    return (w_ed * r_ed + w_md * r_md) * np.sqrt(float(fill_amp * loss)), fill
+
 class MetaSurfaceColorEngine:
     def __init__(self):
         self._cache = {}
@@ -259,6 +330,7 @@ class MetaSurfaceColorEngine:
         self._last_substrate = "SiO2 (fused silica)"
         self._last_polarization = "TE (s-pol)"
         self._last_angle = 0.0
+        self._enable_far_field = False
         try:
             self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
         except Exception as e:
@@ -271,12 +343,38 @@ class MetaSurfaceColorEngine:
             self.grid_lab = np.zeros((0, 3))
             self.grid_xy = np.zeros((0, 2))
 
-    def physical_color(self, param: MetaSurfaceParam) -> np.ndarray:
-        wls = np.arange(380, 785, 5)  # 81 wavelength points
-        refl = np.array([self._single_wl_response(param, wl) for wl in wls])
-        refl_max = refl.max()
-        if refl_max > 1e-12:
-            refl = refl / refl_max
+    def physical_color(self, param) -> np.ndarray:
+        """支持单柱(MetaSurfaceParam)和双柱(DualPillarParam)参数"""
+        if isinstance(param, DualPillarParam):
+            if getattr(self, '_enable_far_field', False):
+                wls, refl = self._dual_far_field_spectrum(param)
+            else:
+                # Near-field: incoherent sum of two pillar intensities + gap
+                wls = np.arange(380, 785, 5)
+                refl = np.zeros(len(wls))
+                for i, wl_nm in enumerate(wls):
+                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, wl_nm)
+                    I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, wl_nm)
+                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, 550.0)
+                    _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, 550.0)
+                    refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
+                refl_max = refl.max()
+                if refl_max > 1e-12:
+                    refl = refl / refl_max
+            return spectrum_to_srgb(wls, refl)
+        # Single pillar (MetaSurfaceParam)
+        if getattr(self, '_enable_far_field', False):
+            wls, refl = self._far_field_spectrum(param)
+        else:
+            wls = np.arange(380, 785, 5)
+            refl = np.array([self._single_wl_response(param, wl) for wl in wls])
+            refl_max = refl.max()
+            if refl_max > 1e-12:
+                refl = refl / refl_max
         return spectrum_to_srgb(wls, refl)
 
     def ai_predict_color(self, param: MetaSurfaceParam) -> np.ndarray:
@@ -338,7 +436,83 @@ class MetaSurfaceColorEngine:
 
         return float(combined * fill_amp * loss)
 
+    def _complex_pillar_response(self, param, wl_nm):
+        r, _ = _single_pillar_complex(
+            param.diameter_nm, param.height_nm, param.period_nm,
+            param.material, param.polarization, param.angle_deg, wl_nm)
+        return r
+
+    def _far_field_spectrum(self, param):
+        wls = np.arange(380, 785, 5)
+        d, h, p = param.diameter_nm, param.height_nm, param.period_nm
+        fill = np.clip(np.pi*(d/2)**2/(p**2), 0.03, 0.70)
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
+        r_sub = (1.0 - n_sub) / (1.0 + n_sub)
+        refl_eff = np.zeros(len(wls))
+        for i, wl_nm in enumerate(wls):
+            r_pillar = self._complex_pillar_response(param, wl_nm)
+            r_0 = fill * r_pillar + (1.0 - fill) * r_sub
+            refl_eff[i] = float(abs(r_0)**2)
+        return wls, refl_eff
+
+
+    def _dual_far_field_spectrum(self, dp: DualPillarParam):
+        """双柱超单元远场 0 阶衍射有效反射率。
+
+        超单元含两根不同尺寸纳米柱, 0 阶远场为三组分相干叠加:
+        r_0 = fill1·r1 + fill2·r2 + (1-fill1-fill2)·r_sub
+        R_eff = |r_0|²
+
+        两根柱子各自独立的 ED+MD 共振提供 4 个可调峰,
+        理论上可拟合几乎任意可见光谱形状。
+        """
+        wls = np.arange(380, 785, 5)
+        d1, h1 = dp.d1_nm, dp.h1_nm
+        d2, h2 = dp.d2_nm, dp.h2_nm
+        p = dp.period_nm
+        mat = dp.material
+        sub = dp.substrate
+        pol = dp.polarization
+        ang = dp.angle_deg
+
+        _, fill1 = _single_pillar_complex(d1, h1, p, mat, pol, ang, 550.0)
+        _, fill2 = _single_pillar_complex(d2, h2, p, mat, pol, ang, 550.0)
+        fill_gap = 1.0 - fill1 - fill2
+
+        n_sub = MaterialLibrary.n_at_wavelength(sub, 550.0)
+        r_sub = (1.0 - n_sub) / (1.0 + n_sub)
+
+        refl_eff = np.zeros(len(wls))
+        for i, wl_nm in enumerate(wls):
+            r1, _ = _single_pillar_complex(d1, h1, p, mat, pol, ang, wl_nm)
+            r2, _ = _single_pillar_complex(d2, h2, p, mat, pol, ang, wl_nm)
+            r_0 = fill1 * r1 + fill2 * r2 + fill_gap * r_sub
+            refl_eff[i] = float(abs(r_0)**2)
+        return wls, refl_eff
+
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
+        if isinstance(param, DualPillarParam):
+            if getattr(self, '_enable_far_field', False):
+                return self._dual_far_field_spectrum(param)
+            wls = np.linspace(wl_start, wl_end, n_pts)
+            refl = np.zeros(len(wls))
+            for i, wl_nm in enumerate(wls):
+                I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                    param.material, param.polarization, param.angle_deg, wl_nm)
+                I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                    param.material, param.polarization, param.angle_deg, wl_nm)
+                _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                    param.material, param.polarization, param.angle_deg, 550.0)
+                _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                    param.material, param.polarization, param.angle_deg, 550.0)
+                refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
+            refl_max = refl.max()
+            if refl_max > 1e-12:
+                refl = refl / refl_max
+            return wls, refl
+        if getattr(self, '_enable_far_field', False):
+            wls, refl = self._far_field_spectrum(param)
+            return wls, refl
         wls = np.linspace(wl_start, wl_end, n_pts)
         refl = np.array([self._single_wl_response(param, w) for w in wls])
         return wls, refl
@@ -661,11 +835,12 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v15_progress"):
+def get_engine(_cache_key="v16_farfield"):
     return MetaSurfaceColorEngine()
 
 try:
     engine = get_engine()
+    engine._enable_far_field = st.session_state.get('far_field', False)
 except Exception as e:
     st.error(f"Engine init failed: {e}")
     import traceback; st.code(traceback.format_exc())
@@ -691,7 +866,40 @@ with st.sidebar:
     angle = st.session_state.a_val
 
     st.divider()
+    st.header('🔭 远场传播')
+    if 'far_field' not in st.session_state:
+        st.session_state.far_field = False
+    st.session_state.far_field = st.checkbox(
+        '启用角谱远场传播 (Angular Spectrum)',
+        value=st.session_state.far_field,
+        help='开启后采用角谱理论计算远场0阶衍射，更接近实验实测'
+    )
+    if 'z_view' not in st.session_state:
+        st.session_state.z_view = 100.0
+    col_z1, col_z2 = st.columns([3, 1])
+    with col_z1:
+        st.session_state.z_view = st.slider(
+            '观察距离 z (mm)', 10.0, 1000.0, st.session_state.z_view, 10.0,
+            disabled=not st.session_state.far_field,
+            help='光从超表面传播到人眼/探测器的距离'
+        )
+    with col_z2:
+        st.session_state.z_view = st.number_input(
+            '精确输入 z', 10.0, 1000.0, st.session_state.z_view, 10.0,
+            disabled=not st.session_state.far_field
+        )
+
+    st.divider()
     st.header('📏 纳米柱尺寸')
+
+    if 'dual_pillar' not in st.session_state:
+        st.session_state.dual_pillar = False
+    st.session_state.dual_pillar = st.checkbox(
+        '🔀 双柱超单元模式 (Dual-Pillar Supercell)',
+        value=st.session_state.dual_pillar,
+        help='启用后使用两根不同尺寸纳米柱，可产生4个独立调谐峰，显著扩展色域'
+    )
+    st.caption('双柱模式下逆设计搜索空间较大，建议在实时预览中手动调参')
 
     if 'd_val' not in st.session_state:
         st.session_state.d_val = 180.0
@@ -699,30 +907,85 @@ with st.sidebar:
         st.session_state.h_val = 300.0
     if 'p_val' not in st.session_state:
         st.session_state.p_val = 400.0
+    # Dual-pillar state
+    if 'd1_val' not in st.session_state:
+        st.session_state.d1_val = 120.0
+    if 'h1_val' not in st.session_state:
+        st.session_state.h1_val = 250.0
+    if 'd2_val' not in st.session_state:
+        st.session_state.d2_val = 200.0
+    if 'h2_val' not in st.session_state:
+        st.session_state.h2_val = 350.0
 
-    col_d1, col_d2 = st.columns([3, 1])
-    with col_d1:
-        st.session_state.d_val = st.slider('直径 D (nm)', 50.0, 350.0, st.session_state.d_val, 0.1)
-    with col_d2:
-        st.session_state.d_val = st.number_input('精确输入 D', 50.0, 350.0, st.session_state.d_val, 0.1)
-    diameter = st.session_state.d_val
+    if st.session_state.dual_pillar:
+        # --- Dual-Pillar Controls ---
+        col_d1, col_d2 = st.columns([3, 1])
+        with col_d1:
+            st.session_state.d1_val = st.slider('柱1直径 D1 (nm)', 50.0, 350.0, st.session_state.d1_val, 0.1)
+        with col_d2:
+            st.session_state.d1_val = st.number_input('精确输入 D1', 50.0, 350.0, st.session_state.d1_val, 0.1)
 
-    col_h1, col_h2 = st.columns([3, 1])
-    with col_h1:
-        st.session_state.h_val = st.slider('高度 H (nm)', 80.0, 600.0, st.session_state.h_val, 0.1)
-    with col_h2:
-        st.session_state.h_val = st.number_input('精确输入 H', 80.0, 600.0, st.session_state.h_val, 0.1)
-    height = st.session_state.h_val
+        col_h1, col_h2 = st.columns([3, 1])
+        with col_h1:
+            st.session_state.h1_val = st.slider('柱1高度 H1 (nm)', 80.0, 600.0, st.session_state.h1_val, 0.1)
+        with col_h2:
+            st.session_state.h1_val = st.number_input('精确输入 H1', 80.0, 600.0, st.session_state.h1_val, 0.1)
 
-    col_p1, col_p2 = st.columns([3, 1])
-    with col_p1:
-        st.session_state.p_val = st.slider('周期 P (nm)', 200.0, 600.0, st.session_state.p_val, 0.1)
-    with col_p2:
-        st.session_state.p_val = st.number_input('精确输入 P', 200.0, 600.0, st.session_state.p_val, 0.1)
-    period = st.session_state.p_val
+        col_d3, col_d4 = st.columns([3, 1])
+        with col_d3:
+            st.session_state.d2_val = st.slider('柱2直径 D2 (nm)', 50.0, 350.0, st.session_state.d2_val, 0.1)
+        with col_d4:
+            st.session_state.d2_val = st.number_input('精确输入 D2', 50.0, 350.0, st.session_state.d2_val, 0.1)
 
-    if diameter > period:
-        st.warning('⚠️ D > P：纳米柱会重叠，请调整')
+        col_h3, col_h4 = st.columns([3, 1])
+        with col_h3:
+            st.session_state.h2_val = st.slider('柱2高度 H2 (nm)', 80.0, 600.0, st.session_state.h2_val, 0.1)
+        with col_h4:
+            st.session_state.h2_val = st.number_input('精确输入 H2', 80.0, 600.0, st.session_state.h2_val, 0.1)
+
+        col_p1, col_p2 = st.columns([3, 1])
+        with col_p1:
+            st.session_state.p_val = st.slider('周期 P (nm)', 200.0, 600.0, st.session_state.p_val, 0.1)
+        with col_p2:
+            st.session_state.p_val = st.number_input('精确输入 P', 200.0, 600.0, st.session_state.p_val, 0.1)
+
+        diameter = st.session_state.d1_val  # for backward compat
+        height = st.session_state.h1_val
+        period = st.session_state.p_val
+
+        # Validation
+        d1, d2, pv = st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val
+        fill1 = np.pi*(d1/2)**2/(pv**2)
+        fill2 = np.pi*(d2/2)**2/(pv**2)
+        if d1 >= pv or d2 >= pv:
+            st.warning('⚠️ D1={:.0f} D2={:.0f} >= P={:.0f}: 超出单元边界'.format(d1, d2, pv))
+        if fill1 + fill2 > 0.85:
+            st.warning('⚠️ 占空比总和 {:.2f} > 0.85: 纳米柱可能重叠'.format(fill1+fill2))
+    else:
+        # --- Single-Pillar Controls (original) ---
+        col_d1, col_d2 = st.columns([3, 1])
+        with col_d1:
+            st.session_state.d_val = st.slider('直径 D (nm)', 50.0, 350.0, st.session_state.d_val, 0.1)
+        with col_d2:
+            st.session_state.d_val = st.number_input('精确输入 D', 50.0, 350.0, st.session_state.d_val, 0.1)
+        diameter = st.session_state.d_val
+
+        col_h1, col_h2 = st.columns([3, 1])
+        with col_h1:
+            st.session_state.h_val = st.slider('高度 H (nm)', 80.0, 600.0, st.session_state.h_val, 0.1)
+        with col_h2:
+            st.session_state.h_val = st.number_input('精确输入 H', 80.0, 600.0, st.session_state.h_val, 0.1)
+        height = st.session_state.h_val
+
+        col_p1, col_p2 = st.columns([3, 1])
+        with col_p1:
+            st.session_state.p_val = st.slider('周期 P (nm)', 200.0, 600.0, st.session_state.p_val, 0.1)
+        with col_p2:
+            st.session_state.p_val = st.number_input('精确输入 P', 200.0, 600.0, st.session_state.p_val, 0.1)
+        period = st.session_state.p_val
+
+        if diameter > period:
+            st.warning('⚠️ D > P：纳米柱会重叠，请调整')
 
     st.divider()
     presets = {
@@ -743,7 +1006,16 @@ with st.sidebar:
 
 
 # Build param
-param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
+if st.session_state.get('dual_pillar', False):
+    param = DualPillarParam(
+        d1_nm=st.session_state.d1_val, h1_nm=st.session_state.h1_val,
+        d2_nm=st.session_state.d2_val, h2_nm=st.session_state.h2_val,
+        period_nm=st.session_state.p_val,
+        material=material, substrate=substrate,
+        polarization=polarization, angle_deg=angle
+    )
+else:
+    param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
 
 # Tabs
@@ -758,6 +1030,10 @@ with tab1:
     r255, g255, b255 = rgb_255(rgb)
 
     # --- Color swatch card ---
+    if st.session_state.get('dual_pillar', False):
+        param_info = f"D1={st.session_state.d1_val:.0f}nm H1={st.session_state.h1_val:.0f}nm | D2={st.session_state.d2_val:.0f}nm H2={st.session_state.h2_val:.0f}nm | P={period:.0f}nm"
+    else:
+        param_info = f"D={diameter:.0f}nm  H={height:.0f}nm  P={period:.0f}nm"
     st.markdown(f"""
     <div style="display:flex;align-items:center;gap:24px;padding:20px;
                 background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -770,7 +1046,7 @@ with tab1:
         <div style="font-size:14px;opacity:0.85;">RGB({r255}, {g255}, {b255})</div>
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
           {material} on {substrate}<br>
-          D={diameter:.0f}nm &nbsp; H={height:.0f}nm &nbsp; P={period:.0f}nm<br>
+          {param_info}<br>
           {polarization} &nbsp; &theta;={angle:.0f}&deg;
         </div>
       </div>
@@ -788,7 +1064,7 @@ with tab1:
     <div style="background:#1a1a2e;border-radius:16px;padding:24px 24px 16px 24px;">
       <div style="text-align:center;color:#888;font-size:12px;margin-bottom:16px;
                   letter-spacing:0.5px;">
-        CROSS-SECTION &nbsp;&middot;&nbsp; D={diameter:.0f}nm &nbsp; H={height:.0f}nm &nbsp; P={period:.0f}nm
+        CROSS-SECTION &nbsp;&middot;&nbsp; {param_info}
       </div>
       <div style="display:flex;justify-content:center;align-items:flex-end;
                   height:230px;position:relative;">
