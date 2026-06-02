@@ -1144,11 +1144,21 @@ if st.session_state.get('dual_pillar', False):
         material=material, substrate=substrate,
         polarization=polarization, angle_deg=angle
     )
-    # 修正值同步回侧边栏滑块
+    # 修正值同步回侧边栏滑块 + 持久化提示
     if param._corrected:
         st.session_state.p_val = param.period_nm
         st.session_state.d1_val = param.d1_nm
         st.session_state.d2_val = param.d2_nm
+        st.session_state._dual_correction = param._correction_msg
+    elif st.session_state.get('_dual_correction'):
+        # 用户手动拖了滑块 → 清除旧提示
+        prev = st.session_state.get('_prev_dual_params', ())
+        curr = (st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val)
+        if curr != prev:
+            st.session_state._dual_correction = ''
+    st.session_state._prev_dual_params = (
+        st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val
+    )
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 rgb = engine.physical_color(param)
@@ -1165,8 +1175,8 @@ with tab1:
     r255, g255, b255 = rgb_255(rgb)
 
     # --- Correction hint for dual-pillar ---
-    if st.session_state.get('dual_pillar', False) and hasattr(param, '_corrected') and param._corrected:
-        st.caption(f"参数已自动修正: {param._correction_msg}")
+    if st.session_state.get('dual_pillar', False) and st.session_state.get('_dual_correction'):
+        st.caption(f"参数已自动修正: {st.session_state._dual_correction}")
 
     # --- Color swatch card ---
     if st.session_state.get('dual_pillar', False):
