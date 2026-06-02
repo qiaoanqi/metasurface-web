@@ -300,7 +300,7 @@ class DualPillarParam:
             scale = np.sqrt(0.80 / (fill1 + fill2))
             new_d1 = self.d1_nm * scale
             new_d2 = self.d2_nm * scale
-            msgs.append(f"占空比过高, D1/D2等比例缩小")
+            msgs.append(f"D1 {self.d1_nm:.0f}->{new_d1:.0f} D2 {self.d2_nm:.0f}->{new_d2:.0f}nm (占空比过高)")
             object.__setattr__(self, 'd1_nm', new_d1)
             object.__setattr__(self, 'd2_nm', new_d2)
 
