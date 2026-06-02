@@ -248,13 +248,13 @@ class MetaSurfaceParam:
     polarization: str   = "TE (s-pol)"
     angle_deg:    float = 0.0
 
-@dataclass(frozen=True)
+@dataclass
 class DualPillarParam:
-    """双异质纳米柱超单元参数"""
-    d1_nm:       float  # 柱1直径
-    h1_nm:       float  # 柱1高度
-    d2_nm:       float  # 柱2直径
-    h2_nm:       float  # 柱2高度
+    """双异质纳米柱超单元参数 (自动钳制非法值)"""
+    d1_nm:       float
+    h1_nm:       float
+    d2_nm:       float
+    h2_nm:       float
     period_nm:   float = 420.0
     material:    str   = "TiO2 (anatase)"
     substrate:   str   = "SiO2 (fused silica)"
@@ -262,17 +262,25 @@ class DualPillarParam:
     angle_deg:   float = 0.0
 
     def __post_init__(self):
-        if self.d1_nm >= self.period_nm or self.d2_nm >= self.period_nm:
-            raise ValueError(f"D must be < P: D1={self.d1_nm}, D2={self.d2_nm}, P={self.period_nm}")
+        # 静默修正: P 至少为 max(D1,D2)*1.2
+        min_p = max(self.d1_nm, self.d2_nm) * 1.20
+        if self.period_nm < min_p:
+            object.__setattr__(self, 'period_nm', max(min_p, 380.0))
+        if self.period_nm < max(self.d1_nm, self.d2_nm):
+            object.__setattr__(self, 'period_nm', max(self.d1_nm, self.d2_nm) + 20.0)
+        # 静默修正: D 不大于 P*0.85
+        max_d = self.period_nm * 0.80
+        if self.d1_nm > max_d:
+            object.__setattr__(self, 'd1_nm', max_d)
+        if self.d2_nm > max_d:
+            object.__setattr__(self, 'd2_nm', max_d)
+        # 静默修正: 占空比过高的缩减
         fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
         fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
-        total_fill = fill1 + fill2
-        if total_fill > 0.90:
-            raise ValueError(f"Total fill {total_fill:.3f} > 0.90, D1={self.d1_nm} D2={self.d2_nm} P={self.period_nm}")
-        if fill1 < 0.005 or fill1 > 0.75:
-            raise ValueError(f"Pillar1 fill {fill1:.3f} out of [0.005, 0.75]")
-        if fill2 < 0.005 or fill2 > 0.75:
-            raise ValueError(f"Pillar2 fill {fill2:.3f} out of [0.005, 0.75]")
+        if fill1 + fill2 > 0.85:
+            scale = np.sqrt(0.80 / (fill1 + fill2))
+            object.__setattr__(self, 'd1_nm', self.d1_nm * scale)
+            object.__setattr__(self, 'd2_nm', self.d2_nm * scale)
 
 def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm):
     """静态方法: 计算单根纳米柱的复数反射系数。
@@ -1014,17 +1022,6 @@ with st.sidebar:
     if 'h2_val' not in st.session_state:
         st.session_state.h2_val = 350.0
     if st.session_state.dual_pillar:
-        # 双柱模式: 周期必须足够大以容纳两根柱子 (强制 P >= 400)
-        if st.session_state.p_val < 400.0:
-            st.session_state.p_val = 400.0
-        d1 = st.session_state.get('d1_val', 120.0)
-        d2 = st.session_state.get('d2_val', 200.0)
-        # 如果 D 值过大, 自动缩减
-        if d1 > st.session_state.p_val * 0.85:
-            st.session_state.d1_val = st.session_state.p_val * 0.80
-        if d2 > st.session_state.p_val * 0.85:
-            st.session_state.d2_val = st.session_state.p_val * 0.80
-
         # --- Dual-Pillar Controls ---
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
