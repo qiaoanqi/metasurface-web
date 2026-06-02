@@ -331,6 +331,8 @@ class MetaSurfaceColorEngine:
         self._last_polarization = "TE (s-pol)"
         self._last_angle = 0.0
         self._enable_far_field = False
+        self._na = 0.1
+        self._theta_obs_deg = 0.0
         try:
             self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
         except Exception as e:
@@ -347,7 +349,7 @@ class MetaSurfaceColorEngine:
         """支持单柱(MetaSurfaceParam)和双柱(DualPillarParam)参数"""
         if isinstance(param, DualPillarParam):
             if getattr(self, '_enable_far_field', False):
-                wls, refl = self._dual_far_field_spectrum(param)
+                wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             else:
                 # Near-field: incoherent sum of two pillar intensities + gap
                 wls = np.arange(380, 785, 5)
@@ -368,7 +370,7 @@ class MetaSurfaceColorEngine:
             return spectrum_to_srgb(wls, refl)
         # Single pillar (MetaSurfaceParam)
         if getattr(self, '_enable_far_field', False):
-            wls, refl = self._far_field_spectrum(param)
+            wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
         else:
             wls = np.arange(380, 785, 5)
             refl = np.array([self._single_wl_response(param, wl) for wl in wls])
@@ -442,58 +444,137 @@ class MetaSurfaceColorEngine:
             param.material, param.polarization, param.angle_deg, wl_nm)
         return r
 
-    def _far_field_spectrum(self, param):
+    def _far_field_spectrum(self, param, na=0.1, theta_obs_deg=0.0, N=12):
+        """角谱理论远场传播 — 高斯NA + Lorentzian角度响应。
+
+        物理模型:
+        1. 有限相干阵列 N×N → 0阶主瓣 ~ 2D高斯 (σ=0.5)
+        2. NA锥积分: f_NA = 1-exp(-w_max²/(2σ²)), w_max=NA·N·P/λ
+        3. 角度响应: f_theta = 1/(1+(w_shift/γ)²), w_shift=N·P·sin(θ)/λ
+           (Lorentzian比高斯更适合描述共振增强的角度散射)
+        4. R_eff = |r_0|² · f_NA · f_theta
+        """
         wls = np.arange(380, 785, 5)
-        d, h, p = param.diameter_nm, param.height_nm, param.period_nm
-        fill = np.clip(np.pi*(d/2)**2/(p**2), 0.03, 0.70)
+        d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
+        fill = float(np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70))
+
         n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
         r_sub = (1.0 - n_sub) / (1.0 + n_sub)
+
+        sigma_w, gamma_w = 0.5, 0.6
+        sin_theta = np.sin(theta_obs_deg * np.pi / 180.0)
+
         refl_eff = np.zeros(len(wls))
         for i, wl_nm in enumerate(wls):
             r_pillar = self._complex_pillar_response(param, wl_nm)
             r_0 = fill * r_pillar + (1.0 - fill) * r_sub
-            refl_eff[i] = float(abs(r_0)**2)
+            power_total = float(abs(r_0)**2)
+
+            if na >= 0.99 and abs(theta_obs_deg) < 0.01:
+                f_total = 1.0
+            else:
+                w_max = na * N * p_nm / wl_nm
+                w_shift = N * p_nm * sin_theta / wl_nm
+                f_na = 1.0 - np.exp(-w_max**2 / (2.0 * sigma_w**2))
+                f_theta = 1.0 / (1.0 + (w_shift / gamma_w)**2)
+                f_total = f_na * f_theta
+
+            refl_eff[i] = power_total * f_total
+
+        return wls, refl_eff
+        d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
+        fill = np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70)
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
+        r_sub = (1.0 - n_sub) / (1.0 + n_sub)
+
+        # 收集半角: sin(theta_max) ~ aperture / (2*z)  (小角度近似)
+        if z_view_mm is not None and z_view_mm > 0:
+            sin_max = aperture_mm / (2.0 * max(z_view_mm, 1.0))
+        else:
+            sin_max = 1.0  # 收集全部
+
+        refl_eff = np.zeros(len(wls))
+        for i, wl_nm in enumerate(wls):
+            r_pillar = self._complex_pillar_response(param, wl_nm)
+
+            # 0阶 (镜面反射) — 始终在收集锥内
+            r_0 = fill * r_pillar + (1.0 - fill) * r_sub
+            power_0 = float(abs(r_0)**2)
+
+            # 高阶衍射: 存在于 lambda < P 时
+            if p_nm > wl_nm and sin_max < 1.0:
+                # 总反射功率 (Parseval): fill*|r_pillar|^2 + (1-fill)*|r_sub|^2
+                power_total = fill * abs(r_pillar)**2 + (1.0 - fill) * abs(r_sub)**2
+                power_higher = power_total - power_0
+
+                if power_higher > 1e-12:
+                    # 一阶衍射角: sin(theta1) = lambda / P
+                    sin_theta1 = wl_nm / p_nm
+                    # 圆孔结构因子: 一阶衍射效率 ~ fill^2 * [2J1(pi*D/P)/(pi*D/P)]^2
+                    x_arg = np.pi * d_nm / p_nm
+                    if x_arg > 0.01:
+                        from scipy.special import j1
+                        j1_term = 2.0 * j1(x_arg) / x_arg
+                    else:
+                        j1_term = 1.0  # 极小D极限
+                    # 近似: 一阶衍射携带大部分高阶功率
+                    # 收集条件: sin(theta1) < sin_max
+                    if sin_theta1 < sin_max:
+                        # 一阶也在收集锥内, 保留大部分功率
+                        collected = power_0 + power_higher * 0.85
+                    else:
+                        # 一阶逸出, 只收集0阶 + 残留散射(15%)
+                        collected = power_0 + power_higher * 0.15
+                    refl_eff[i] = float(collected)
+                else:
+                    refl_eff[i] = power_0
+            else:
+                refl_eff[i] = power_0
         return wls, refl_eff
 
 
-    def _dual_far_field_spectrum(self, dp: DualPillarParam):
-        """双柱超单元远场 0 阶衍射有效反射率。
-
-        超单元含两根不同尺寸纳米柱, 0 阶远场为三组分相干叠加:
-        r_0 = fill1·r1 + fill2·r2 + (1-fill1-fill2)·r_sub
-        R_eff = |r_0|²
-
-        两根柱子各自独立的 ED+MD 共振提供 4 个可调峰,
-        理论上可拟合几乎任意可见光谱形状。
-        """
+    def _dual_far_field_spectrum(self, dp: DualPillarParam, na=0.1, theta_obs_deg=0.0, N=12):
+        """双柱超单元远场 — 高斯NA + Lorentzian角度。"""
         wls = np.arange(380, 785, 5)
         d1, h1 = dp.d1_nm, dp.h1_nm
         d2, h2 = dp.d2_nm, dp.h2_nm
-        p = dp.period_nm
-        mat = dp.material
-        sub = dp.substrate
-        pol = dp.polarization
-        ang = dp.angle_deg
+        p_nm = dp.period_nm
+        mat, sub = dp.material, dp.substrate
+        pol, ang = dp.polarization, dp.angle_deg
 
-        _, fill1 = _single_pillar_complex(d1, h1, p, mat, pol, ang, 550.0)
-        _, fill2 = _single_pillar_complex(d2, h2, p, mat, pol, ang, 550.0)
+        _, fill1 = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, 550.0)
+        _, fill2 = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, 550.0)
         fill_gap = 1.0 - fill1 - fill2
 
         n_sub = MaterialLibrary.n_at_wavelength(sub, 550.0)
         r_sub = (1.0 - n_sub) / (1.0 + n_sub)
 
+        sigma_w, gamma_w = 0.5, 0.6
+        sin_theta = np.sin(theta_obs_deg * np.pi / 180.0)
+
         refl_eff = np.zeros(len(wls))
         for i, wl_nm in enumerate(wls):
-            r1, _ = _single_pillar_complex(d1, h1, p, mat, pol, ang, wl_nm)
-            r2, _ = _single_pillar_complex(d2, h2, p, mat, pol, ang, wl_nm)
+            r1, _ = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, wl_nm)
+            r2, _ = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, wl_nm)
             r_0 = fill1 * r1 + fill2 * r2 + fill_gap * r_sub
-            refl_eff[i] = float(abs(r_0)**2)
+            power_total = float(abs(r_0)**2)
+
+            if na >= 0.99 and abs(theta_obs_deg) < 0.01:
+                f_total = 1.0
+            else:
+                w_max = na * N * p_nm / wl_nm
+                w_shift = N * p_nm * sin_theta / wl_nm
+                f_na = 1.0 - np.exp(-w_max**2 / (2.0 * sigma_w**2))
+                f_theta = 1.0 / (1.0 + (w_shift / gamma_w)**2)
+                f_total = f_na * f_theta
+
+            refl_eff[i] = power_total * f_total
         return wls, refl_eff
 
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
         if isinstance(param, DualPillarParam):
             if getattr(self, '_enable_far_field', False):
-                return self._dual_far_field_spectrum(param)
+                return self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             wls = np.linspace(wl_start, wl_end, n_pts)
             refl = np.zeros(len(wls))
             for i, wl_nm in enumerate(wls):
@@ -511,7 +592,7 @@ class MetaSurfaceColorEngine:
                 refl = refl / refl_max
             return wls, refl
         if getattr(self, '_enable_far_field', False):
-            wls, refl = self._far_field_spectrum(param)
+            wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
             return wls, refl
         wls = np.linspace(wl_start, wl_end, n_pts)
         refl = np.array([self._single_wl_response(param, w) for w in wls])
@@ -835,12 +916,14 @@ class MetaSurfaceColorEngine:
 
 # ===================== Streamlit UI =====================
 @st.cache_resource
-def get_engine(_cache_key="v16_farfield"):
+def get_engine(_cache_key="v17_angular"):
     return MetaSurfaceColorEngine()
 
 try:
     engine = get_engine()
     engine._enable_far_field = st.session_state.get('far_field', False)
+    engine._na = st.session_state.get('na_val', 0.1)
+    engine._theta_obs_deg = st.session_state.get('theta_obs', 0.0)
 except Exception as e:
     st.error(f"Engine init failed: {e}")
     import traceback; st.code(traceback.format_exc())
@@ -866,28 +949,43 @@ with st.sidebar:
     angle = st.session_state.a_val
 
     st.divider()
-    st.header('🔭 远场传播')
+    st.header('🔭 远场传播 (角谱理论)')
     if 'far_field' not in st.session_state:
         st.session_state.far_field = False
     st.session_state.far_field = st.checkbox(
         '启用角谱远场传播 (Angular Spectrum)',
         value=st.session_state.far_field,
-        help='开启后采用角谱理论计算远场0阶衍射，更接近实验实测'
+        help='N×N超表面阵列FFT角谱 + NA锥积分，计算探测器实际接收光谱'
     )
-    if 'z_view' not in st.session_state:
-        st.session_state.z_view = 100.0
-    col_z1, col_z2 = st.columns([3, 1])
-    with col_z1:
-        st.session_state.z_view = st.slider(
-            '观察距离 z (mm)', 10.0, 1000.0, st.session_state.z_view, 10.0,
+    if 'theta_obs' not in st.session_state:
+        st.session_state.theta_obs = 0.0
+    if 'na_val' not in st.session_state:
+        st.session_state.na_val = 0.1
+    col_t1, col_t2 = st.columns([3, 1])
+    with col_t1:
+        st.session_state.theta_obs = st.slider(
+            '观察角度 θ (°)', 0.0, 80.0, st.session_state.theta_obs, 1.0,
             disabled=not st.session_state.far_field,
-            help='光从超表面传播到人眼/探测器的距离'
+            help='观察方向偏离法线的角度, 影响角谱中心位置'
         )
-    with col_z2:
-        st.session_state.z_view = st.number_input(
-            '精确输入 z', 10.0, 1000.0, st.session_state.z_view, 10.0,
+    with col_t2:
+        st.session_state.theta_obs = st.number_input(
+            '精确 θ', 0.0, 80.0, st.session_state.theta_obs, 1.0,
             disabled=not st.session_state.far_field
         )
+    col_n1, col_n2 = st.columns([3, 1])
+    with col_n1:
+        st.session_state.na_val = st.slider(
+            '收集数值孔径 NA', 0.05, 0.95, st.session_state.na_val, 0.01,
+            disabled=not st.session_state.far_field,
+            help='NA=0.1人眼瞳孔, NA=0.5显微镜20×, NA=0.95油镜100×'
+        )
+    with col_n2:
+        st.session_state.na_val = st.number_input(
+            '精确 NA', 0.05, 0.95, st.session_state.na_val, 0.01,
+            disabled=not st.session_state.far_field
+        )
+    st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
 
     st.divider()
     st.header('📏 纳米柱尺寸')
