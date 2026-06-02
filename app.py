@@ -1063,6 +1063,7 @@ with st.sidebar:
                 st.session_state.d1_val = pre.d1_nm
                 st.session_state.d2_val = pre.d2_nm
                 st.session_state._dual_correction = pre._correction_msg
+                st.session_state._prev_dual_params = (pre.d1_nm, pre.d2_nm, pre.period_nm)
         except Exception:
             pass
 
