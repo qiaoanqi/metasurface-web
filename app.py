@@ -1013,8 +1013,15 @@ with st.sidebar:
         st.session_state.d2_val = 200.0
     if 'h2_val' not in st.session_state:
         st.session_state.h2_val = 350.0
-
     if st.session_state.dual_pillar:
+        # 双柱模式: 周期必须足够大以容纳两根柱子
+        d1 = st.session_state.get('d1_val', 120.0)
+        d2 = st.session_state.get('d2_val', 200.0)
+        min_p = max(d1, d2) * 1.6  # 经验最小周期
+        if st.session_state.p_val < min_p:
+            st.session_state.p_val = max(min_p, 400.0)
+            st.warning(f'双柱模式下周期 P 自动调整为 {st.session_state.p_val:.0f}nm (需容纳 D1={d1:.0f}, D2={d2:.0f})')
+
         # --- Dual-Pillar Controls ---
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
