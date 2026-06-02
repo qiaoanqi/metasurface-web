@@ -274,7 +274,6 @@ class DualPillarParam:
         if fill2 < 0.01 or fill2 > 0.70:
             raise ValueError(f"Pillar2 fill {fill2:.3f} out of [0.01, 0.70]")
 
-@staticmethod
 def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm):
     """静态方法: 计算单根纳米柱的复数反射系数。
     供单柱和双柱模型共用, 避免代码重复。
@@ -347,7 +346,7 @@ class MetaSurfaceColorEngine:
 
     def physical_color(self, param) -> np.ndarray:
         """支持单柱(MetaSurfaceParam)和双柱(DualPillarParam)参数"""
-        if isinstance(param, DualPillarParam):
+        if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
             if getattr(self, '_enable_far_field', False):
                 wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             else:
@@ -572,7 +571,7 @@ class MetaSurfaceColorEngine:
         return wls, refl_eff
 
     def compute_spectrum(self, param, wl_start=380.0, wl_end=780.0, n_pts=81):
-        if isinstance(param, DualPillarParam):
+        if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
             if getattr(self, '_enable_far_field', False):
                 return self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             wls = np.linspace(wl_start, wl_end, n_pts)
