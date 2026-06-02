@@ -267,12 +267,12 @@ class DualPillarParam:
         fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
         fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
         total_fill = fill1 + fill2
-        if total_fill > 0.85:
-            raise ValueError(f"Total fill {total_fill:.3f} > 0.85: pillars overlap")
-        if fill1 < 0.01 or fill1 > 0.70:
-            raise ValueError(f"Pillar1 fill {fill1:.3f} out of [0.01, 0.70]")
-        if fill2 < 0.01 or fill2 > 0.70:
-            raise ValueError(f"Pillar2 fill {fill2:.3f} out of [0.01, 0.70]")
+        if total_fill > 0.90:
+            raise ValueError(f"Total fill {total_fill:.3f} > 0.90, D1={self.d1_nm} D2={self.d2_nm} P={self.period_nm}")
+        if fill1 < 0.005 or fill1 > 0.75:
+            raise ValueError(f"Pillar1 fill {fill1:.3f} out of [0.005, 0.75]")
+        if fill2 < 0.005 or fill2 > 0.75:
+            raise ValueError(f"Pillar2 fill {fill2:.3f} out of [0.005, 0.75]")
 
 def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm):
     """静态方法: 计算单根纳米柱的复数反射系数。
@@ -1014,13 +1014,16 @@ with st.sidebar:
     if 'h2_val' not in st.session_state:
         st.session_state.h2_val = 350.0
     if st.session_state.dual_pillar:
-        # 双柱模式: 周期必须足够大以容纳两根柱子
+        # 双柱模式: 周期必须足够大以容纳两根柱子 (强制 P >= 400)
+        if st.session_state.p_val < 400.0:
+            st.session_state.p_val = 400.0
         d1 = st.session_state.get('d1_val', 120.0)
         d2 = st.session_state.get('d2_val', 200.0)
-        min_p = max(d1, d2) * 1.6  # 经验最小周期
-        if st.session_state.p_val < min_p:
-            st.session_state.p_val = max(min_p, 400.0)
-            st.warning(f'双柱模式下周期 P 自动调整为 {st.session_state.p_val:.0f}nm (需容纳 D1={d1:.0f}, D2={d2:.0f})')
+        # 如果 D 值过大, 自动缩减
+        if d1 > st.session_state.p_val * 0.85:
+            st.session_state.d1_val = st.session_state.p_val * 0.80
+        if d2 > st.session_state.p_val * 0.85:
+            st.session_state.d2_val = st.session_state.p_val * 0.80
 
         # --- Dual-Pillar Controls ---
         col_d1, col_d2 = st.columns([3, 1])
