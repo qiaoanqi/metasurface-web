@@ -6,7 +6,6 @@ import numpy as np
 from PIL import Image
 import streamlit as st
 import ml_module
-import ml_module
 
 def _get_plt():
     import matplotlib
