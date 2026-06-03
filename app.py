@@ -1048,7 +1048,34 @@ with st.sidebar:
         value=st.session_state.dual_pillar,
         help='启用后使用两根不同尺寸纳米柱，可产生4个独立调谐峰，显著扩展色域'
     )
-    st.caption('双柱模式下逆设计搜索空间较大，建议在实时预览中手动调参')
+    st.caption('双柱模式下逆设计搜索空间较大，建议使用下方自动优化')
+
+    # Dual-pillar auto inverse design button
+    if st.session_state.dual_pillar:
+        st.divider()
+        st.subheader('双柱自动逆设计 (PyTorch梯度优化)')
+        target_hex_dual = st.color_picker('目标颜色', '#80c8ff', key='dual_target_color')
+        if st.button('双柱自动搜索', use_container_width=True):
+            target_r = int(target_hex_dual[1:3], 16)
+            target_g = int(target_hex_dual[3:5], 16)
+            target_b = int(target_hex_dual[5:7], 16)
+            target_rgb = [target_r/255, target_g/255, target_b/255]
+            try:
+                import torch_model as _tmd
+                with st.spinner('PyTorch梯度优化中... 约15-25秒'):
+                    result = _tmd.inverse_design_dual(target_rgb, n_steps=400, n_restarts=20)
+                    if result is not None:
+                        d1, h1, d2, h2, p, rgb, loss = result
+                        p = max(max(d1, d2) * 1.2 + 20, p)
+                        st.session_state.d1_val = float(d1)
+                        st.session_state.h1_val = float(h1)
+                        st.session_state.d2_val = float(d2)
+                        st.session_state.h2_val = float(h2)
+                        st.session_state.p_val = float(p)
+                        st.success(f'优化完成! D1={d1:.0f} H1={h1:.0f} D2={d2:.0f} H2={h2:.0f} P={p:.0f} RGB=({rgb[0]:.3f},{rgb[1]:.3f},{rgb[2]:.3f})')
+                        st.rerun()
+            except Exception as e:
+                st.error(f'自动搜索失败: {e}')
 
     if 'd_val' not in st.session_state:
         st.session_state.d_val = 180.0

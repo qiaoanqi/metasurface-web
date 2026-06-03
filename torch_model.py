@@ -127,6 +127,87 @@ def batch_color_map_grid(D_grid, H_grid, P_val=400.0):
     return rgb_flat.reshape(D_mesh.shape[0], D_mesh.shape[1], 3)
 
 
+
+
+# ============================================================
+# Dual-pillar batch functions
+# ============================================================
+
+def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):
+    """Incoherent sum of two pillar spectra."""
+    spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE)
+    spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE)
+    # Weight by fill factors
+    fill1 = torch.clamp(torch.pi*(D1.view(-1)/2)**2/(P.view(-1)**2), 0.01, 0.70)
+    fill2 = torch.clamp(torch.pi*(D2.view(-1)/2)**2/(P.view(-1)**2), 0.01, 0.70)
+    total_fill = fill1 + fill2
+    total_fill = torch.where(total_fill > 0, total_fill, torch.ones_like(total_fill))
+    w1 = (fill1 / total_fill).unsqueeze(1)
+    w2 = (fill2 / total_fill).unsqueeze(1)
+    return w1 * spec1 + w2 * spec2
+
+
+def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):
+    """Dual pillar -> RGB."""
+    spec = batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta, pol_TE)
+    return batch_spectrum_to_rgb(spec)
+
+
+def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
+    """Gradient-based inverse design for dual-pillar (5 params)."""
+    if not isinstance(target_rgb, torch.Tensor):
+        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
+    else:
+        target = target_rgb.clone().detach().unsqueeze(0)
+
+    best_loss = 1e9
+    best_result = None
+
+    for _ in range(n_restarts):
+        d1 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
+        h1 = torch.tensor(np.random.uniform(50, 500), dtype=torch.float32, requires_grad=True)
+        d2 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
+        h2 = torch.tensor(np.random.uniform(50, 500), dtype=torch.float32, requires_grad=True)
+        p = torch.tensor(np.random.uniform(200, 600), dtype=torch.float32, requires_grad=True)
+
+        opt = torch.optim.Adam([d1, h1, d2, h2, p], lr=5.0)
+        for step in range(n_steps):
+            opt.zero_grad()
+            d1_c = torch.clamp(d1, 60.0, 267.0)
+            h1_c = torch.clamp(h1, 50.0, 500.0)
+            d2_c = torch.clamp(d2, 60.0, 267.0)
+            h2_c = torch.clamp(h2, 50.0, 500.0)
+            min_p = torch.max(d1_c.detach(), d2_c.detach()) * 1.2 + 20
+            p_c = torch.clamp(p, min_p, 600.0)
+
+            spec = batch_dual_pillar_spectrum(
+                d1_c.unsqueeze(0), h1_c.unsqueeze(0),
+                d2_c.unsqueeze(0), h2_c.unsqueeze(0),
+                p_c.unsqueeze(0))
+            rgb = batch_spectrum_to_rgb(spec)
+            loss = ((rgb - target)**2).sum()
+            loss.backward()
+            opt.step()
+
+        d1_f = float(np.clip(d1.item(), 60, 267))
+        h1_f = float(np.clip(h1.item(), 50, 500))
+        d2_f = float(np.clip(d2.item(), 60, 267))
+        h2_f = float(np.clip(h2.item(), 50, 500))
+        p_f = float(max(max(d1_f, d2_f) * 1.2 + 20, np.clip(p.item(), 200, 600)))
+
+        with torch.no_grad():
+            spec = batch_dual_pillar_spectrum(
+                torch.tensor([d1_f]), torch.tensor([h1_f]),
+                torch.tensor([d2_f]), torch.tensor([h2_f]),
+                torch.tensor([p_f]))
+            pred = batch_spectrum_to_rgb(spec).squeeze().numpy()
+            fl = float(((pred - target.squeeze().numpy())**2).sum())
+        if fl < best_loss:
+            best_loss = fl
+            best_result = (d1_f, h1_f, d2_f, h2_f, p_f, pred, fl)
+
+    return best_result
+
 # Quick test
 
 def batch_single_pillar_rgb_norm(D, H, P, theta=0.0, pol_TE=True):
