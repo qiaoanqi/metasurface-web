@@ -1360,8 +1360,10 @@ with tab2:
                 d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
                 ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
                 ml_rgb = pred_rgb_ml
-                de76 = delta_e76_cie1976(target_rgb_norm, ml_rgb)
-                de2k = delta_e2000(target_rgb_norm, ml_rgb)
+                lab_t = rgb_to_lab(target_rgb_norm)
+                lab_m = rgb_to_lab(ml_rgb)
+                de76 = delta_e76(lab_t, lab_m)
+                de2k = delta_e2000(lab_t, lab_m)
                 st.session_state.top3_results = [
                     (de2k, ml_param, ml_rgb, de76, de2k),
                     (de2k+0.01, ml_param, ml_rgb, de76, de2k),
