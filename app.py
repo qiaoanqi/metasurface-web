@@ -1369,6 +1369,8 @@ with tab2:
                     (de2k+0.01, ml_param, ml_rgb, de76, de2k),
                     (de2k+0.02, ml_param, ml_rgb, de76, de2k),
                 ]
+                if "search_cache" not in st.session_state:
+                    st.session_state.search_cache = {}
                 cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
                 st.session_state.search_cache[cache_key] = st.session_state.top3_results
                 st.success(f"ML模型搜索完成! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
