@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 import streamlit as st
 import ml_module
+import ml_module
 
 def _get_plt():
     import matplotlib
@@ -963,7 +964,9 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
-    _ml_ready = ml_module.init_ml()
+_ml_ready = ml_module.init_ml()
+
+
 
 st.title("🎨 AI超表面结构色设计助手")
 st.caption("v3.0 | 光谱管线 | CIE 1931 色度学")
@@ -1178,6 +1181,14 @@ if st.session_state.get('dual_pillar', False):
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
+if use_ml and not st.session_state.get('dual_pillar', False):
+    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization)
+    if ml_rgb is not None:
+        rgb = ml_rgb
+    else:
+        rgb = engine.physical_color(param)
+else:
+    use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
 if use_ml and not st.session_state.get('dual_pillar', False):
     ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization)
     if ml_rgb is not None:
