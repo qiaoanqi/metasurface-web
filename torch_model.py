@@ -134,17 +134,11 @@ def batch_color_map_grid(D_grid, H_grid, P_val=400.0):
 # ============================================================
 
 def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):
-    """Incoherent sum of two pillar spectra."""
+    """Incoherent sum of two pillar spectra.
+    Each spectrum already includes fill_amp weighting, so just add them."""
     spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE)
     spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE)
-    # Weight by fill factors
-    fill1 = torch.clamp(torch.pi*(D1.view(-1)/2)**2/(P.view(-1)**2), 0.01, 0.70)
-    fill2 = torch.clamp(torch.pi*(D2.view(-1)/2)**2/(P.view(-1)**2), 0.01, 0.70)
-    total_fill = fill1 + fill2
-    total_fill = torch.where(total_fill > 0, total_fill, torch.ones_like(total_fill))
-    w1 = (fill1 / total_fill).unsqueeze(1)
-    w2 = (fill2 / total_fill).unsqueeze(1)
-    return w1 * spec1 + w2 * spec2
+    return spec1 + spec2
 
 
 def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):

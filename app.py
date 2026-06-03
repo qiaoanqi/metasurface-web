@@ -385,7 +385,8 @@ class MetaSurfaceColorEngine:
             if getattr(self, '_enable_far_field', False):
                 wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             else:
-                # Near-field: incoherent sum of two pillar intensities + gap
+                # Near-field: incoherent sum of two pillar intensities
+                # I1,I2 already include fill_amp weighting, no extra fill factor needed
                 wls = np.arange(380, 785, 5)
                 refl = np.zeros(len(wls))
                 for i, wl_nm in enumerate(wls):
@@ -393,11 +394,7 @@ class MetaSurfaceColorEngine:
                         param.material, param.polarization, param.angle_deg, wl_nm)
                     I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
                         param.material, param.polarization, param.angle_deg, wl_nm)
-                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, 550.0)
-                    _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, 550.0)
-                    refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
+                    refl[i] = float(abs(I1)**2 + abs(I2)**2)
                 refl_max = refl.max()
                 if refl_max > 1e-12:
                     refl = refl / refl_max
