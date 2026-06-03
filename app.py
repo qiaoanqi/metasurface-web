@@ -5,6 +5,7 @@ import io
 import numpy as np
 from PIL import Image
 import streamlit as st
+import ml_module
 
 def _get_plt():
     import matplotlib
@@ -1174,7 +1175,15 @@ if st.session_state.get('dual_pillar', False):
     )
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
-rgb = engine.physical_color(param)
+use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
+if use_ml and not st.session_state.get('dual_pillar', False):
+    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization)
+    if ml_rgb is not None:
+        rgb = ml_rgb
+    else:
+        rgb = engine.physical_color(param)
+else:
+    rgb = engine.physical_color(param)
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
