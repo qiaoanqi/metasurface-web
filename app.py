@@ -1291,6 +1291,7 @@ with tab1:
 # Tab 2: Inverse Design
 with tab2:
     st.subheader("选择目标颜色，自动匹配最优纳米柱参数")
+    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效")
 
     col_pick, col_btn = st.columns([3, 1])
     with col_pick:
@@ -1301,7 +1302,7 @@ with tab2:
         with col_b1:
             run_btn = st.button('网格搜索', use_container_width=True, help='传统网格搜索: 精度高')
         with col_b2:
-            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 速度快")
+            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 复杂模型更快")
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
