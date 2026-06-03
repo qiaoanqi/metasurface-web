@@ -1027,6 +1027,19 @@ with st.sidebar:
     st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
 
     st.divider()
+    st.header('ML ??')
+    if 'ml_accel' not in st.session_state:
+        st.session_state.ml_accel = _ml_ready
+    st.session_state.ml_accel = st.checkbox(
+        '?? ML ???? (????)',
+        value=st.session_state.ml_accel,
+        disabled=not _ml_ready,
+        help='???????? Lorentzian ????'
+    )
+    if not _ml_ready:
+        st.caption('ML ???????? PyTorch')
+
+    st.divider()
     st.header('📏 纳米柱尺寸')
 
     if 'dual_pillar' not in st.session_state:
@@ -1283,7 +1296,11 @@ with tab2:
         picker_hex = st.color_picker("目标颜色", "#80c8ff")
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_btn = st.button("🔍 搜索匹配", use_container_width=True, help="全参数空间扫描约需10-30秒，请耐心等待")
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            run_btn = st.button('????', use_container_width=True, help='??????: ???, ??30-60?')
+        with col_b2:
+            ml_btn = st.button('ML????', use_container_width=True, disabled=not _ml_ready, help='ML????: ???, ?10-30?')
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
@@ -1330,7 +1347,30 @@ with tab2:
             st.session_state.search_history.insert(0, entry)
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
-            status_text.caption("搜索完成!")
+            status_text.caption("????!")
+            
+            try:
+                _ml_pressed = ml_btn
+            except NameError:
+                _ml_pressed = False
+            
+            if _ml_pressed and _ml_ready:
+                with st.spinner("ML?????... ?10-30?"):
+                    result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=300, n_restarts=40)
+                    if result is not None:
+                        d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
+                        ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
+                        ml_rgb = pred_rgb_ml
+                        de76 = delta_e76_cie1976(target_rgb_norm, ml_rgb)
+                        de2k = delta_e2000(target_rgb_norm, ml_rgb)
+                        st.session_state.top3_results = [
+                            (de2k, ml_param, ml_rgb, de76, de2k),
+                            (de2k+0.01, ml_param, ml_rgb, de76, de2k),
+                            (de2k+0.02, ml_param, ml_rgb, de76, de2k),
+                        ]
+                        cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
+                        st.session_state.search_cache[cache_key] = st.session_state.top3_results
+                        st.success(f"ML??????! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
