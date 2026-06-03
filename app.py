@@ -1027,7 +1027,7 @@ with st.sidebar:
     st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
 
     st.divider()
-    st.header('ML ??')
+    st.header("ML 加速")
     if 'ml_accel' not in st.session_state:
         st.session_state.ml_accel = _ml_ready
     st.session_state.ml_accel = st.checkbox(
@@ -1037,7 +1037,7 @@ with st.sidebar:
         help='???????? Lorentzian ????'
     )
     if not _ml_ready:
-        st.caption('ML ???????? PyTorch???????')
+        st.caption("ML 功能不可用，缺少 PyTorch（仅本地支持）")
 
     st.divider()
     st.header('📏 纳米柱尺寸')
@@ -1300,7 +1300,7 @@ with tab2:
         with col_b1:
             run_btn = st.button('????', use_container_width=True, help='??????: ???, ??30-60?')
         with col_b2:
-            ml_btn = st.button('ML????', use_container_width=True, disabled=not _ml_ready, help='ML????: ???, ?10-30?')
+            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 速度快, 约10-30秒")
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
