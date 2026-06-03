@@ -1031,10 +1031,10 @@ with st.sidebar:
     if 'ml_accel' not in st.session_state:
         st.session_state.ml_accel = _ml_ready
     st.session_state.ml_accel = st.checkbox(
-        '?? ML ???? (????)',
+        '启用 ML 代理模型 (秒级预测)',
         value=st.session_state.ml_accel,
         disabled=not _ml_ready,
-        help='???????? Lorentzian ????'
+        help='使用神经网络代替 Lorentzian 物理模型'
     )
     if not _ml_ready:
         st.caption("ML 功能不可用，缺少 PyTorch（仅本地支持）")
