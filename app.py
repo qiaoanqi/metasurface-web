@@ -1301,7 +1301,7 @@ with tab2:
         with col_b1:
             run_btn = st.button('网格搜索', use_container_width=True, help='传统网格搜索: 精度高')
         with col_b2:
-            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 速度快, 约10-30秒")
+            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 速度快")
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
