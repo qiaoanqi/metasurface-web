@@ -1365,22 +1365,19 @@ with tab2:
                 lab_m = rgb_to_lab(ml_rgb)
                 de76 = delta_e76(lab_t, lab_m)
                 de2k = delta_e2000(lab_t, lab_m)
-                # Run 3 searches with different random restarts for diverse top3
-                results = [result]  # first result already computed
-                for _ in range(2):
-                    r2 = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=10)
-                    if r2 is not None:
-                        results.append(r2)
+                # Build top3 by perturbing optimal result for nearby alternatives
                 top3 = []
-                for r in results:
-                    d_r, h_r, p_r, rgb_r, _ = r
-                    p_r = max(d_r * 1.2, p_r)
-                    param_r = MetaSurfaceParam(float(d_r), float(h_r), float(p_r), material, substrate, polarization, angle)
-                    lab_tr = rgb_to_lab(target_rgb_norm)
-                    lab_mr = rgb_to_lab(rgb_r)
-                    de_r = delta_e76(lab_tr, lab_mr)
-                    de2k_r = delta_e2000(lab_tr, lab_mr)
-                    top3.append((de2k_r, param_r, rgb_r, de_r, de2k_r))
+                for perturb in [(1.0, 1.0), (0.95, 1.05), (1.05, 0.95)]:
+                    d_p = min(350, max(50, d_ml * perturb[0]))
+                    h_p = min(600, max(80, h_ml * perturb[1]))
+                    p_p = max(d_p * 1.2, p_ml)
+                    param_p = MetaSurfaceParam(float(d_p), float(h_p), float(p_p), material, substrate, polarization, angle)
+                    rgb_p = engine.physical_color(param_p)
+                    lab_t = rgb_to_lab(target_rgb_norm)
+                    lab_p = rgb_to_lab(rgb_p)
+                    de_p = delta_e76(lab_t, lab_p)
+                    de2k_p = delta_e2000(lab_t, lab_p)
+                    top3.append((de2k_p, param_p, rgb_p, de_p, de2k_p))
                 top3.sort(key=lambda x: x[0])
                 st.session_state.top3_results = top3[:3]
                 if "search_cache" not in st.session_state:
