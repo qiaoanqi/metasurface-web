@@ -1355,7 +1355,7 @@ with tab2:
                 _ml_pressed = False
             
             if _ml_pressed and _ml_ready:
-                with st.spinner("ML?????... ?10-30?"):
+                with st.spinner("ML梯度优化中... 约10-30秒"):
                     result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=300, n_restarts=40)
                     if result is not None:
                         d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
@@ -1370,7 +1370,7 @@ with tab2:
                         ]
                         cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
                         st.session_state.search_cache[cache_key] = st.session_state.top3_results
-                        st.success(f"ML??????! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
+                        st.success(f"ML模型搜索完成! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
