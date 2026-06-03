@@ -769,8 +769,8 @@ class MetaSurfaceColorEngine:
                             self._last_polarization, self._last_angle)
                         rgb = self.physical_color(param)
                         lab = rgb_to_lab(rgb[None, :])[0]
-                de2k = delta_e2000(target_lab, lab)
-                de76 = delta_e76(target_lab, lab)
+                        de2k = delta_e2000(target_lab, lab)
+                        de76 = delta_e76(target_lab, lab)
                         lam_peak = self._peak_wl(dd, dh)
                         wl_diff = abs(lam_peak - target_wl) / 100.0
                         score = de2k  # pure DeltaE2000 optimization
@@ -876,8 +876,8 @@ class MetaSurfaceColorEngine:
                             self._last_polarization, self._last_angle)
                         rgb = self.physical_color(param)
                         lab = rgb_to_lab(rgb[None, :])[0]
-                de2k = delta_e2000(target_lab, lab)
-                de76 = delta_e76(target_lab, lab)
+                        de2k = delta_e2000(target_lab, lab)
+                        de76 = delta_e76(target_lab, lab)
                         broad_candidates.append((de2k, param, rgb, de76, de2k))
             broad_candidates.sort(key=lambda x: x[0])
             # Merge with existing results, keeping diversity constraints
@@ -1348,13 +1348,12 @@ with tab2:
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
-            
-            try:
-                _ml_pressed = ml_btn
-            except NameError:
-                _ml_pressed = False
-            
-            if _ml_pressed and _ml_ready:
+    try:
+        _ml_pressed = ml_btn
+    except NameError:
+        _ml_pressed = False
+    
+    if _ml_pressed and _ml_ready:
         with st.spinner("ML梯度优化中... 约10-30秒"):
             result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=300, n_restarts=40)
             if result is not None:
@@ -1371,6 +1370,7 @@ with tab2:
                 cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
                 st.session_state.search_cache[cache_key] = st.session_state.top3_results
                 st.success(f"ML模型搜索完成! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
+            
 
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
