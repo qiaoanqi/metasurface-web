@@ -1551,11 +1551,24 @@ with tab4:
         rows_html += f'<th style="padding:4px 8px;color:#888;font-size:11px;">{h:.0f}</th>'
     rows_html += '</tr>'
 
-    for d in d_sample:
+    # Try PyTorch batch acceleration for color map
+    try:
+        import torch_model as _tm
+        _D_grid = torch_model.torch.tensor(d_sample, dtype=torch_model.torch.float32)
+        _H_grid = torch_model.torch.tensor(h_sample, dtype=torch_model.torch.float32)
+        _rgb_grid = _tm.batch_single_pillar_rgb_norm(_D_grid, _H_grid, period)
+        _use_torch = True
+    except Exception:
+        _use_torch = False
+
+    for di, d in enumerate(d_sample):
         rows_html += f'<tr><td style="padding:4px 8px;color:#888;font-size:11px;font-weight:600;">{d:.0f}</td>'
-        for h in h_sample:
-            test_param = MetaSurfaceParam(d, h, period, material, substrate, polarization, angle)
-            test_rgb = engine.physical_color(test_param)
+        for hi, h in enumerate(h_sample):
+            if _use_torch:
+                test_rgb = _rgb_grid[di, hi].numpy()
+            else:
+                test_param = MetaSurfaceParam(d, h, period, material, substrate, polarization, angle)
+                test_rgb = engine.physical_color(test_param)
             hex_t = rgb_to_hex(test_rgb)
             tr, tg, tb = rgb_255(test_rgb)
             rows_html += f'<td style="padding:2px;"><div title="D={d:.0f}nm H={h:.0f}nm RGB({tr},{tg},{tb})" style="width:40px;height:32px;background:{hex_t};border-radius:4px;border:1px solid rgba(255,255,255,0.08);"></div></td>'
@@ -1637,11 +1650,21 @@ with tab5:
     st.divider()
     st.subheader("入射角扫描 (0° → 80°)")
     angles_scan = np.arange(0, 85, 5)
-    scan_rgbs = []
-    for a in angles_scan:
-        param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))
-        scan_rgbs.append(engine.physical_color(param_a))
-    scan_rgbs = np.array(scan_rgbs)
+    try:
+        import torch_model as _tm2
+        _ang_t = torch_model.torch.tensor(angles_scan, dtype=torch_model.torch.float32)
+        _scan_rgb = _tm2.batch_single_pillar_rgb_norm(
+            torch_model.torch.tensor([diameter]*len(angles_scan)),
+            torch_model.torch.tensor([height]*len(angles_scan)),
+            torch_model.torch.tensor([period]*len(angles_scan)),
+            _ang_t)
+        scan_rgbs = _scan_rgb.numpy()
+    except Exception:
+        scan_rgbs = []
+        for a in angles_scan:
+            param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))
+            scan_rgbs.append(engine.physical_color(param_a))
+        scan_rgbs = np.array(scan_rgbs)
     scan_hex = [rgb_to_hex(c) for c in scan_rgbs]
 
     fig_ang, (ax1, ax2) = _get_plt().subplots(1, 2, figsize=(10, 3))
