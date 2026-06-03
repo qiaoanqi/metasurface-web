@@ -1072,7 +1072,7 @@ with st.sidebar:
                         st.session_state.d2_val = max(60.0, min(300.0, float(d2)))
                         st.session_state.h2_val = max(80.0, min(600.0, float(h2)))
                         st.session_state.p_val = max(200.0, min(600.0, float(p)))
-                        st.success(f"优化完成! D1={d1:.0f} H1={h1:.0f} D2={d2:.0f} H2={h2:.0f} P={p:.0f}")
+                        st.session_state._dual_success_msg = f"优化完成! D1={d1:.0f} H1={h1:.0f} D2={d2:.0f} H2={h2:.0f} P={p:.0f}"
                         st.rerun()
             except Exception as e:
                 st.error(f"Auto search failed: {e}")
@@ -1255,8 +1255,12 @@ with tab1:
     r255, g255, b255 = rgb_255(rgb)
 
     # --- Correction hint for dual-pillar ---
-    if st.session_state.get('dual_pillar', False) and st.session_state.get('_dual_correction'):
-        st.caption(f"参数已自动修正: {st.session_state._dual_correction}")
+    if st.session_state.get('dual_pillar', False):
+        if st.session_state.get('_dual_success_msg'):
+            st.success(st.session_state._dual_success_msg)
+            st.session_state._dual_success_msg = ''
+        if st.session_state.get('_dual_correction'):
+            st.caption(f"???????: {st.session_state._dual_correction}")
 
     # --- Color swatch card ---
     if st.session_state.get('dual_pillar', False):
