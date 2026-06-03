@@ -165,18 +165,18 @@ def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
 
     for _ in range(n_restarts):
         d1 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
-        h1 = torch.tensor(np.random.uniform(50, 500), dtype=torch.float32, requires_grad=True)
+        h1 = torch.tensor(np.random.uniform(80, 600), dtype=torch.float32, requires_grad=True)
         d2 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
-        h2 = torch.tensor(np.random.uniform(50, 500), dtype=torch.float32, requires_grad=True)
+        h2 = torch.tensor(np.random.uniform(80, 600), dtype=torch.float32, requires_grad=True)
         p = torch.tensor(np.random.uniform(200, 600), dtype=torch.float32, requires_grad=True)
 
         opt = torch.optim.Adam([d1, h1, d2, h2, p], lr=5.0)
         for step in range(n_steps):
             opt.zero_grad()
             d1_c = torch.clamp(d1, 60.0, 267.0)
-            h1_c = torch.clamp(h1, 50.0, 500.0)
+            h1_c = torch.clamp(h1, 80.0, 600.0)
             d2_c = torch.clamp(d2, 60.0, 267.0)
-            h2_c = torch.clamp(h2, 50.0, 500.0)
+            h2_c = torch.clamp(h2, 80.0, 600.0)
             min_p = torch.max(d1_c.detach(), d2_c.detach()) * 1.2 + 20
             p_c = torch.clamp(p, min_p, 600.0)
 

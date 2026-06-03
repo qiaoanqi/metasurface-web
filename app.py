@@ -1067,11 +1067,11 @@ with st.sidebar:
                     if result is not None:
                         d1, h1, d2, h2, p, rgb, loss = result
                         p = max(max(d1, d2) * 1.2 + 20, p)
-                        st.session_state.d1_val = float(d1)
-                        st.session_state.h1_val = float(h1)
-                        st.session_state.d2_val = float(d2)
-                        st.session_state.h2_val = float(h2)
-                        st.session_state.p_val = float(p)
+                        st.session_state.d1_val = max(60.0, min(300.0, float(d1)))
+                        st.session_state.h1_val = max(80.0, min(600.0, float(h1)))
+                        st.session_state.d2_val = max(60.0, min(300.0, float(d2)))
+                        st.session_state.h2_val = max(80.0, min(600.0, float(h2)))
+                        st.session_state.p_val = max(200.0, min(600.0, float(p)))
                         st.success(f"优化完成! D1={d1:.0f} H1={h1:.0f} D2={d2:.0f} H2={h2:.0f} P={p:.0f}")
                         st.rerun()
             except Exception as e:
