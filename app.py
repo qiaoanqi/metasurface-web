@@ -964,7 +964,6 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
-import torch as _torch_check
 _ml_ready = ml_module.init_ml()
 
 
