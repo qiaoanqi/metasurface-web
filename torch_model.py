@@ -190,9 +190,9 @@ def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
             opt.step()
 
         d1_f = float(np.clip(d1.item(), 60, 267))
-        h1_f = float(np.clip(h1.item(), 50, 500))
+        h1_f = float(np.clip(h1.item(), 80, 600))
         d2_f = float(np.clip(d2.item(), 60, 267))
-        h2_f = float(np.clip(h2.item(), 50, 500))
+        h2_f = float(np.clip(h2.item(), 80, 600))
         p_f = float(max(max(d1_f, d2_f) * 1.2 + 20, np.clip(p.item(), 200, 600)))
 
         with torch.no_grad():

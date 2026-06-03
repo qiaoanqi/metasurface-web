@@ -1113,6 +1113,12 @@ with st.sidebar:
             pass
 
         # --- Dual-Pillar Controls ---
+        # Safety clamp all values before rendering widgets
+        st.session_state.d1_val = max(50.0, min(350.0, st.session_state.d1_val))
+        st.session_state.h1_val = max(80.0, min(600.0, st.session_state.h1_val))
+        st.session_state.d2_val = max(50.0, min(350.0, st.session_state.d2_val))
+        st.session_state.h2_val = max(80.0, min(600.0, st.session_state.h2_val))
+        st.session_state.p_val = max(200.0, min(600.0, st.session_state.p_val))
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
             st.session_state.d1_val = st.slider('柱1直径 D1 (nm)', 50.0, 350.0, st.session_state.d1_val, 0.1)
