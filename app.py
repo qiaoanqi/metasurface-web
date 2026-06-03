@@ -1298,7 +1298,7 @@ with tab2:
         st.markdown("<br>", unsafe_allow_html=True)
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            run_btn = st.button('????', use_container_width=True, help='??????: ???, ??30-60?')
+            run_btn = st.button('网格搜索', use_container_width=True, help='传统网格搜索: 精度高, 耗时30-60秒')
         with col_b2:
             ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 速度快, 约10-30秒")
 
@@ -1347,7 +1347,7 @@ with tab2:
             st.session_state.search_history.insert(0, entry)
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
-            status_text.caption("????!")
+            status_text.caption("搜索完成!")
             
             try:
                 _ml_pressed = ml_btn
