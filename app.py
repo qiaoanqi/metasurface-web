@@ -1355,7 +1355,7 @@ with tab2:
     
     if _ml_pressed and _ml_ready:
         with st.spinner("ML梯度优化中... 约10-30秒"):
-            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=300, n_restarts=40)
+            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15)
             if result is not None:
                 d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
                 ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
@@ -1364,11 +1364,24 @@ with tab2:
                 lab_m = rgb_to_lab(ml_rgb)
                 de76 = delta_e76(lab_t, lab_m)
                 de2k = delta_e2000(lab_t, lab_m)
-                st.session_state.top3_results = [
-                    (de2k, ml_param, ml_rgb, de76, de2k),
-                    (de2k+0.01, ml_param, ml_rgb, de76, de2k),
-                    (de2k+0.02, ml_param, ml_rgb, de76, de2k),
-                ]
+                # Run 3 searches with different random restarts for diverse top3
+                results = [result]  # first result already computed
+                for _ in range(2):
+                    r2 = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=10)
+                    if r2 is not None:
+                        results.append(r2)
+                top3 = []
+                for r in results:
+                    d_r, h_r, p_r, rgb_r, _ = r
+                    p_r = max(d_r * 1.2, p_r)
+                    param_r = MetaSurfaceParam(float(d_r), float(h_r), float(p_r), material, substrate, polarization, angle)
+                    lab_tr = rgb_to_lab(target_rgb_norm)
+                    lab_mr = rgb_to_lab(rgb_r)
+                    de_r = delta_e76(lab_tr, lab_mr)
+                    de2k_r = delta_e2000(lab_tr, lab_mr)
+                    top3.append((de2k_r, param_r, rgb_r, de_r, de2k_r))
+                top3.sort(key=lambda x: x[0])
+                st.session_state.top3_results = top3[:3]
                 if "search_cache" not in st.session_state:
                     st.session_state.search_cache = {}
                 cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
