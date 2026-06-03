@@ -1036,7 +1036,7 @@ with st.sidebar:
         help='使用神经网络代替 Lorentzian 物理模型'
     )
     if not _ml_ready:
-        st.caption("ML 功能不可用，缺少 PyTorch（仅本地支持）")
+        st.caption("ML 不可用（需 PyTorch，仅本地/虚拟机支持，云端需加 torch 到 requirements.txt）")
 
     st.divider()
     st.header('📏 纳米柱尺寸')
