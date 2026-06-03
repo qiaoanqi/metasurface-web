@@ -963,6 +963,8 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
+    _ml_ready = ml_module.init_ml()
+
 st.title("🎨 AI超表面结构色设计助手")
 st.caption("v3.0 | 光谱管线 | CIE 1931 色度学")
 st.caption("TiO₂ 纳米柱 Lorentzian 共振 + CIE 1931 光谱色彩管线")
