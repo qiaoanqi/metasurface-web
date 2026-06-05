@@ -1,34 +1,32 @@
 # ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
-import io
+import io, os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
 from PIL import Image
 import streamlit as st
 import ml_module
 
+@st.cache_resource
 def _get_plt():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.font_manager as fm
-    _CONFIGURED = getattr(_get_plt, '_cfg', False)
-    if not _CONFIGURED:
-        # Rebuild font cache (picks up newly installed fonts)
-        try:
-            fm._load_fontmanager(try_read_cache=False)
-        except Exception:
-            pass
-        available = {f.name for f in fm.fontManager.ttflist}
-        fonts = ['WenQuanYi Micro Hei', 'SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'DejaVu Sans']
-        chosen = 'DejaVu Sans'
-        for fn in fonts:
-            if fn in available:
-                chosen = fn
-                break
-        plt.rcParams['font.sans-serif'] = [chosen, 'DejaVu Sans']
-        plt.rcParams['axes.unicode_minus'] = False
-        _get_plt._cfg = True
+    try:
+        fm._load_fontmanager(try_read_cache=False)
+    except Exception:
+        pass
+    available = {f.name for f in fm.fontManager.ttflist}
+    fonts = ['WenQuanYi Micro Hei', 'SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'DejaVu Sans']
+    chosen = 'DejaVu Sans'
+    for fn in fonts:
+        if fn in available:
+            chosen = fn
+            break
+    plt.rcParams['font.sans-serif'] = [chosen, 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
     return plt
 # matplotlib imported lazily to avoid cloud startup issues
 from dataclasses import dataclass
@@ -385,30 +383,56 @@ class MetaSurfaceColorEngine:
             if getattr(self, '_enable_far_field', False):
                 wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             else:
-                # Near-field: incoherent sum of two pillar intensities
-                # I1,I2 already include fill_amp weighting, no extra fill factor needed
-                wls = np.arange(380, 785, 5)
-                refl = np.zeros(len(wls))
-                for i, wl_nm in enumerate(wls):
-                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, wl_nm)
-                    I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, wl_nm)
-                    refl[i] = float(abs(I1)**2 + abs(I2)**2)
-                refl_max = refl.max()
-                if refl_max > 1e-12:
-                    refl = refl / refl_max
-            return spectrum_to_srgb(wls, refl)
+                # PyTorch batch mode: 81 wavelengths in one pass
+                try:
+                    import torch_model as _tm
+                    pol_TE = param.polarization.startswith("TE")
+                    spec = _tm.batch_dual_pillar_spectrum(
+                        _tm.torch.tensor([param.d1_nm]),
+                        _tm.torch.tensor([param.h1_nm]),
+                        _tm.torch.tensor([param.d2_nm]),
+                        _tm.torch.tensor([param.h2_nm]),
+                        _tm.torch.tensor([param.period_nm]),
+                        _tm.torch.tensor([param.angle_deg]),
+                        pol_TE,
+                        material=param.material
+                    )
+                    rgb = _tm.batch_spectrum_to_rgb(spec)
+                    return rgb.squeeze(0).numpy()
+                except Exception:
+                    wls = np.arange(380, 785, 5)
+                    refl = np.zeros(len(wls))
+                    for i, wl_nm in enumerate(wls):
+                        I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                            param.material, param.polarization, param.angle_deg, wl_nm)
+                        I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                            param.material, param.polarization, param.angle_deg, wl_nm)
+                        refl[i] = float(abs(I1)**2 + abs(I2)**2)
+                    refl = refl / 0.86
+                    return spectrum_to_srgb(wls, refl)
         # Single pillar (MetaSurfaceParam)
         if getattr(self, '_enable_far_field', False):
             wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
-        else:
+            return spectrum_to_srgb(wls, refl)
+        # PyTorch batch mode: 81 wavelengths in one pass (~10x faster)
+        try:
+            import torch_model as _tm
+            pol_TE = param.polarization.startswith("TE")
+            spec = _tm.batch_lorentzian_spectrum(
+                _tm.torch.tensor([param.diameter_nm]),
+                _tm.torch.tensor([param.height_nm]),
+                _tm.torch.tensor([param.period_nm]),
+                _tm.torch.tensor([param.angle_deg]),
+                pol_TE,
+                material=param.material
+            )
+            rgb = _tm.batch_spectrum_to_rgb(spec)
+            return rgb.squeeze(0).numpy()
+        except Exception:
             wls = np.arange(380, 785, 5)
             refl = np.array([self._single_wl_response(param, wl) for wl in wls])
-            refl_max = refl.max()
-            if refl_max > 1e-12:
-                refl = refl / refl_max
-        return spectrum_to_srgb(wls, refl)
+            refl = refl / 0.86
+            return spectrum_to_srgb(wls, refl)
 
     def ai_predict_color(self, param: MetaSurfaceParam) -> np.ndarray:
         d, h = param.diameter_nm, param.height_nm
@@ -606,28 +630,58 @@ class MetaSurfaceColorEngine:
         if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
             if getattr(self, '_enable_far_field', False):
                 return self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
-            wls = np.linspace(wl_start, wl_end, n_pts)
-            refl = np.zeros(len(wls))
-            for i, wl_nm in enumerate(wls):
-                I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                    param.material, param.polarization, param.angle_deg, wl_nm)
-                I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                    param.material, param.polarization, param.angle_deg, wl_nm)
-                _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                    param.material, param.polarization, param.angle_deg, 550.0)
-                _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                    param.material, param.polarization, param.angle_deg, 550.0)
-                refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
-            refl_max = refl.max()
-            if refl_max > 1e-12:
-                refl = refl / refl_max
-            return wls, refl
+            # PyTorch batch mode
+            try:
+                import torch_model as _tm
+                pol_TE = param.polarization.startswith("TE")
+                spec = _tm.batch_dual_pillar_spectrum(
+                    _tm.torch.tensor([param.d1_nm]),
+                    _tm.torch.tensor([param.h1_nm]),
+                    _tm.torch.tensor([param.d2_nm]),
+                    _tm.torch.tensor([param.h2_nm]),
+                    _tm.torch.tensor([param.period_nm]),
+                    _tm.torch.tensor([param.angle_deg]),
+                    pol_TE,
+                    material=param.material
+                )
+                wls = np.linspace(wl_start, wl_end, n_pts)
+                return wls, (spec.squeeze(0).numpy() / 0.86)
+            except Exception:
+                wls = np.linspace(wl_start, wl_end, n_pts)
+                refl = np.zeros(len(wls))
+                for i, wl_nm in enumerate(wls):
+                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, wl_nm)
+                    I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, wl_nm)
+                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, 550.0)
+                    _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
+                        param.material, param.polarization, param.angle_deg, 550.0)
+                    refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
+                refl = refl / 0.86
+                return wls, refl
         if getattr(self, '_enable_far_field', False):
             wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
             return wls, refl
-        wls = np.linspace(wl_start, wl_end, n_pts)
-        refl = np.array([self._single_wl_response(param, w) for w in wls])
-        return wls, refl
+        # PyTorch batch mode
+        try:
+            import torch_model as _tm
+            pol_TE = param.polarization.startswith("TE")
+            spec = _tm.batch_lorentzian_spectrum(
+                _tm.torch.tensor([param.diameter_nm]),
+                _tm.torch.tensor([param.height_nm]),
+                _tm.torch.tensor([param.period_nm]),
+                _tm.torch.tensor([param.angle_deg]),
+                pol_TE,
+                material=param.material
+            )
+            wls = np.linspace(wl_start, wl_end, n_pts)
+            return wls, (spec.squeeze(0).numpy() / 0.86)
+        except Exception:
+            wls = np.linspace(wl_start, wl_end, n_pts)
+            refl = np.array([self._single_wl_response(param, w) for w in wls])
+            return wls, refl
 
     def _peak_wl(self, d, h, n550=2.4157):
         # Return dominant peak: ED for blue-green, MD for red
@@ -960,7 +1014,16 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
-_ml_ready = ml_module.init_ml()
+@st.cache_resource
+def get_ml_ready():
+    return ml_module.init_ml()
+
+_ml_ready = get_ml_ready()
+
+@st.cache_resource
+def get_dual_ml_ready():
+    return ml_module.init_dual_ml()
+_dual_ml_ready = get_dual_ml_ready()
 
 
 
@@ -1032,9 +1095,25 @@ with st.sidebar:
         disabled=not _ml_ready,
         help='使用神经网络代替 Lorentzian 物理模型'
     )
+    if _ml_ready:
+        try:
+            v5_exists = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "forward_mlp_v5.pt"))
+            v4_exists = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "forward_mlp_v4.pt"))
+            if v5_exists:
+                st.caption("模型: v7 Multi | 20万样本 | 256x4块 | 4种材料")
+            elif v4_exists:
+                st.caption("模型: ResMLP v4 | 5万样本 | 128x2块 (旧版)")
+            else:
+                st.caption("模型: 旧版")
+        except:
+            pass
+        if ml_module._DUAL_ML_AVAILABLE:
+            st.caption("双柱 ML: DualResMLP v2 (Fano) 可用")
     if not _ml_ready:
         st.caption("ML 不可用（需 PyTorch，仅本地/虚拟机支持，云端需加 torch 到 requirements.txt）")
 
+    if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
+        st.warning(f"\u26a0\ufe0f \u300c{material}\u300d\u4e0d\u5728 ML \u8bad\u7ec3\u6570\u636e\u4e2d\uff0c\u5df2\u81ea\u52a8\u5207\u6362\u4e3a\u7269\u7406\u6a21\u578b\uff08\u7cbe\u5ea6\u4e0d\u53d7\u5f71\u54cd\uff09")
     st.divider()
     st.header('📏 纳米柱尺寸')
 
@@ -1060,7 +1139,7 @@ with st.sidebar:
             try:
                 import torch_model as _tmd
                 with st.spinner("PyTorch 梯度优化中... 约15-25秒"):
-                    result = _tmd.inverse_design_dual(target_rgb, n_steps=400, n_restarts=20)
+                    result = _tmd.inverse_design_dual(target_rgb, n_steps=400, n_restarts=20, material=material)
                     if result is not None:
                         d1, h1, d2, h2, p, rgb, loss = result
                         p = max(max(d1, d2) * 1.2 + 20, p)
@@ -1222,23 +1301,70 @@ if st.session_state.get('dual_pillar', False):
     )
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
+# Cached color lookup: avoid recomputing for same parameters
+@st.cache_data
+def _cached_physical_color(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm, dual, far_field, na, theta_obs):
+    engine._enable_far_field = far_field
+    engine._na = na
+    engine._theta_obs_deg = theta_obs
+    if dual:
+        p = DualPillarParam(d1_nm=d_nm, h1_nm=h_nm, d2_nm=d2_nm, h2_nm=h2_nm,
+                            period_nm=p_nm, material=mat, substrate=sub,
+                            polarization=pol, angle_deg=ang)
+    else:
+        p = MetaSurfaceParam(d_nm, h_nm, p_nm, mat, sub, pol, ang)
+    return engine.physical_color(p)
+
+
 use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
-if use_ml and not st.session_state.get('dual_pillar', False):
-    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization)
+use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ML_AVAILABLE
+
+# v7 multi-material ML supports all materials
+if use_dual_ml:
+    d1v = st.session_state.get('d1_val', diameter)
+    h1v = st.session_state.get('h1_val', height)
+    d2v = st.session_state.get('d2_val', diameter)
+    h2v = st.session_state.get('h2_val', height)
+    ml_rgb = ml_module.predict_dual_rgb(d1v, h1v, d2v, h2v, period, angle, polarization, material)
     if ml_rgb is not None:
         rgb = ml_rgb
     else:
-        rgb = engine.physical_color(param)
-else:
-    use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
-if use_ml and not st.session_state.get('dual_pillar', False):
-    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization)
+        rgb = _cached_physical_color(
+            round(st.session_state.d1_val, 1), round(st.session_state.h1_val, 1), round(st.session_state.p_val, 1),
+            material, substrate, polarization, round(angle, 1),
+            round(st.session_state.d2_val, 1), round(st.session_state.h2_val, 1), True,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
+elif use_ml and not st.session_state.get('dual_pillar', False):
+    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization, material)
     if ml_rgb is not None:
         rgb = ml_rgb
     else:
-        rgb = engine.physical_color(param)
+        rgb = _cached_physical_color(
+            round(diameter, 1), round(height, 1), round(period, 1),
+            material, substrate, polarization, round(angle, 1),
+            0.0, 0.0, False,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
 else:
-    rgb = engine.physical_color(param)
+    if st.session_state.get('dual_pillar', False):
+        rgb = _cached_physical_color(
+            round(st.session_state.d1_val, 1), round(st.session_state.h1_val, 1), round(st.session_state.p_val, 1),
+            material, substrate, polarization, round(angle, 1),
+            round(st.session_state.d2_val, 1), round(st.session_state.h2_val, 1), True,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
+    else:
+        rgb = _cached_physical_color(
+            round(diameter, 1), round(height, 1), round(period, 1),
+            material, substrate, polarization, round(angle, 1),
+            0.0, 0.0, False,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -1257,7 +1383,7 @@ with tab1:
             st.success(st.session_state._dual_success_msg)
             st.session_state._dual_success_msg = ''
         if st.session_state.get('_dual_correction'):
-            st.caption(f"???????: {st.session_state._dual_correction}")
+            st.caption(f"参数已修正: {st.session_state._dual_correction}")
 
     # --- Color swatch card ---
     if st.session_state.get('dual_pillar', False):
@@ -1319,6 +1445,53 @@ with tab1:
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Parameter sensitivity: +/-5nm tolerance
+    st.divider()
+    st.subheader("参数灵敏度 (工艺容差 +/-5nm)")
+    try:
+        import torch_model as _tm_sens
+        import torch as _torch_sens
+        tol = 5.0
+        params = [
+            ("D", diameter, height, period, "diameter"),
+            ("H", diameter, height, period, "height"),
+            ("P", diameter, height, period, "period"),
+        ]
+        cols = st.columns(4)
+        cols[0].markdown("**参数**")
+        cols[1].markdown(f"**-{tol:.0f}nm**")
+        cols[2].markdown("**当前**")
+        cols[3].markdown(f"**+{tol:.0f}nm**")
+        
+        for label, d_val, h_val, p_val, which in params:
+            if which == "diameter":
+                d_lo, d_hi = max(50, d_val-tol), min(350, d_val+tol)
+                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
+                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
+            elif which == "height":
+                h_lo, h_hi = max(80, h_val-tol), min(600, h_val+tol)
+                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material)
+                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material)
+            else:
+                d_min = max(d_val, 50); p_lo = max(d_min*1.2, p_val-tol); p_hi = min(600, p_val+tol)
+                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material)
+                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material)
+            
+            rgb_lo = _tm_sens.batch_spectrum_to_rgb(sp_lo).squeeze().numpy()
+            rgb_hi = _tm_sens.batch_spectrum_to_rgb(sp_hi).squeeze().numpy()
+            hex_lo = rgb_to_hex(rgb_lo); hex_hi = rgb_to_hex(rgb_hi)
+            de_lo = np.sqrt(np.sum((rgb - rgb_lo)**2))
+            de_hi = np.sqrt(np.sum((rgb - rgb_hi)**2))
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(f"**{label}**")
+            c2.markdown(f'<div style="width:40px;height:24px;background:{hex_lo};border-radius:4px;"></div><small>ΔE={de_lo:.3f}</small>', unsafe_allow_html=True)
+            c3.markdown(f'<div style="width:40px;height:24px;background:{hex_color};border-radius:4px;border:2px solid white;"></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div style="width:40px;height:24px;background:{hex_hi};border-radius:4px;"></div><small>ΔE={de_hi:.3f}</small>', unsafe_allow_html=True)
+        st.caption("工艺容差 ±5nm 下的颜色偏差 (ΔE < 0.02 肉眼不可分辨)")
+    except Exception as e:
+        st.caption(f"灵敏度分析不可用: {e}")
 
 # Tab 2: Inverse Design
 with tab2:
@@ -1389,7 +1562,7 @@ with tab2:
     
     if _ml_pressed and _ml_ready:
         with st.spinner("ML梯度优化中... 约10-30秒"):
-            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15)
+            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15, material=material)
             if result is not None:
                 d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
                 ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
@@ -1611,6 +1784,95 @@ with tab4:
     st.markdown(rows_html, unsafe_allow_html=True)
     st.caption(f"🔴: {material} | ⚪: {substrate} | 周期 P={period:.0f}nm")
     st.caption("⬅️: 高度 H (nm) | ⬇️: 直径 D (nm)")
+    # CIE 1931 chromaticity diagram
+    st.divider()
+    st.subheader("CIE 1931 色度图")
+    try:
+        plt = _get_plt()
+        fig, ax = plt.subplots(figsize=(5, 4.5))
+        # CIE 1931 spectrum locus (standard data)
+        cie_xy = [
+            (0.1741,0.0050),(0.1740,0.0050),(0.1738,0.0049),(0.1736,0.0049),(0.1733,0.0048),
+            (0.1730,0.0048),(0.1726,0.0048),(0.1721,0.0048),(0.1714,0.0051),(0.1703,0.0058),
+            (0.1689,0.0069),(0.1669,0.0086),(0.1644,0.0109),(0.1611,0.0138),(0.1566,0.0177),
+            (0.1510,0.0227),(0.1440,0.0297),(0.1355,0.0399),(0.1241,0.0578),(0.1096,0.0868),
+            (0.0913,0.1327),(0.0687,0.2007),(0.0454,0.2950),(0.0235,0.4127),(0.0082,0.5384),
+            (0.0039,0.6548),(0.0139,0.7502),(0.0389,0.8120),(0.0743,0.8338),(0.1142,0.8262),
+            (0.1547,0.8059),(0.1929,0.7816),(0.2296,0.7543),(0.2658,0.7243),(0.3016,0.6923),
+            (0.3373,0.6589),(0.3731,0.6245),(0.4087,0.5896),(0.4441,0.5547),(0.4788,0.5202),
+            (0.5125,0.4866),(0.5448,0.4544),(0.5752,0.4242),(0.6029,0.3965),(0.6270,0.3725),
+            (0.6482,0.3514),(0.6658,0.3340),(0.6801,0.3197),(0.6915,0.3083),(0.7006,0.2993),
+            (0.7079,0.2920),(0.7140,0.2859),(0.7190,0.2809),(0.7230,0.2770),(0.7260,0.2740),
+            (0.7283,0.2717),(0.7300,0.2700),(0.7311,0.2689),(0.7320,0.2680),(0.7327,0.2673),
+            (0.7334,0.2666),(0.7340,0.2660),(0.7344,0.2656),(0.7346,0.2654),(0.7347,0.2653),
+            (0.7347,0.2653),(0.7347,0.2653),(0.7346,0.2654),(0.7344,0.2656),(0.7340,0.2660),
+            (0.7334,0.2666),(0.7327,0.2673),(0.7320,0.2680),(0.7311,0.2689),(0.7300,0.2700),
+            (0.7283,0.2717),(0.7260,0.2740),(0.7230,0.2770),(0.7190,0.2809),(0.7140,0.2859),
+            (0.7079,0.2920),(0.7006,0.2993),(0.6915,0.3083),(0.6801,0.3197),(0.6658,0.3340),
+            (0.6482,0.3514),(0.6270,0.3725),(0.6029,0.3965),(0.5752,0.4242),(0.5448,0.4544),
+            (0.5125,0.4866),(0.4788,0.5202),(0.4441,0.5547),(0.4087,0.5896),(0.3731,0.6245),
+            (0.3373,0.6589),(0.3016,0.6923),(0.2658,0.7243),(0.2296,0.7543),(0.1929,0.7816),
+            (0.1547,0.8059),(0.1142,0.8262),(0.0743,0.8338),(0.0389,0.8120),(0.0139,0.7502),
+            (0.0039,0.6548),(0.0082,0.5384),(0.0235,0.4127),(0.0454,0.2950),(0.0687,0.2007),
+            (0.0913,0.1327),(0.1096,0.0868),(0.1241,0.0578),(0.1355,0.0399),(0.1440,0.0297),
+            (0.1510,0.0227),(0.1566,0.0177),(0.1611,0.0138),(0.1644,0.0109),(0.1669,0.0086),
+            (0.1689,0.0069),(0.1703,0.0058),(0.1714,0.0051),(0.1721,0.0048),(0.1726,0.0048),
+            (0.1730,0.0048),(0.1733,0.0048),(0.1736,0.0049),(0.1738,0.0049),(0.1740,0.0050),
+        ]
+        cx = [p[0] for p in cie_xy]; cy = [p[1] for p in cie_xy]
+        ax.fill(cx, cy, color="#e8e8e8", alpha=0.5)
+        ax.plot(cx, cy, "k-", linewidth=0.8)
+        # sRGB gamut triangle
+        sR, sG, sB = (0.640,0.330), (0.300,0.600), (0.150,0.060)
+        ax.plot([sR[0],sG[0]],[sR[1],sG[1]],"k--",linewidth=0.5)
+        ax.plot([sG[0],sB[0]],[sG[1],sB[1]],"k--",linewidth=0.5)
+        ax.plot([sB[0],sR[0]],[sB[1],sR[1]],"k--",linewidth=0.5)
+        ax.text(sR[0],sR[1]+0.02,"R",fontsize=8,ha="center")
+        ax.text(sG[0]-0.02,sG[1]+0.02,"G",fontsize=8,ha="center")
+        ax.text(sB[0],sB[1]-0.03,"B",fontsize=8,ha="center")
+        # Compute xy from spectrum
+        try:
+            import torch_model as _tm2
+            import torch as _torch
+            # Local CIE data for numpy
+            _cie_x = np.array([0.001368,0.002236,0.004243,0.007650,0.014310,0.023190,0.043510,0.077630,0.134380,0.214770,0.283900,0.328500,0.348280,0.348060,0.336200,0.318700,0.290800,0.251100,0.195360,0.142100,0.095640,0.058010,0.032010,0.014700,0.004900,0.002400,0.009300,0.029100,0.063270,0.109600,0.165500,0.225750,0.290400,0.359700,0.433450,0.512050,0.594500,0.678400,0.762100,0.842500,0.916300,0.978600,1.026300,1.056700,1.062200,1.045600,1.002600,0.938400,0.854450,0.751400,0.642400,0.541900,0.447900,0.360800,0.283500,0.218700,0.164900,0.121200,0.087400,0.063600,0.046770,0.032900,0.022700,0.015840,0.011359,0.008111,0.005790,0.004109,0.002899,0.002049,0.001440,0.001000,0.000690,0.000476,0.000332,0.000235,0.000166,0.000117,0.000083,0.000059,0.000042])
+            _cie_y = np.array([0.000039,0.000064,0.000120,0.000217,0.000396,0.000640,0.001210,0.002180,0.004000,0.007300,0.011600,0.016840,0.023000,0.029800,0.038000,0.048000,0.060000,0.073900,0.090980,0.112600,0.139020,0.169300,0.208020,0.258600,0.323000,0.407300,0.503000,0.608200,0.710000,0.793200,0.862000,0.914850,0.954000,0.980300,0.994950,1.000000,0.995000,0.978600,0.952000,0.915400,0.870000,0.816300,0.757000,0.694900,0.631000,0.566800,0.503000,0.441200,0.381000,0.321000,0.265000,0.217000,0.175000,0.138200,0.107000,0.081600,0.061000,0.044580,0.032000,0.023200,0.017000,0.011920,0.008210,0.005723,0.004102,0.002929,0.002091,0.001484,0.001047,0.000740,0.000520,0.000361,0.000249,0.000172,0.000120,0.000085,0.000060,0.000042,0.000030,0.000021,0.000015])
+            _cie_z = np.array([0.006450,0.010550,0.020050,0.036210,0.067850,0.110200,0.207400,0.371300,0.645600,1.039050,1.385600,1.622960,1.747060,1.782600,1.772110,1.744100,1.669200,1.528100,1.287640,0.999550,0.716900,0.484400,0.311900,0.190300,0.104200,0.049200,0.020300,0.008700,0.003900,0.002100,0.001650,0.001100,0.000800,0.000550,0.000350,0.000250,0.000150,0.000100,0.000050,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+            _wl = np.linspace(380, 780, 81)
+            if st.session_state.get("dual_pillar", False):
+                sp = _tm2.batch_dual_pillar_spectrum(
+                    _torch.tensor([st.session_state.d1_val]), _torch.tensor([st.session_state.h1_val]),
+                    _torch.tensor([st.session_state.d2_val]), _torch.tensor([st.session_state.h2_val]),
+                    _torch.tensor([st.session_state.p_val]),
+                    material=material
+                )
+            else:
+                sp = _tm2.batch_lorentzian_spectrum(
+                    _torch.tensor([diameter]), _torch.tensor([height]), _torch.tensor([period]),
+                    material=material
+                )
+            sp_np = sp.squeeze().detach().numpy()
+            Xv = np.trapezoid(sp_np * _cie_x, _wl)
+            Yv = np.trapezoid(sp_np * _cie_y, _wl)
+            Zv = np.trapezoid(sp_np * _cie_z, _wl)
+            total = Xv + Yv + Zv
+            if total > 0:
+                px, py = Xv/total, Yv/total
+                ax.plot(px, py, "ro", markersize=8, markeredgecolor="white", markeredgewidth=1.5)
+                ax.annotate(f"({px:.3f},{py:.3f})", (px, py), textcoords="offset points",
+                           xytext=(10,10), fontsize=9, color="#333")
+        except Exception:
+            pass
+        ax.set_xlim(0, 0.8); ax.set_ylim(0, 0.9)
+        ax.set_xlabel("x"); ax.set_ylabel("y")
+        ax.set_title(f"{material}  |  D={diameter:.0f}nm H={height:.0f}nm P={period:.0f}nm", fontsize=9)
+        ax.set_aspect("equal")
+        st.pyplot(fig)
+        plt.close(fig)
+        st.caption("灰色区域: CIE 1931 色度图马蹄轨迹 | 虚线三角: sRGB 色域 | 红点: 当前预测色坐标")
+    except Exception as e:
+        st.caption(f"色度图渲染失败: {e}")
+
 # Tab 5: Spectrum & CIE Chromaticity
 with tab5:
     col_spec, col_cie = st.columns([3, 2])
@@ -1622,7 +1884,7 @@ with tab5:
         fig5, ax5 = _get_plt().subplots(figsize=(10, 4))
         # Color the spectrum curve with the actual computed color
         hex_c = rgb_to_hex(rgb)
-        ax5.plot(wls, refl, color=hex_c, lw=2.5,
+        ax5.plot(wls, refl, color="#333", lw=2.5,
                  label=f"D={diameter:.0f} H={height:.0f}nm")
         ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
         ax5.set_xlabel("波长 (nm)")
@@ -1723,5 +1985,63 @@ with tab5:
     _get_plt().close(fig_ang)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("AI超表面结构色设计 v3.0")
-st.sidebar.caption("物理模型: Lorentzian 共振 + CIE 1931 光谱管线")
+st.sidebar.subheader("导出")
+# Spectrum CSV export
+wl = np.linspace(380, 780, 81)
+if st.session_state.get("dual_pillar", False):
+    try:
+        import torch_model as _tm_exp
+        import torch as _torch_exp
+        sp_dual = _tm_exp.batch_dual_pillar_spectrum(
+            _torch_exp.tensor([st.session_state.d1_val]), _torch_exp.tensor([st.session_state.h1_val]),
+            _torch_exp.tensor([st.session_state.d2_val]), _torch_exp.tensor([st.session_state.h2_val]),
+            _torch_exp.tensor([st.session_state.p_val]),
+            material=material
+        )
+        spec_export = sp_dual.squeeze().detach().numpy()
+    except:
+        spec_export = np.zeros(81)
+else:
+    try:
+        import torch_model as _tm_exp
+        import torch as _torch_exp
+        sp_single = _tm_exp.batch_lorentzian_spectrum(
+            _torch_exp.tensor([diameter]), _torch_exp.tensor([height]), _torch_exp.tensor([period]),
+            material=material
+        )
+        spec_export = sp_single.squeeze().detach().numpy()
+    except:
+        spec_export = np.zeros(81)
+
+csv_data = "Wavelength_nm,Reflectance\n"
+for i in range(81):
+    csv_data += f"{wl[i]:.0f},{spec_export[i]:.6f}\n"
+st.sidebar.download_button(
+    "下载光谱 CSV", csv_data,
+    file_name=f"spectrum_D{diameter:.0f}_H{height:.0f}_P{period:.0f}.csv",
+    mime="text/csv", use_container_width=True
+)
+
+# Color swatch PNG export
+try:
+    swatch_size = 100
+    swatch = np.ones((swatch_size, swatch_size, 3), dtype=np.uint8)
+    r255, g255, b255 = int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
+    swatch[:,:,0] = r255; swatch[:,:,1] = g255; swatch[:,:,2] = b255
+    img = Image.fromarray(swatch)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    st.sidebar.download_button(
+        "下载色板 PNG", buf.getvalue(),
+        file_name=f"swatch_{hex_color.lstrip('#')}.png",
+        mime="image/png", use_container_width=True
+    )
+except:
+    pass
+
+st.sidebar.markdown("---")
+st.sidebar.caption("AI超表面结构色设计 v5.0 (MultiMaterial)")
+st.sidebar.caption("物理模型: Fano 共振 + CIE 1931 光谱管线")
+st.sidebar.markdown("---")
+st.sidebar.caption("长沙理工大学 物理与电子科学学院")
+st.sidebar.caption("光电2501 乔安琪")

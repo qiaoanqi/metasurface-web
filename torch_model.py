@@ -1,4 +1,4 @@
-﻿# torch_model.py - PyTorch batch Lorentzian model (v2 - full Cauchy + coherent)
+# torch_model.py - PyTorch batch Lorentzian model (v2 - full Cauchy + coherent)
 import torch
 import numpy as np
 
@@ -10,23 +10,34 @@ CIE_Y = torch.tensor([0.000039,0.000064,0.000120,0.000217,0.000396,0.000640,0.00
 CIE_Z = torch.tensor([0.006450,0.010550,0.020050,0.036210,0.067850,0.110200,0.207400,0.371300,0.645600,1.039050,1.385600,1.622960,1.747060,1.782600,1.772110,1.744100,1.669200,1.528100,1.287640,0.999550,0.716900,0.484400,0.311900,0.190300,0.104200,0.049200,0.020300,0.008700,0.003900,0.002100,0.001650,0.001100,0.000800,0.000550,0.000350,0.000250,0.000150,0.000100,0.000050]+ [0.0]*42, dtype=torch.float32)
 
 WL = torch.linspace(380, 780, 81)
-CIE_NORM = CIE_Y.sum()
+CIE_NORM = torch.trapezoid(CIE_Y, WL)
 SRGB_M = torch.tensor([[3.2406,-1.5372,-0.4986],[-0.9689,1.8758,0.0415],[0.0557,-0.2040,1.0570]], dtype=torch.float32)
 
-# Cauchy: TiO2 anatase: n(um) = A + B/um^2
-A_TIO2, B_TIO2 = 2.3000, 0.03500
+# Cauchy coefficients (A, B) for n(um) = A + B/um^2
+CAUCHY_DB = {
+    "TiO2 (anatase)":      (2.3000, 0.03500),
+    "a-Si (amorphous)":    (3.8000, 0.08000),
+    "Si3N4 (nitride)":     (1.9900, 0.01200),
+    "Al2O3 (sapphire)":    (1.7546, 0.00500),
+    "Air":                 (1.0003, 0.00000),
+}
+DEFAULT_MATERIAL = "TiO2 (anatase)"
 
 
-def _cauchy_n(wl_nm):
-    """TiO2 refractive index via Cauchy: n = A + B/(wl_um)^2"""
-    wl_um = wl_nm.clamp(min=350.0) / 1000.0  # (batch,)
-    return A_TIO2 + B_TIO2 / (wl_um ** 2)
+def _cauchy_n(wl_nm, material=None):
+    """Refractive index via Cauchy: n = A + B/(wl_um)^2"""
+    if material is None:
+        material = DEFAULT_MATERIAL
+    A, B = CAUCHY_DB.get(material, CAUCHY_DB[DEFAULT_MATERIAL])
+    wl_um = wl_nm.clamp(min=350.0) / 1000.0
+    return A + B / (wl_um ** 2)
 
 
-def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True):
+def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None):
     """
-    Batch Lorentzian spectrum with full Cauchy dispersion and coherent ED+MD addition.
-    Matches the NumPy _single_pillar_complex model.
+    Batch Fano resonance spectrum with full Cauchy dispersion and coherent ED+MD addition.
+    Fano lineshape: R = (q+eps)^2 / ((1+q^2)(1+eps^2)) replaces Lorentzian for better asymmetry.
+    Supports multiple materials via Cauchy coefficients.
     """
     if not isinstance(D, torch.Tensor): D = torch.tensor(D, dtype=torch.float32)
     if not isinstance(H, torch.Tensor): H = torch.tensor(H, dtype=torch.float32)
@@ -38,11 +49,10 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True):
     wl = WL.unsqueeze(0)  # (1, 81)
 
     # Wavelength-dependent n (batch, 81)
-    n_mat = _cauchy_n(wl)  # (1, 81) -> broadcast to (batch, 81) automatically
-    dn = n_mat - 2.0  # (1, 81)
+    n_mat = _cauchy_n(wl, material)  # (1, 81) -> broadcast to (batch, 81) automatically
 
     # Peak wavelengths (batch, 1) - use n@550nm as reference
-    n550 = _cauchy_n(torch.tensor(550.0)).item()
+    n550 = _cauchy_n(torch.tensor(550.0), material).item()
     dn550 = n550 - 2.0
 
     lam_ed = (360 + 0.55*(D-60) + 0.12*(H-120) + 32*dn550).unsqueeze(1)  # (batch, 1)
@@ -70,22 +80,32 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True):
     w_ed = torch.clamp(0.80 - 0.003*(D-60), 0.0, 0.80).unsqueeze(1)
     w_md = 1.0 - w_ed
 
-    # Lorentzian shapes (batch, 81)
+    # Fano resonance shapes (batch, 81)
+    # R = (q + eps)^2 / ((1+q^2)(1+eps^2))   where eps = (wl-lam)/sigma
+    # Complex amplitude: r = (q+eps)/sqrt(1+q^2) / (1 + i*eps)
+    # r_real = (q+eps)/(sqrt(1+q^2)*(1+eps^2)), r_imag = -(q+eps)*eps/(sqrt(1+q^2)*(1+eps^2))
+
+    # Fano asymmetry parameters: higher q = more Lorentzian-like
+    # ED tends to be more asymmetric (lower q) due to stronger continuum coupling
+    aspect = H.unsqueeze(1) / D.unsqueeze(1).clamp(min=50.0)
+    q_ed = torch.clamp(2.5 + 0.5 * (aspect - 1.0), 1.5, 6.0)
+    q_md = torch.clamp(4.0 + 0.3 * (aspect - 1.0), 2.5, 8.0)
+    inv_norm_ed = 1.0 / torch.sqrt(1.0 + q_ed**2)
+    inv_norm_md = 1.0 / torch.sqrt(1.0 + q_md**2)
+
     ed_center = lam_ed + ed_shift
     detune_ed = (wl - ed_center) / sigma_ed
-    ed_amp = torch.sqrt(1.0/(1.0+detune_ed**2)) * torch.sqrt(ed_amp_a)
-    ed_phase = -torch.atan(detune_ed)
+    fano_num_ed = q_ed + detune_ed  # (batch, 81)
+    denom_ed = 1.0 + detune_ed**2
+    r_ed_real = fano_num_ed * inv_norm_ed / denom_ed * torch.sqrt(ed_amp_a)
+    r_ed_imag = -fano_num_ed * detune_ed * inv_norm_ed / denom_ed * torch.sqrt(ed_amp_a)
 
     md_center = lam_md + md_shift
     detune_md = (wl - md_center) / sigma_md
-    md_amp = torch.sqrt(1.0/(1.0+detune_md**2)) * torch.sqrt(md_amp_a)
-    md_phase = -torch.atan(detune_md)
-
-    # Coherent addition: r_total = w_ed*r_ed + w_md*r_md
-    r_ed_real = ed_amp * torch.cos(ed_phase)
-    r_ed_imag = ed_amp * torch.sin(ed_phase)
-    r_md_real = md_amp * torch.cos(md_phase)
-    r_md_imag = md_amp * torch.sin(md_phase)
+    fano_num_md = q_md + detune_md
+    denom_md = 1.0 + detune_md**2
+    r_md_real = fano_num_md * inv_norm_md / denom_md * torch.sqrt(md_amp_a)
+    r_md_imag = -fano_num_md * detune_md * inv_norm_md / denom_md * torch.sqrt(md_amp_a)
 
     r_real = w_ed*r_ed_real + w_md*r_md_real
     r_imag = w_ed*r_ed_imag + w_md*r_md_imag
@@ -97,18 +117,18 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True):
 def batch_spectrum_to_rgb(spectrum):
     """Batch spectrum (B,81) -> sRGB (B,3)"""
     wl = WL.unsqueeze(0)
-    X = torch.trapz(spectrum * CIE_X.unsqueeze(0), wl, dim=1)
-    Y = torch.trapz(spectrum * CIE_Y.unsqueeze(0), wl, dim=1)
-    Z = torch.trapz(spectrum * CIE_Z.unsqueeze(0), wl, dim=1)
+    X = torch.trapezoid(spectrum * CIE_X.unsqueeze(0), wl, dim=1)
+    Y = torch.trapezoid(spectrum * CIE_Y.unsqueeze(0), wl, dim=1)
+    Z = torch.trapezoid(spectrum * CIE_Z.unsqueeze(0), wl, dim=1)
     xyz = torch.stack([X/CIE_NORM, Y/CIE_NORM, Z/CIE_NORM], dim=1)
     rgb_lin = xyz @ SRGB_M.T
     rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
     return torch.clamp(rgb, 0.0, 1.0)
 
 
-def batch_single_pillar_rgb(D, H, P, theta=0.0, pol_TE=True):
+def batch_single_pillar_rgb(D, H, P, theta=0.0, pol_TE=True, material=None):
     """End-to-end batch: D,H,P -> spectrum -> RGB"""
-    spec = batch_lorentzian_spectrum(D, H, P, theta, pol_TE)
+    spec = batch_lorentzian_spectrum(D, H, P, theta, pol_TE, material)
     return batch_spectrum_to_rgb(spec)
 
 
@@ -133,21 +153,20 @@ def batch_color_map_grid(D_grid, H_grid, P_val=400.0):
 # Dual-pillar batch functions
 # ============================================================
 
-def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):
-    """Incoherent sum of two pillar spectra.
-    Each spectrum already includes fill_amp weighting, so just add them."""
-    spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE)
-    spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE)
+def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None):
+    """Incoherent sum of two pillar spectra."""
+    spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE, material)
+    spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE, material)
     return spec1 + spec2
 
 
-def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True):
+def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None):
     """Dual pillar -> RGB."""
-    spec = batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta, pol_TE)
+    spec = batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta, pol_TE, material)
     return batch_spectrum_to_rgb(spec)
 
 
-def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
+def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30, material=None):
     """Gradient-based inverse design for dual-pillar (5 params)."""
     if not isinstance(target_rgb, torch.Tensor):
         target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
@@ -177,7 +196,7 @@ def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
             spec = batch_dual_pillar_spectrum(
                 d1_c.unsqueeze(0), h1_c.unsqueeze(0),
                 d2_c.unsqueeze(0), h2_c.unsqueeze(0),
-                p_c.unsqueeze(0))
+                p_c.unsqueeze(0), material=material)
             rgb = batch_spectrum_to_rgb(spec)
             loss = ((rgb - target)**2).sum()
             loss.backward()
@@ -193,7 +212,7 @@ def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30):
             spec = batch_dual_pillar_spectrum(
                 torch.tensor([d1_f]), torch.tensor([h1_f]),
                 torch.tensor([d2_f]), torch.tensor([h2_f]),
-                torch.tensor([p_f]))
+                torch.tensor([p_f]), material=material)
             pred = batch_spectrum_to_rgb(spec).squeeze().numpy()
             fl = float(((pred - target.squeeze().numpy())**2).sum())
         if fl < best_loss:
