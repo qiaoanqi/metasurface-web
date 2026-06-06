@@ -1,4 +1,4 @@
-﻿# ===================== Streamlit 版本：超表面结构色设计系统 =====================
+# ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
 import io, os
@@ -33,6 +33,12 @@ from dataclasses import dataclass
 from typing import Tuple, List
 
 st.set_page_config(page_title="AI超表面结构色设计", layout="wide")
+
+
+# FP cavity apply-params callback (runs before rerun)
+def _apply_fp_params(wl, t):
+    st.session_state.fp_target_wl = wl
+    st.session_state.fp_t_val = t
 
 # ===================== Constants & Helpers =====================
 D65 = np.array([0.95047, 1.00000, 1.08883], dtype=float)
@@ -1199,13 +1205,13 @@ with st.sidebar:
         )
 
         if st.session_state.fp_mirror_type.startswith('介质'):
-            fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, key='fp_target_wl')
+            st.session_state.fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, st.session_state.fp_target_wl, 5.0)
 
         col_t1, col_t2 = st.columns([3, 1])
         with col_t1:
-            fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, key='fp_t_val')
+            st.session_state.fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
         with col_t2:
-            st.number_input('腔长 T', 50.0, 600.0, key='fp_t_val', label_visibility='collapsed')
+            st.session_state.fp_t_val = st.number_input('腔长 T', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
         diameter = 0; height = st.session_state.fp_t_val; period = 0
         if st.session_state.fp_mirror_type.startswith('介质'):
             st.caption('FP腔 (DBR): (TiO2/SiO2)3 / TiO2(T) / (SiO2/TiO2)5 | 高饱和度')
@@ -1896,10 +1902,7 @@ with tab2:
                         st.markdown(f'<div style="width:50px;height:50px;background:{hex_c};border-radius:8px;"></div>', unsafe_allow_html=True)
                     with c2:
                         st.markdown(f"**#{rank+1} {hex_c}** | ΔE2000={de:.1f} | λ₀={wl:.0f}nm T={t:.0f}nm | RGB({r255},{g255},{b255})")
-                        if st.button(f"应用此参数 #{rank+1}", key=f"fp_apply_{rank}"):
-                            st.session_state.fp_target_wl = wl
-                            st.session_state.fp_t_val = t
-                            st.rerun()
+                        st.button(f"应用此参数 #{rank+1}", key=f"fp_apply_{rank}", on_click=_apply_fp_params, args=(wl, t))
 
 
 # Tab 3: Pattern Generation
