@@ -106,13 +106,14 @@ def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="Ti
     """ML proxy model: input raw params + material, output normalized RGB (R,G,B)"""
     if not _ML_AVAILABLE:
         return None
-    import torch
-    if material not in MATERIAL_CODES:
-        return None
-    pol_code = 0.0 if polarization.startswith("TE") else 1.0
-    mat_code = float(MATERIAL_CODES.get(material, 0))
-    sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
-    with torch.no_grad():
+    try:
+        import torch
+        if material not in MATERIAL_CODES:
+            return None
+        pol_code = 0.0 if polarization.startswith("TE") else 1.0
+        mat_code = float(MATERIAL_CODES.get(material, 0))
+        sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
+        with torch.no_grad():
         x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code, sub_code]], dtype=torch.float32) if _IS_V8 else torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
         spec = _ML_FWD(x)
         wl = torch.linspace(380, 780, 81)
@@ -123,6 +124,8 @@ def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="Ti
         rgb_lin = xyz @ _ML_SRGB_M.T
         rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
         return torch.clamp(rgb, 0, 1).squeeze().numpy()
+    except Exception:
+        return None
 
 def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
     """Dual-pillar ML proxy: 7 inputs -> RGB (R,G,B)"""
