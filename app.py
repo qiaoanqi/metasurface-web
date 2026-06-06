@@ -1053,18 +1053,16 @@ with st.sidebar:
     )
     if _ml_ready:
         try:
-            v5_exists = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "forward_mlp_v5.pt"))
-            v4_exists = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "forward_mlp_v4.pt"))
-            if v5_exists:
-                st.caption("模型: v7 Multi | 20万样本 | 256x4块 | 4种材料")
-            elif v4_exists:
-                st.caption("模型: ResMLP v4 | 5万样本 | 128x2块 (旧版)")
+            if ml_module._IS_V8:
+                st.caption("??: v8 Substrate | 7???(???) | 256x4??? | 4???+3???")
+            elif ml_module._ML_AVAILABLE:
+                st.caption("??: v7 Multi | 6??? | 256x4??? | 4???")
             else:
-                st.caption("模型: 旧版")
+                st.caption("??: ???")
         except:
             pass
         if ml_module._DUAL_ML_AVAILABLE:
-            st.caption("双柱 ML: DualResMLP v2 (Fano) 可用")
+            st.caption("?? ML: DualResMLP v3 (Multi) ??")
     if not _ml_ready:
         st.caption("ML 不可用（需 PyTorch，仅本地/虚拟机支持，云端需加 torch 到 requirements.txt）")
     if _ml_ready and st.session_state.get('ml_accel', False) and st.session_state.get('far_field', False):
