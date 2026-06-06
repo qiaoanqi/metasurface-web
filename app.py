@@ -1831,32 +1831,72 @@ with tab2:
             fp_tr = int(fp_target_hex[1:3], 16)
             fp_tg = int(fp_target_hex[3:5], 16)
             fp_tb = int(fp_target_hex[5:7], 16)
-            target_rgb = np.array([fp_tr, fp_tg, fp_tb]) / 255.0
-            target_lab = rgb_to_lab(target_rgb)
 
-            wl_list = np.arange(380, 785, 10)
-            t_list = np.arange(50, 605, 10)
-            total = len(wl_list) * len(t_list)
-            results = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            count = 0
+            # --- Cache check ---
+            cache_key = (fp_tr, fp_tg, fp_tb, int(angle), polarization)
+            if "fp_search_cache" not in st.session_state:
+                st.session_state.fp_search_cache = {}
+            if cache_key in st.session_state.fp_search_cache:
+                top3 = st.session_state.fp_search_cache[cache_key]
+                st.success(f"从缓存加载，瞬间完成! 共 {len(st.session_state.fp_search_cache)} 组缓存")
+            else:
+                target_rgb = np.array([fp_tr, fp_tg, fp_tb]) / 255.0
+                target_lab = rgb_to_lab(target_rgb)
 
-            for wl in wl_list:
-                for t in t_list:
-                    wls, refl = fp_dielectric_spectrum(t, float(wl), 3, 5, angle, polarization.startswith("TE"))
-                    rgb = spectrum_to_srgb(wls, refl)
-                    lab = rgb_to_lab(rgb)
-                    de = delta_e2000(target_lab, lab)
-                    results.append((de, float(wl), float(t), rgb))
-                    count += 1
-                progress_bar.progress(count / total)
-                status_text.caption(f"搜索中... {count}/{total}")
+                # Coarse grid: step 20nm
+                wl_coarse = np.arange(380, 785, 20)
+                t_coarse = np.arange(50, 605, 20)
+                total = len(wl_coarse) * len(t_coarse)
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                count = 0
+                pol_te = polarization.startswith("TE")
 
-            results.sort(key=lambda x: x[0])
-            top3 = results[:3]
+                # Pre-compile the spectrum function to avoid closure overhead
+                _fp_spec = fp_dielectric_spectrum
 
-            st.success(f"搜索完成! 共扫描 {total} 组参数")
+                for wl in wl_coarse:
+                    for t in t_coarse:
+                        wls, refl = _fp_spec(t, float(wl), 3, 5, angle, pol_te)
+                        rgb_c = spectrum_to_srgb(wls, refl)
+                        de = delta_e2000(target_lab, rgb_to_lab(rgb_c))
+                        results.append((de, float(wl), float(t), rgb_c))
+                        count += 1
+                    progress_bar.progress(count / total)
+                    status_text.caption(f"粗搜索 {count}/{total} (步长 20nm)")
+
+                results.sort(key=lambda x: x[0])
+                top3_coarse = results[:3]
+
+                # Fine refinement around top 3: step 4nm, +/-18nm
+                fine_results = list(top3_coarse)
+                for _, wl_c, t_c, _ in top3_coarse:
+                    for dw in range(-18, 19, 4):
+                        for dt in range(-18, 19, 4):
+                            wl_f = max(380, min(780, wl_c + dw))
+                            t_f = max(50, min(600, t_c + dt))
+                            wls, refl = _fp_spec(t_f, wl_f, 3, 5, angle, pol_te)
+                            rgb_f = spectrum_to_srgb(wls, refl)
+                            de = delta_e2000(target_lab, rgb_to_lab(rgb_f))
+                            fine_results.append((de, wl_f, t_f, rgb_f))
+
+                fine_results.sort(key=lambda x: x[0])
+                # Deduplicate nearby results
+                top3 = []
+                for de, wl, t, rgb in fine_results:
+                    dup = False
+                    for _, ew, et, _ in top3:
+                        if abs(wl - ew) < 5 and abs(t - et) < 5:
+                            dup = True; break
+                    if not dup:
+                        top3.append((de, wl, t, rgb))
+                    if len(top3) >= 3:
+                        break
+
+                st.session_state.fp_search_cache[cache_key] = top3
+                status_text.caption(f"搜索完成! 粗扫 {total} + 精细 {len(fine_results)-3} 组")
+
             for rank, (de, wl, t, rgb) in enumerate(top3):
                 hex_c = rgb_to_hex(rgb)
                 r255, g255, b255 = rgb_255(rgb)
