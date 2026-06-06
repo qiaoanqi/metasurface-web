@@ -1199,11 +1199,11 @@ with st.sidebar:
         )
 
         if st.session_state.fp_mirror_type.startswith('介质'):
-            st.session_state.fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, st.session_state.fp_target_wl, 5.0)
+            fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, st.session_state.fp_target_wl, 5.0, key='fp_target_wl')
 
         col_t1, col_t2 = st.columns([3, 1])
         with col_t1:
-            st.session_state.fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
+            fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, st.session_state.fp_t_val, 1.0, key='fp_t_val')
         with col_t2:
             st.session_state.fp_t_val = st.number_input('腔长 T', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
         diameter = 0; height = st.session_state.fp_t_val; period = 0
