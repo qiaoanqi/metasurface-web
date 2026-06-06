@@ -1609,6 +1609,10 @@ with tab2:
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
     st.caption(f"RGB({target_r}, {target_g}, {target_b})  |  {picker_hex}")
+    if "TiO2" in material and target_b > 150 and target_b > target_r + 20 and target_b > target_g + 20:
+        st.caption("💡 TiO₂ 做不出高饱和蓝/青色，建议切换到 **a-Si** 材料或使用 **FP 腔模式**")
+    elif "TiO2" in material and target_r > 180 and target_r > target_g + 30 and target_r > target_b + 30:
+        st.caption("💡 TiO₂ 做不出纯红色，建议切换到 **a-Si** + Si₃N₄ 衬底")
 
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
@@ -1690,6 +1694,26 @@ with tab2:
         </div>
         """, unsafe_allow_html=True)
         st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
+        # --- 智能标注：大色差原因分析 ---
+        if de2k_val > 10:
+            target_b_hint = target_b / 255.0
+            target_is_blue = target_b > 180 and target_b > target_r + 30 and target_b > target_g + 30
+            if "TiO2" in material and target_is_blue:
+                st.warning(
+                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，因为 TiO₂ 纳米柱在当前参数范围"
+                    "内做不出高饱和蓝/青色。建议：1) 切换到 **a-Si (amorphous)** 材料 "
+                    "2) 或使用下方 **FP 腔模式** 来实现蓝色。"
+                )
+            elif "TiO2" in material and target_r > 180 and target_r > target_g + 30 and target_r > target_b + 30:
+                st.warning(
+                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，因为 TiO₂ 纳米柱做不出纯红色。"
+                    "建议：切换到 **a-Si (amorphous)** + Si₃N₄ 衬底获得更宽色域。"
+                )
+            elif de2k_val > 30:
+                st.warning(
+                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，该目标颜色可能超出当前材料色域。"
+                    "尝试：1) 换材料 (a-Si 色域更宽)  2) 换 FP 腔模式  3) 选色域内的目标色。"
+                )
 
         # Copyable parameters
         param_text = f"D={best_param.diameter_nm:.1f}nm  H={best_param.height_nm:.1f}nm  P={best_param.period_nm:.1f}nm"
