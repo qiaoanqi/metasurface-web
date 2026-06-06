@@ -1500,11 +1500,11 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
     # --- Color gamut notice (non-FP only) ---
-    if not is_fp:
+    if not is_fp and "TiO2" in material:
         st.info(
         "TiO2 纳米柱在当前参数范围（D 60-267nm, H 80-600nm）内无法产生高饱和青蓝色或纯红色。"
         "这是 Lorentzian 模型和 RCWA 严格仿真共同验证的物理限制。"
-        "提示：1) 启用 ML 代理模型 2) 尝试 a-Si/Si3N4 材料以获得更宽色域。"
+        "提示：1) 切换到 a-Si/Si3N4 材料获得更宽色域  2) 或使用下方 FP 腔模式。"
     )
 
     # --- Pillar visualization with pure CSS (non-FP only) ---
