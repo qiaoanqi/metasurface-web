@@ -44,7 +44,7 @@ def _get_api_key() -> str:
 
 
 def chat(prompt: str, system_prompt: str = "", model: str = "deepseek-chat",
-         temperature: float = 0.7, max_tokens: int = 1024) -> str:
+         temperature: float = 0.7, max_tokens: int = 256) -> str:
     """Call DeepSeek Chat API.
 
     Args:
@@ -78,7 +78,7 @@ def chat(prompt: str, system_prompt: str = "", model: str = "deepseek-chat",
     req.add_header("Authorization", f"Bearer {api_key}")
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:

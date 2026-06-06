@@ -1539,7 +1539,13 @@ with tab1:
                 params[u"偏振"] = polarization
                 params[u"角度"] = f"{angle:.0f}°"
                 result = analyze_color(hex_color, params)
-                st.info(result)
+                with st.container():
+                    st.markdown(f"""
+                    <div style="background:#1a1a2e; border:1px solid #333; border-radius:12px;
+                                padding:16px 20px; color:#ccc; line-height:1.8; font-size:14px;">
+                    {result}
+                    </div>
+                    """, unsafe_allow_html=True)
 
     # --- Color gamut notice (non-FP only) ---
     if not is_fp and "TiO2" in material:
