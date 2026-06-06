@@ -1053,18 +1053,16 @@ with st.sidebar:
     )
     if _ml_ready:
         try:
-            if ml_module._IS_V8:
+            if ml_module._IS_V8 and ml_module._ML_AVAILABLE:
                 st.caption("Model: v8 Substrate | 7-dim | 256x4 ResBlocks | 4 mats + 3 subs")
             elif ml_module._ML_AVAILABLE:
                 st.caption("Model: v7 Multi | 6-dim | 256x4 ResBlocks | 4 materials")
             else:
-                st.caption("Model: Basic")
-        except:
-            pass
+                st.caption("Model: init OK but ML not loaded (check logs)")
+        except Exception as e:
+            st.caption(f"Model: Error - {e}")
         if ml_module._DUAL_ML_AVAILABLE:
             st.caption("Dual ML: DualResMLP v3 (Multi) available")
-    if not _ml_ready:
-        st.caption("ML 不可用（需 PyTorch，仅本地/虚拟机支持，云端需加 torch 到 requirements.txt）")
     if _ml_ready and st.session_state.get('ml_accel', False) and st.session_state.get('far_field', False):
         st.caption('⚠️ 远场传播模式下 ML 代理自动禁用（ML 未训练远场数据）')
 
