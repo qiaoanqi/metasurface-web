@@ -1,4 +1,4 @@
-# ===================== Streamlit 版本：超表面结构色设计系统 =====================
+﻿# ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
 import io, os
@@ -409,9 +409,9 @@ class MetaSurfaceColorEngine:
                     refl = np.zeros(len(wls))
                     for i, wl_nm in enumerate(wls):
                         I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
+                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                         I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
+                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                         refl[i] = float(abs(I1)**2 + abs(I2)**2)
                     refl = refl / 0.86
                     return spectrum_to_srgb(wls, refl)
@@ -455,7 +455,7 @@ class MetaSurfaceColorEngine:
     def _single_wl_response(self, param, wl_nm):
         d, h, p = param.diameter_nm, param.height_nm, param.period_nm
         n_mat = MaterialLibrary.n_at_wavelength(param.material, wl_nm)
-        n_sub = MaterialLibrary.n_at_wavelength(param.substrat, wl_nm) if param.substrat else 1.458
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, wl_nm) if param.substrate else 1.458
         n_env = (1.0 + n_sub) / 2.0  # half air, half substrate
         dn = n_mat - n_env
 
@@ -523,7 +523,7 @@ class MetaSurfaceColorEngine:
         d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
         fill = float(np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70))
 
-        n_sub = MaterialLibrary.n_at_wavelength(param.substrat, 550.0)
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
         r_sub = (1.0 - n_sub) / (1.0 + n_sub)
 
         sigma_w, gamma_w = 0.5, 0.6
@@ -611,10 +611,10 @@ class MetaSurfaceColorEngine:
                 wls = np.linspace(wl_start, wl_end, n_pts)
                 refl = np.zeros(len(wls))
                 for i, wl_nm in enumerate(wls):
-                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
+                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                     I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
                             param.material, param.polarization, param.angle_deg, wl_nm)
-                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, 550.0, param.substrat)
+                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, 550.0, param.substrate)
                     _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
                         param.material, param.polarization, param.angle_deg, 550.0)
                     refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
