@@ -1060,16 +1060,16 @@ with st.sidebar:
     )
     try:
         if ml_module._ML_AVAILABLE:
-            if ml_module._IS_V8:
-                st.caption("\u6a21\u578b: v8 Substrate | 7\u7ef4\u8f93\u5165(\u542b\u886c\u5e95) | 256x4\u6b8b\u5dee\u5757 | 4\u79cd\u6750\u6599+3\u79cd\u886c\u5e95")
+            if getattr(ml_module, "_IS_V8", False):
+                st.caption("模型: v8 Substrate | 7维输入(含衬底) | 256x4残差块 | 4种材料+3种衬底")
             else:
-                st.caption("\u6a21\u578b: v7 Multi | 6\u7ef4\u8f93\u5165 | 256x4\u6b8b\u5dee\u5757 | 4\u79cd\u6750\u6599")
+                st.caption("模型: v7 Multi | 6维输入 | 256x4残差块 | 4种材料")
         else:
-            st.caption("\u6a21\u578b: \u672a\u52a0\u8f7d (\u4e91\u7aef\u7f3a\u5c11torch\u6216\u6a21\u578b\u6587\u4ef6)")
+            st.caption("模型: 未加载 (缺少torch或模型文件)")
     except Exception as e:
-        st.caption(f"\u6a21\u578b: \u9519\u8bef - {e}")
+        st.caption(f"模型: 错误 - {e}")
     if ml_module._DUAL_ML_AVAILABLE:
-        st.caption("\u53cc\u67f1 ML: DualResMLP v3 (Multi) \u53ef\u7528")
+        st.caption("双柱 ML: DualResMLP v3 (Multi) 可用")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
         st.warning(f"⚠️ 「{material}」不在 ML 训练数据中，ML 已自动禁用（金属/空气材料物理模型仅供参考）")
@@ -1654,12 +1654,7 @@ with tab2:
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
-    try:
-        _ml_pressed = ml_btn
-    except NameError:
-        _ml_pressed = False
-    
-    if _ml_pressed and _ml_ready:
+    if ml_btn and _ml_ready:
         with st.spinner("ML梯度优化中... 约10-30秒"):
             result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15, material=material, substrate=substrate)
             if result is not None:
