@@ -46,6 +46,12 @@ from typing import Tuple, List
 st.set_page_config(page_title="AI超表面结构色设计", layout="wide")
 
 
+# RL apply-params callback (runs before rerun)
+def _apply_rl_params(d, h, p):
+    st.session_state.d_val = d
+    st.session_state.h_val = h
+    st.session_state.p_val = p
+
 # FP cavity apply-params callback (runs before rerun)
 def _apply_fp_params(wl, t):
     st.session_state.fp_target_wl = wl
@@ -1662,6 +1668,7 @@ with tab2:
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
     if rl_btn:
+        st.session_state.pop('top3_results', None)  # clear grid search results
         with st.spinner("🎮 RL智能体搜索中 (Q-learning, 约3秒)..."):
             try:
                 rl = rl_design.get_trained_rl()
@@ -1676,11 +1683,7 @@ with tab2:
                 with c2rl:
                     st.markdown(f"**{hex_rl}**  RGB({r255_rl}, {g255_rl}, {b255_rl})  \nD={d_rl:.1f}nm  H={h_rl:.1f}nm  P={p_rl:.1f}nm  \nΔE2000 = {de_rl:.1f} (RL智能体)")
                 with c3rl:
-                    if st.button("应用RL参数", key="apply_rl_result"):
-                        st.session_state.d_val = d_rl
-                        st.session_state.h_val = h_rl
-                        st.session_state.p_val = p_rl
-                        st.rerun()
+                    st.button("应用RL参数", key="apply_rl_result", on_click=_apply_rl_params, args=(d_rl, h_rl, p_rl))
                 st.caption("强化学习通过试错学习参数调整方向，速度快但精度低于网格搜索。建议先用RL快速定位，再网格精搜。")
             except Exception as e:
                 st.warning(f"RL搜索不可用: {e}")
