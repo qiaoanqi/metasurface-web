@@ -1065,7 +1065,7 @@ with st.sidebar:
         st.caption("\u53cc\u67f1 ML: DualResMLP v3 (Multi) \u53ef\u7528")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
-        st.warning(f"\u26a0\ufe0f \u300c{material}\u300d\u4e0d\u5728 ML \u8bad\u7ec3\u6570\u636e\u4e2d\uff0c\u5df2\u81ea\u52a8\u5207\u6362\u4e3a\u7269\u7406\u6a21\u578b\uff08\u7cbe\u5ea6\u4e0d\u53d7\u5f71\u54cd\uff09")
+        st.warning(f"⚠️ 「{material}」不在 ML 训练数据中，ML 已自动禁用（金属/空气材料物理模型仅供参考）")
     st.divider()
     st.header('📏 纳米柱尺寸')
 
@@ -1268,7 +1268,7 @@ def _cached_physical_color(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm, d
     return engine.physical_color(p)
 
 
-use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE and not st.session_state.get('far_field', False)
+use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
 use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ML_AVAILABLE
 
 # v7 multi-material ML supports all materials
