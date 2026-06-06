@@ -1092,33 +1092,6 @@ with st.sidebar:
     st.session_state.dual_pillar = is_dual
     st.caption('单柱/双柱纳米柱或FP腔 | 双柱模式搜索空间大')
 
-    # Dual-pillar auto inverse design button
-    if is_dual:
-        st.divider()
-        st.subheader("双柱自动逆设计 (PyTorch 梯度优化)")
-        target_hex_dual = st.color_picker("目标颜色", "#80c8ff", key="dual_target_color")
-        if st.button("双柱自动搜索", use_container_width=True):
-            target_r = int(target_hex_dual[1:3], 16)
-            target_g = int(target_hex_dual[3:5], 16)
-            target_b = int(target_hex_dual[5:7], 16)
-            target_rgb = [target_r/255, target_g/255, target_b/255]
-            try:
-                import torch_model as _tmd
-                with st.spinner("PyTorch 梯度优化中... 约1-10秒"):
-                    result = _tmd.inverse_design_dual(target_rgb, n_steps=200, n_restarts=30, material=material, substrate=substrate)
-                    if result is not None:
-                        d1, h1, d2, h2, p, rgb, loss = result
-                        p = max(max(d1, d2) * 1.2 + 20, p)
-                        st.session_state.d1_val = max(60.0, min(300.0, float(d1)))
-                        st.session_state.h1_val = max(80.0, min(600.0, float(h1)))
-                        st.session_state.d2_val = max(60.0, min(300.0, float(d2)))
-                        st.session_state.h2_val = max(80.0, min(600.0, float(h2)))
-                        st.session_state.p_val = max(200.0, min(600.0, float(p)))
-                        st.session_state._dual_success_msg = f"优化完成! D1={d1:.0f} H1={h1:.0f} D2={d2:.0f} H2={h2:.0f} P={p:.0f}"
-                        st.rerun()
-            except Exception as e:
-                st.error(f"Auto search failed: {e}")
-
     if 'd_val' not in st.session_state:
         st.session_state.d_val = 180.0
     if 'h_val' not in st.session_state:
@@ -1841,6 +1814,63 @@ with tab2:
         if st.button("关闭回看"):
             st.session_state.pop("history_view", None)
             st.rerun()
+
+    # --- FP Cavity Inverse Search ---
+    if is_fp:
+        st.divider()
+        st.subheader("FP腔 自动寻色")
+        st.caption("扫描 DBR 中心波长 + 腔长 T，匹配目标颜色")
+        col_fp1, col_fp2 = st.columns([3, 1])
+        with col_fp1:
+            fp_target_hex = st.color_picker("FP目标颜色", "#80c8ff", key="fp_target_picker")
+        with col_fp2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            fp_search_btn = st.button("FP腔搜索", use_container_width=True)
+
+        if fp_search_btn:
+            fp_tr = int(fp_target_hex[1:3], 16)
+            fp_tg = int(fp_target_hex[3:5], 16)
+            fp_tb = int(fp_target_hex[5:7], 16)
+            target_rgb = np.array([fp_tr, fp_tg, fp_tb]) / 255.0
+            target_lab = rgb_to_lab(target_rgb)
+
+            wl_list = np.arange(380, 785, 10)
+            t_list = np.arange(50, 605, 10)
+            total = len(wl_list) * len(t_list)
+            results = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            count = 0
+
+            for wl in wl_list:
+                for t in t_list:
+                    wls, refl = fp_dielectric_spectrum(t, float(wl), 3, 5, angle, polarization.startswith("TE"))
+                    rgb = spectrum_to_srgb(wls, refl)
+                    lab = rgb_to_lab(rgb)
+                    de = delta_e2000(target_lab, lab)
+                    results.append((de, float(wl), float(t), rgb))
+                    count += 1
+                progress_bar.progress(count / total)
+                status_text.caption(f"搜索中... {count}/{total}")
+
+            results.sort(key=lambda x: x[0])
+            top3 = results[:3]
+
+            st.success(f"搜索完成! 共扫描 {total} 组参数")
+            for rank, (de, wl, t, rgb) in enumerate(top3):
+                hex_c = rgb_to_hex(rgb)
+                r255, g255, b255 = rgb_255(rgb)
+                with st.container():
+                    c1, c2 = st.columns([1, 4])
+                    with c1:
+                        st.markdown(f'<div style="width:50px;height:50px;background:{hex_c};border-radius:8px;"></div>', unsafe_allow_html=True)
+                    with c2:
+                        st.markdown(f"**#{rank+1} {hex_c}** | ΔE2000={de:.1f} | λ₀={wl:.0f}nm T={t:.0f}nm | RGB({r255},{g255},{b255})")
+                        if st.button(f"应用此参数 #{rank+1}", key=f"fp_apply_{rank}"):
+                            st.session_state.fp_target_wl = wl
+                            st.session_state.fp_t_val = t
+                            st.rerun()
+
 
 # Tab 3: Pattern Generation
 with tab3:
