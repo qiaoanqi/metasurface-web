@@ -11,16 +11,26 @@ import urllib.error
 
 
 # --- Auto-load API key from .env file ---
-_ENV_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-if os.path.exists(_ENV_PATH):
-    with open(_ENV_PATH, "r", encoding="utf-8") as _f:
-        for _line in _f:
-            _line = _line.lstrip("﻿").strip()
-            if _line.startswith("DEEPSEEK_API_KEY=") and not _line.startswith("#"):
-                _val = _line.split("=", 1)[1].strip()
-                if _val and "粘贴" not in _val and "你的key" not in _val:
-                    os.environ["DEEPSEEK_API_KEY"] = _val
-                    break
+for _base in [
+    os.path.dirname(os.path.abspath(__file__)),
+    os.getcwd(),
+]:
+    for _name in ["../.env", ".env"]:
+        _env_path = os.path.normpath(os.path.join(_base, _name))
+        if os.path.exists(_env_path):
+            with open(_env_path, "r", encoding="utf-8-sig") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line.startswith("DEEPSEEK_API_KEY=") and not _line.startswith("#"):
+                        _val = _line.split("=", 1)[1].strip()
+                        if _val and "粘贴" not in _val and "你的key" not in _val:
+                            os.environ["DEEPSEEK_API_KEY"] = _val
+                            break
+            if os.environ.get("DEEPSEEK_API_KEY"):
+                break
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        break
+
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
