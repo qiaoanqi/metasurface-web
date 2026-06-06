@@ -520,6 +520,14 @@ class MetaSurfaceColorEngine:
            (Lorentzian比高斯更适合描述共振增强的角度散射)
         4. R_eff = |r_0|² · f_NA · f_theta
         """
+        # Safety: guard against zero/invalid parameters
+        if getattr(param, "period_nm", 400) < 100:
+            param.period_nm = 400.0
+        if getattr(param, "diameter_nm", 180) < 10:
+            param.diameter_nm = 180.0
+        if getattr(param, "height_nm", 300) < 10:
+            param.height_nm = 300.0
+
         wls = np.arange(380, 785, 5)
         d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
         p_safe = max(p_nm, 200.0)
