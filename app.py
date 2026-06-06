@@ -7,7 +7,12 @@ import numpy as np
 from PIL import Image
 import streamlit as st
 import ml_module
-import rl_design  # RL agent for inverse design
+# RL agent (requires PyTorch - auto-disabled on cloud if torch unavailable)
+try:
+    import rl_design
+    _RL_AVAILABLE = True
+except Exception:
+    _RL_AVAILABLE = False
 
 # LLM module (DeepSeek API)
 try:
@@ -1654,7 +1659,9 @@ with tab2:
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
-        rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
+        rl_btn = False
+        if _RL_AVAILABLE:
+            rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
@@ -1666,8 +1673,10 @@ with tab2:
         st.caption("💡 TiO₂ 做不出纯红色，建议切换到 **a-Si** + Si₃N₄ 衬底")
 
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
+    if not _RL_AVAILABLE:
+        pass  # RL button hidden
 
-    if rl_btn:
+    if rl_btn and _RL_AVAILABLE:
         st.session_state.pop('top3_results', None)  # clear grid search results
         with st.spinner("🎮 RL智能体搜索中 (Q-learning, 约3秒)..."):
             try:
@@ -2301,4 +2310,9 @@ st.sidebar.markdown("---")
 st.sidebar.caption("长沙理工大学 物理与电子科学学院")
 st.sidebar.caption("光电2501 乔安琪")
 
-import rl_design  # RL agent for inverse design
+# RL agent (requires PyTorch - auto-disabled on cloud if torch unavailable)
+try:
+    import rl_design
+    _RL_AVAILABLE = True
+except Exception:
+    _RL_AVAILABLE = False
