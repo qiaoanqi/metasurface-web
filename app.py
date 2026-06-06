@@ -1094,7 +1094,7 @@ with st.sidebar:
             target_rgb = [target_r/255, target_g/255, target_b/255]
             try:
                 import torch_model as _tmd
-                with st.spinner("PyTorch 梯度优化中... 约1-3秒"):
+                with st.spinner("PyTorch 梯度优化中... 约1-10秒"):
                     result = _tmd.inverse_design_dual(target_rgb, n_steps=200, n_restarts=30, material=material, substrate=substrate)
                     if result is not None:
                         d1, h1, d2, h2, p, rgb, loss = result
