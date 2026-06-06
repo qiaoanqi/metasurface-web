@@ -24,3 +24,6 @@ train_v5.py
 train_v6.py
 train_v7.py
 *.log
+
+# API keys (DO NOT commit)
+.env
