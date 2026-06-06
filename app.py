@@ -1596,7 +1596,7 @@ with tab1:
 # Tab 2: Inverse Design
 with tab2:
     st.subheader("选择目标颜色，自动匹配最优纳米柱参数")
-    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效")
+    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效 | 网格搜索仅优化单柱 (D,H,P)，双柱请手动微调")
 
     col_pick, col_btn = st.columns([3, 1])
     with col_pick:
