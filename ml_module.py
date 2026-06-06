@@ -10,15 +10,19 @@ _ML_CIE_NORM = None
 _ML_SRGB_M = None
 _DUAL_ML_AVAILABLE = False
 _DUAL_IS_V3 = False
+_IS_V8 = False
 _DUAL_ML_FWD = None
 
 def init_ml():
     """Initialize ML model. Returns True if successful."""
-    global _ML_AVAILABLE, _ML_FWD, _ML_CIE_X, _ML_CIE_Y, _ML_CIE_Z, _ML_CIE_NORM, _ML_SRGB_M
+    global _ML_AVAILABLE, _ML_FWD, _ML_CIE_X, _ML_CIE_Y, _ML_CIE_Z, _ML_CIE_NORM, _ML_SRGB_M, _IS_V8
     try:
         import torch, torch.nn as nn
         _dir = os.path.dirname(os.path.abspath(__file__))
-        _path = os.path.join(_dir, "models", "forward_mlp_v7_multi.pt")
+        _path_v8 = os.path.join(_dir, "models", "forward_mlp_v8_sub.pt")
+        _path_v7 = os.path.join(_dir, "models", "forward_mlp_v7_multi.pt")
+        _path = _path_v8 if os.path.exists(_path_v8) else _path_v7
+        _is_v8 = os.path.exists(_path_v8)
         if not os.path.exists(_path):
             return False
 
@@ -32,7 +36,7 @@ def init_ml():
                 return nn.functional.relu(self.net(x) + x)
 
         class DeepResMLP_Multi(nn.Module):
-            def __init__(self, in_dim=6, hidden=256, out_dim=81, n_blocks=4):
+            def __init__(self, in_dim=6, hidden=256, out_dim=81, n_blocks=4):  # 7 for v8
                 super().__init__()
                 self.input_proj = nn.Sequential(nn.Linear(in_dim, hidden), nn.ReLU(), nn.BatchNorm1d(hidden))
                 self.blocks = nn.Sequential(*[ResidualBlock(hidden) for _ in range(n_blocks)])
@@ -42,7 +46,7 @@ def init_ml():
                 x = self.blocks(x)
                 return self.output(x)
 
-        _ML_FWD = DeepResMLP_Multi()
+        _ML_FWD = DeepResMLP_Multi(in_dim=7 if _is_v8 else 6)
         _ML_FWD.load_state_dict(torch.load(_path, map_location="cpu", weights_only=True))
         _ML_FWD.eval()
 
@@ -51,6 +55,7 @@ def init_ml():
         _ML_CIE_Z = torch.tensor([0.006450,0.010550,0.020050,0.036210,0.067850,0.110200,0.207400,0.371300,0.645600,1.039050,1.385600,1.622960,1.747060,1.782600,1.772110,1.744100,1.669200,1.528100,1.287640,0.999550,0.716900,0.484400,0.311900,0.190300,0.104200,0.049200,0.020300,0.008700,0.003900,0.002100,0.001650,0.001100,0.000800,0.000550,0.000350,0.000250,0.000150,0.000100,0.000050,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000], dtype=torch.float32)
         _ML_CIE_NORM = torch.trapezoid(_ML_CIE_Y, torch.linspace(380, 780, 81))
         _ML_SRGB_M = torch.tensor([[3.2406,-1.5372,-0.4986],[-0.9689,1.8758,0.0415],[0.0557,-0.2040,1.0570]], dtype=torch.float32)
+        _IS_V8 = _is_v8
         _ML_AVAILABLE = True
         return True
     except Exception:
@@ -95,8 +100,9 @@ def init_dual_ml():
         return False
 
 MATERIAL_CODES = {"TiO2 (anatase)": 0, "a-Si (amorphous)": 1, "Si3N4 (nitride)": 2, "Al2O3 (sapphire)": 3}
+SUBSTRATE_CODES = {"SiO2 (fused silica)": 0, "Si3N4 (nitride)": 1, "Al2O3 (sapphire)": 2}
 
-def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
+def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
     """ML proxy model: input raw params + material, output normalized RGB (R,G,B)"""
     if not _ML_AVAILABLE:
         return None
@@ -105,16 +111,17 @@ def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="Ti
         return None
     pol_code = 0.0 if polarization.startswith("TE") else 1.0
     mat_code = float(MATERIAL_CODES.get(material, 0))
+    sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
     with torch.no_grad():
-        x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
+        x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code, sub_code]], dtype=torch.float32) if _IS_V8 else torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
         spec = _ML_FWD(x)
         wl = torch.linspace(380, 780, 81)
         X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
         Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
         Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
-        xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1)
+        xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
         rgb_lin = xyz @ _ML_SRGB_M.T
-        rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
+        rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
         return torch.clamp(rgb, 0, 1).squeeze().numpy()
 
 def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
@@ -134,9 +141,9 @@ def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarizati
         X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
         Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
         Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
-        xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1)
+        xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
         rgb_lin = xyz @ _ML_SRGB_M.T
-        rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
+        rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
         return torch.clamp(rgb, 0, 1).squeeze().numpy()
 
 def predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
@@ -153,7 +160,7 @@ def predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polar
         spec = _DUAL_ML_FWD(x)
         return torch.clamp(spec, 0, None).squeeze().numpy()
 
-def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
+def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
     """ML proxy: return full 81-point spectrum"""
     if not _ML_AVAILABLE:
         return None
@@ -162,12 +169,13 @@ def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", materia
         return None
     pol_code = 0.0 if polarization.startswith("TE") else 1.0
     mat_code = float(MATERIAL_CODES.get(material, 0))
+    sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
     with torch.no_grad():
-        x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
+        x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code, sub_code]], dtype=torch.float32) if _IS_V8 else torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
         spec = _ML_FWD(x)
         return spec.squeeze().numpy()
 
-def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (anatase)"):
+def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
     """Gradient-based inverse design using forward MLP.
     Returns (d_nm, h_nm, p_nm, predicted_rgb, delta_e_rgb)
     """
@@ -177,6 +185,7 @@ def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (an
     if material not in MATERIAL_CODES:
         return None
     mat_code = float(MATERIAL_CODES.get(material, 0))
+    sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
     target = torch.tensor(list(target_rgb), dtype=torch.float32).unsqueeze(0)
     best_loss, best_result = 1e9, None
 
@@ -192,16 +201,20 @@ def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (an
             d_min_p = (d_c.detach() * 1.2).clamp(200.0, 600.0)
             p_c = torch.max(p, d_min_p)
             p_c = torch.clamp(p_c, 200.0, 600.0)
-            x = torch.stack([(d_c-50)/300, (h_c-80)/520, (p_c-200)/400,
-                            torch.tensor(0.0), torch.tensor(0.0), torch.tensor(mat_code)]).unsqueeze(0)
+            if _IS_V8:
+                x = torch.stack([(d_c-50)/300, (h_c-80)/520, (p_c-200)/400,
+                                torch.tensor(0.0), torch.tensor(0.0), torch.tensor(mat_code), torch.tensor(sub_code)]).unsqueeze(0)
+            else:
+                x = torch.stack([(d_c-50)/300, (h_c-80)/520, (p_c-200)/400,
+                                torch.tensor(0.0), torch.tensor(0.0), torch.tensor(mat_code)]).unsqueeze(0)
             spec = _ML_FWD(x)
             wl = torch.linspace(380, 780, 81)
             X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
             Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
             Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
-            xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1)
+            xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
             rgb_lin = xyz @ _ML_SRGB_M.T
-            rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
+            rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
             rgb = torch.clamp(rgb, 0, 1)
             loss = ((rgb - target)**2).sum()
             loss.backward()
@@ -212,14 +225,18 @@ def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (an
         p_f = float(max(d_f * 1.2, np.clip(p.item(), 200, 600)))
 
         with torch.no_grad():
-            x = torch.tensor([[(d_f-50)/300, (h_f-80)/520, (p_f-200)/400, 0.0, 0.0, mat_code]], dtype=torch.float32)
+            if _IS_V8:
+                x_final = torch.tensor([[(d_f-50)/300, (h_f-80)/520, (p_f-200)/400, 0.0, 0.0, mat_code, sub_code]], dtype=torch.float32)
+            else:
+                x_final = torch.tensor([[(d_f-50)/300, (h_f-80)/520, (p_f-200)/400, 0.0, 0.0, mat_code]], dtype=torch.float32)
+            spec_final = _ML_FWD(x_final)
             wl = torch.linspace(380, 780, 81)
-            X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
+            X = torch.trapezoid(spec_final * _ML_CIE_X.unsqueeze(0), wl, dim=1)
             Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
             Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
-            xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1)
+            xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
             rgb_lin = xyz @ _ML_SRGB_M.T
-            rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
+            rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
             pred = torch.clamp(rgb, 0, 1).squeeze().numpy()
             fl = float(((pred - target.squeeze().numpy())**2).sum())
         if fl < best_loss:

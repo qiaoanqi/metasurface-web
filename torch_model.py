@@ -19,6 +19,7 @@ CAUCHY_DB = {
     "a-Si (amorphous)":    (3.8000, 0.08000),
     "Si3N4 (nitride)":     (1.9900, 0.01200),
     "Al2O3 (sapphire)":    (1.7546, 0.00500),
+    "SiO2 (fused silica)": (1.4580, 0.00354),
     "Air":                 (1.0003, 0.00000),
 }
 DEFAULT_MATERIAL = "TiO2 (anatase)"
@@ -33,7 +34,7 @@ def _cauchy_n(wl_nm, material=None):
     return A + B / (wl_um ** 2)
 
 
-def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None):
+def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None, substrate=None):
     """
     Batch Fano resonance spectrum with full Cauchy dispersion and coherent ED+MD addition.
     Fano lineshape: R = (q+eps)^2 / ((1+q^2)(1+eps^2)) replaces Lorentzian for better asymmetry.
@@ -53,12 +54,14 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None):
 
     # Peak wavelengths (batch, 1) - use n@550nm as reference
     n550 = _cauchy_n(torch.tensor(550.0), material).item()
-    dn550 = n550 - 2.0
+    n_sub550 = _cauchy_n(torch.tensor(550.0), substrate).item() if substrate else 1.4580
+    n_env550 = (1.0 + n_sub550) / 2.0  # effective environment: half air, half substrate
+    dn550 = n550 - n_env550
 
     lam_ed = (360 + 0.55*(D-60) + 0.12*(H-120) + 32*dn550).unsqueeze(1)  # (batch, 1)
-    sigma_ed = torch.clamp(15 + 0.015*(D-200), min=10).unsqueeze(1)
+    sigma_ed = torch.clamp(26 + 0.10*(D-200), min=8).unsqueeze(1)  # FDTD-calibrated
     lam_md = (400 + 0.75*(D-60) + 0.25*(H-120) + 32*dn550).unsqueeze(1)
-    sigma_md = torch.clamp(22 + 0.03*(D-200), min=15).unsqueeze(1)
+    sigma_md = torch.clamp(35 + 0.12*(D-200), min=10).unsqueeze(1)  # FDTD-calibrated
 
     # Fill & loss
     fill = torch.clamp(np.pi*(D/2)**2/(P**2), 0.03, 0.70).unsqueeze(1)
@@ -120,15 +123,15 @@ def batch_spectrum_to_rgb(spectrum):
     X = torch.trapezoid(spectrum * CIE_X.unsqueeze(0), wl, dim=1)
     Y = torch.trapezoid(spectrum * CIE_Y.unsqueeze(0), wl, dim=1)
     Z = torch.trapezoid(spectrum * CIE_Z.unsqueeze(0), wl, dim=1)
-    xyz = torch.stack([X/CIE_NORM, Y/CIE_NORM, Z/CIE_NORM], dim=1)
+    xyz = torch.stack([X/CIE_NORM, Y/CIE_NORM, Z/CIE_NORM], dim=1).float()
     rgb_lin = xyz @ SRGB_M.T
-    rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*rgb_lin.pow(1/2.4)-0.055)
+    rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
     return torch.clamp(rgb, 0.0, 1.0)
 
 
-def batch_single_pillar_rgb(D, H, P, theta=0.0, pol_TE=True, material=None):
+def batch_single_pillar_rgb(D, H, P, theta=0.0, pol_TE=True, material=None, substrate=None):
     """End-to-end batch: D,H,P -> spectrum -> RGB"""
-    spec = batch_lorentzian_spectrum(D, H, P, theta, pol_TE, material)
+    spec = batch_lorentzian_spectrum(D, H, P, theta, pol_TE, material, substrate)
     return batch_spectrum_to_rgb(spec)
 
 
@@ -153,73 +156,80 @@ def batch_color_map_grid(D_grid, H_grid, P_val=400.0):
 # Dual-pillar batch functions
 # ============================================================
 
-def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None):
+def batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None, substrate=None):
     """Incoherent sum of two pillar spectra."""
-    spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE, material)
-    spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE, material)
+    spec1 = batch_lorentzian_spectrum(D1, H1, P, theta, pol_TE, material, substrate)
+    spec2 = batch_lorentzian_spectrum(D2, H2, P, theta, pol_TE, material, substrate)
     return spec1 + spec2
 
 
-def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None):
+def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=None, substrate=None):
     """Dual pillar -> RGB."""
-    spec = batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta, pol_TE, material)
+    spec = batch_dual_pillar_spectrum(D1, H1, D2, H2, P, theta, pol_TE, material, substrate)
     return batch_spectrum_to_rgb(spec)
 
 
-def inverse_design_dual(target_rgb, n_steps=500, n_restarts=30, material=None):
-    """Gradient-based inverse design for dual-pillar (5 params)."""
+def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, substrate=None):
+    """Batched gradient-based inverse design for dual-pillar. All restarts optimized in parallel on GPU."""
     if not isinstance(target_rgb, torch.Tensor):
-        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
+        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)  # (1, 3)
     else:
         target = target_rgb.clone().detach().unsqueeze(0)
-
-    best_loss = 1e9
-    best_result = None
-
-    for _ in range(n_restarts):
-        d1 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
-        h1 = torch.tensor(np.random.uniform(80, 600), dtype=torch.float32, requires_grad=True)
-        d2 = torch.tensor(np.random.uniform(60, 267), dtype=torch.float32, requires_grad=True)
-        h2 = torch.tensor(np.random.uniform(80, 600), dtype=torch.float32, requires_grad=True)
-        p = torch.tensor(np.random.uniform(200, 600), dtype=torch.float32, requires_grad=True)
-
-        opt = torch.optim.Adam([d1, h1, d2, h2, p], lr=5.0)
-        for step in range(n_steps):
-            opt.zero_grad()
-            d1_c = torch.clamp(d1, 60.0, 267.0)
-            h1_c = torch.clamp(h1, 80.0, 600.0)
-            d2_c = torch.clamp(d2, 60.0, 267.0)
-            h2_c = torch.clamp(h2, 80.0, 600.0)
-            min_p = torch.max(d1_c.detach(), d2_c.detach()) * 1.2 + 20
-            p_c = torch.clamp(p, min_p, 600.0)
-
-            spec = batch_dual_pillar_spectrum(
-                d1_c.unsqueeze(0), h1_c.unsqueeze(0),
-                d2_c.unsqueeze(0), h2_c.unsqueeze(0),
-                p_c.unsqueeze(0), material=material)
-            rgb = batch_spectrum_to_rgb(spec)
-            loss = ((rgb - target)**2).sum()
-            loss.backward()
-            opt.step()
-
-        d1_f = float(np.clip(d1.item(), 60, 267))
-        h1_f = float(np.clip(h1.item(), 80, 600))
-        d2_f = float(np.clip(d2.item(), 60, 267))
-        h2_f = float(np.clip(h2.item(), 80, 600))
-        p_f = float(max(max(d1_f, d2_f) * 1.2 + 20, np.clip(p.item(), 200, 600)))
-
-        with torch.no_grad():
-            spec = batch_dual_pillar_spectrum(
-                torch.tensor([d1_f]), torch.tensor([h1_f]),
-                torch.tensor([d2_f]), torch.tensor([h2_f]),
-                torch.tensor([p_f]), material=material)
-            pred = batch_spectrum_to_rgb(spec).squeeze().numpy()
-            fl = float(((pred - target.squeeze().numpy())**2).sum())
-        if fl < best_loss:
-            best_loss = fl
-            best_result = (d1_f, h1_f, d2_f, h2_f, p_f, pred, fl)
-
-    return best_result
+    
+    device = target.device
+    n = n_restarts
+    
+    # Initialize all restarts as batched tensors
+    d1 = (torch.rand(n, device=device) * 207 + 60).requires_grad_(True)
+    h1 = (torch.rand(n, device=device) * 520 + 80).requires_grad_(True)
+    d2 = (torch.rand(n, device=device) * 207 + 60).requires_grad_(True)
+    h2 = (torch.rand(n, device=device) * 520 + 80).requires_grad_(True)
+    p  = (torch.rand(n, device=device) * 400 + 200).requires_grad_(True)
+    
+    opt = torch.optim.Adam([d1, h1, d2, h2, p], lr=1.0)
+    
+    for step in range(n_steps):
+        opt.zero_grad()
+        d1_c = torch.clamp(d1, 60.0, 267.0)
+        h1_c = torch.clamp(h1, 80.0, 600.0)
+        d2_c = torch.clamp(d2, 60.0, 267.0)
+        h2_c = torch.clamp(h2, 80.0, 600.0)
+        min_p = torch.maximum(d1_c.detach(), d2_c.detach()) * 1.2 + 20
+        p_c = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p)
+        
+        spec = batch_dual_pillar_spectrum(d1_c, h1_c, d2_c, h2_c, p_c, 
+                                          torch.zeros(n, device=device), True, material, substrate)
+        rgb = batch_spectrum_to_rgb(spec)
+        # Loss: MSE to target, broadcast over batch
+        loss = ((rgb - target)**2).mean(dim=1).sum()
+        loss.backward()
+        torch.nn.utils.clip_grad_value_([d1, h1, d2, h2, p], 1.0)
+        opt.step()
+    
+    # Find best result
+    with torch.no_grad():
+        d1_f = torch.clamp(d1, 60, 267)
+        h1_f = torch.clamp(h1, 80, 600)
+        d2_f = torch.clamp(d2, 60, 267)
+        h2_f = torch.clamp(h2, 80, 600)
+        min_p_f = torch.maximum(d1_f, d2_f) * 1.2 + 20
+        p_f = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p_f)
+        
+        spec = batch_dual_pillar_spectrum(d1_f, h1_f, d2_f, h2_f, p_f,
+                                          torch.zeros(n, device=device), True, material, substrate)
+        pred = batch_spectrum_to_rgb(spec)  # (n, 3)
+        losses = ((pred - target)**2).sum(dim=1)  # (n,)
+        best_idx = torch.argmin(losses).item()
+        
+        best_d1 = float(d1_f[best_idx])
+        best_h1 = float(h1_f[best_idx])
+        best_d2 = float(d2_f[best_idx])
+        best_h2 = float(h2_f[best_idx])
+        best_p  = float(p_f[best_idx])
+        best_rgb = pred[best_idx].cpu().numpy()
+        best_loss = float(losses[best_idx])
+    
+    return (best_d1, best_h1, best_d2, best_h2, best_p, best_rgb, best_loss)
 
 # Quick test
 
@@ -250,3 +260,4 @@ if __name__ == "__main__":
     t0 = time.time()
     grid = batch_color_map_grid(D_vals, H_vals)
     print(f"Color map 12x12: {(time.time()-t0)*1000:.1f}ms")
+

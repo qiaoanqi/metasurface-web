@@ -307,17 +307,19 @@ class DualPillarParam:
             object.__setattr__(self, '_corrected', True)
             object.__setattr__(self, '_correction_msg', "; ".join(msgs))
 
-def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm):
+def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm, substrate=None):
     """静态方法: 计算单根纳米柱的复数反射系数。
     供单柱和双柱模型共用, 避免代码重复。
     """
     n_mat = MaterialLibrary.n_at_wavelength(material, wl_nm)
-    dn = n_mat - 2.0
+    n_sub = MaterialLibrary.n_at_wavelength(substrate, wl_nm) if substrate else 1.458
+    n_env = (1.0 + n_sub) / 2.0
+    dn = n_mat - n_env
 
     lam_ed = 360 + 0.55*(d_nm-60) + 0.12*(h_nm-120) + 32*dn
-    sigma_ed = max(15 + 0.015*(d_nm-200), 10)
+    sigma_ed = max(26 + 0.10*(d_nm-200), 8)  # FDTD-calibrated
     lam_md = 400 + 0.75*(d_nm-60) + 0.25*(h_nm-120) + 32*dn
-    sigma_md = max(22 + 0.03*(d_nm-200), 15)
+    sigma_md = max(35 + 0.12*(d_nm-200), 10)  # FDTD-calibrated
 
     fill = np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.01, 0.70)
     fill_amp = 0.30 + 0.80*fill
@@ -404,15 +406,18 @@ class MetaSurfaceColorEngine:
                     refl = np.zeros(len(wls))
                     for i, wl_nm in enumerate(wls):
                         I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                            param.material, param.polarization, param.angle_deg, wl_nm)
+                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
                         I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                            param.material, param.polarization, param.angle_deg, wl_nm)
+                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
                         refl[i] = float(abs(I1)**2 + abs(I2)**2)
                     refl = refl / 0.86
                     return spectrum_to_srgb(wls, refl)
         # Single pillar (MetaSurfaceParam)
         if getattr(self, '_enable_far_field', False):
-            wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
+            if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
+                wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
+            else:
+                wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
             return spectrum_to_srgb(wls, refl)
         # PyTorch batch mode: 81 wavelengths in one pass (~10x faster)
         try:
@@ -424,7 +429,7 @@ class MetaSurfaceColorEngine:
                 _tm.torch.tensor([param.period_nm]),
                 _tm.torch.tensor([param.angle_deg]),
                 pol_TE,
-                material=param.material
+                material=param.material, substrate=param.substrate
             )
             rgb = _tm.batch_spectrum_to_rgb(spec)
             return rgb.squeeze(0).numpy()
@@ -446,8 +451,10 @@ class MetaSurfaceColorEngine:
 
     def _single_wl_response(self, param, wl_nm):
         d, h, p = param.diameter_nm, param.height_nm, param.period_nm
-        n = MaterialLibrary.n_at_wavelength(param.material, wl_nm)
-        dn = n - 2.0
+        n_mat = MaterialLibrary.n_at_wavelength(param.material, wl_nm)
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrat, wl_nm) if param.substrat else 1.458
+        n_env = (1.0 + n_sub) / 2.0  # half air, half substrate
+        dn = n_mat - n_env
 
         # --- Dual Lorentzian: ED (electric dipole) + MD (magnetic dipole) ---
         # ED resonance: shorter wavelength, narrower, moderate size sensitivity
@@ -513,7 +520,7 @@ class MetaSurfaceColorEngine:
         d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
         fill = float(np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70))
 
-        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
+        n_sub = MaterialLibrary.n_at_wavelength(param.substrat, 550.0)
         r_sub = (1.0 - n_sub) / (1.0 + n_sub)
 
         sigma_w, gamma_w = 0.5, 0.6
@@ -537,55 +544,6 @@ class MetaSurfaceColorEngine:
             refl_eff[i] = power_total * f_total
 
         return wls, refl_eff
-        d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
-        fill = np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70)
-        n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
-        r_sub = (1.0 - n_sub) / (1.0 + n_sub)
-
-        # 收集半角: sin(theta_max) ~ aperture / (2*z)  (小角度近似)
-        if z_view_mm is not None and z_view_mm > 0:
-            sin_max = aperture_mm / (2.0 * max(z_view_mm, 1.0))
-        else:
-            sin_max = 1.0  # 收集全部
-
-        refl_eff = np.zeros(len(wls))
-        for i, wl_nm in enumerate(wls):
-            r_pillar = self._complex_pillar_response(param, wl_nm)
-
-            # 0阶 (镜面反射) — 始终在收集锥内
-            r_0 = fill * r_pillar + (1.0 - fill) * r_sub
-            power_0 = float(abs(r_0)**2)
-
-            # 高阶衍射: 存在于 lambda < P 时
-            if p_nm > wl_nm and sin_max < 1.0:
-                # 总反射功率 (Parseval): fill*|r_pillar|^2 + (1-fill)*|r_sub|^2
-                power_total = fill * abs(r_pillar)**2 + (1.0 - fill) * abs(r_sub)**2
-                power_higher = power_total - power_0
-
-                if power_higher > 1e-12:
-                    # 一阶衍射角: sin(theta1) = lambda / P
-                    sin_theta1 = wl_nm / p_nm
-                    # 圆孔结构因子: 一阶衍射效率 ~ fill^2 * [2J1(pi*D/P)/(pi*D/P)]^2
-                    x_arg = np.pi * d_nm / p_nm
-                    if x_arg > 0.01:
-                        from scipy.special import j1
-                        j1_term = 2.0 * j1(x_arg) / x_arg
-                    else:
-                        j1_term = 1.0  # 极小D极限
-                    # 近似: 一阶衍射携带大部分高阶功率
-                    # 收集条件: sin(theta1) < sin_max
-                    if sin_theta1 < sin_max:
-                        # 一阶也在收集锥内, 保留大部分功率
-                        collected = power_0 + power_higher * 0.85
-                    else:
-                        # 一阶逸出, 只收集0阶 + 残留散射(15%)
-                        collected = power_0 + power_higher * 0.15
-                    refl_eff[i] = float(collected)
-                else:
-                    refl_eff[i] = power_0
-            else:
-                refl_eff[i] = power_0
-        return wls, refl_eff
 
 
     def _dual_far_field_spectrum(self, dp: DualPillarParam, na=0.1, theta_obs_deg=0.0, N=12):
@@ -597,8 +555,8 @@ class MetaSurfaceColorEngine:
         mat, sub = dp.material, dp.substrate
         pol, ang = dp.polarization, dp.angle_deg
 
-        _, fill1 = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, 550.0)
-        _, fill2 = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, 550.0)
+        _, fill1 = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, 550.0, sub)
+        _, fill2 = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, 550.0, sub)
         fill_gap = 1.0 - fill1 - fill2
 
         n_sub = MaterialLibrary.n_at_wavelength(sub, 550.0)
@@ -609,8 +567,8 @@ class MetaSurfaceColorEngine:
 
         refl_eff = np.zeros(len(wls))
         for i, wl_nm in enumerate(wls):
-            r1, _ = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, wl_nm)
-            r2, _ = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, wl_nm)
+            r1, _ = _single_pillar_complex(d1, h1, p_nm, mat, pol, ang, wl_nm, sub)
+            r2, _ = _single_pillar_complex(d2, h2, p_nm, mat, pol, ang, wl_nm, sub)
             r_0 = fill1 * r1 + fill2 * r2 + fill_gap * r_sub
             power_total = float(abs(r_0)**2)
 
@@ -650,12 +608,10 @@ class MetaSurfaceColorEngine:
                 wls = np.linspace(wl_start, wl_end, n_pts)
                 refl = np.zeros(len(wls))
                 for i, wl_nm in enumerate(wls):
-                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, wl_nm)
+                    I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, wl_nm, param.substrat)
                     I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, wl_nm)
-                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, 550.0)
+                            param.material, param.polarization, param.angle_deg, wl_nm)
+                    _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, 550.0, param.substrat)
                     _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
                         param.material, param.polarization, param.angle_deg, 550.0)
                     refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
@@ -1111,6 +1067,8 @@ with st.sidebar:
             st.caption("双柱 ML: DualResMLP v2 (Fano) 可用")
     if not _ml_ready:
         st.caption("ML 不可用（需 PyTorch，仅本地/虚拟机支持，云端需加 torch 到 requirements.txt）")
+    if _ml_ready and st.session_state.get('ml_accel', False) and st.session_state.get('far_field', False):
+        st.caption('⚠️ 远场传播模式下 ML 代理自动禁用（ML 未训练远场数据）')
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
         st.warning(f"\u26a0\ufe0f \u300c{material}\u300d\u4e0d\u5728 ML \u8bad\u7ec3\u6570\u636e\u4e2d\uff0c\u5df2\u81ea\u52a8\u5207\u6362\u4e3a\u7269\u7406\u6a21\u578b\uff08\u7cbe\u5ea6\u4e0d\u53d7\u5f71\u54cd\uff09")
@@ -1138,8 +1096,8 @@ with st.sidebar:
             target_rgb = [target_r/255, target_g/255, target_b/255]
             try:
                 import torch_model as _tmd
-                with st.spinner("PyTorch 梯度优化中... 约15-25秒"):
-                    result = _tmd.inverse_design_dual(target_rgb, n_steps=400, n_restarts=20, material=material)
+                with st.spinner("PyTorch 梯度优化中... 约1-3秒"):
+                    result = _tmd.inverse_design_dual(target_rgb, n_steps=200, n_restarts=30, material=material, substrate=substrate)
                     if result is not None:
                         d1, h1, d2, h2, p, rgb, loss = result
                         p = max(max(d1, d2) * 1.2 + 20, p)
@@ -1316,7 +1274,7 @@ def _cached_physical_color(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm, d
     return engine.physical_color(p)
 
 
-use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE
+use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE and not st.session_state.get('far_field', False)
 use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ML_AVAILABLE
 
 # v7 multi-material ML supports all materials
@@ -1337,7 +1295,7 @@ if use_dual_ml:
             round(st.session_state.get('na_val', 0.1), 2),
             round(st.session_state.get('theta_obs', 0.0), 1))
 elif use_ml and not st.session_state.get('dual_pillar', False):
-    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization, material)
+    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization, material, substrate)
     if ml_rgb is not None:
         rgb = ml_rgb
     else:
@@ -1408,6 +1366,12 @@ with tab1:
       </div>
     </div>
     """, unsafe_allow_html=True)
+    # --- Color gamut notice ---
+    st.info(
+        """TiO2 anatase nanopillars cannot produce high-saturation cyan/blue (B<0.45) or pure red within current parameter range (D 60-267nm, H 80-600nm).
+This is a fundamental physics limitation confirmed by both Lorentzian model and RCWA rigorous simulation.
+Tips: 1) Enable ML proxy for better color matching within gamut  2) Try a-Si/Si3N4 materials for wider gamut."""
+    )
 
     # --- Pillar visualization with pure CSS ---
     scale = 160.0 / max(height, 100)
@@ -1562,7 +1526,7 @@ with tab2:
     
     if _ml_pressed and _ml_ready:
         with st.spinner("ML梯度优化中... 约10-30秒"):
-            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15, material=material)
+            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15, material=material, substrate=substrate)
             if result is not None:
                 d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
                 ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
@@ -2045,3 +2009,4 @@ st.sidebar.caption("物理模型: Fano 共振 + CIE 1931 光谱管线")
 st.sidebar.markdown("---")
 st.sidebar.caption("长沙理工大学 物理与电子科学学院")
 st.sidebar.caption("光电2501 乔安琪")
+
