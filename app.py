@@ -1063,7 +1063,6 @@ with st.sidebar:
         st.caption(f"\u6a21\u578b: \u9519\u8bef - {e}")
     if ml_module._DUAL_ML_AVAILABLE:
         st.caption("\u53cc\u67f1 ML: DualResMLP v3 (Multi) \u53ef\u7528")
-        st.caption("Dual ML: DualResMLP v3 (Multi) available")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
         st.warning(f"\u26a0\ufe0f \u300c{material}\u300d\u4e0d\u5728 ML \u8bad\u7ec3\u6570\u636e\u4e2d\uff0c\u5df2\u81ea\u52a8\u5207\u6362\u4e3a\u7269\u7406\u6a21\u578b\uff08\u7cbe\u5ea6\u4e0d\u53d7\u5f71\u54cd\uff09")
