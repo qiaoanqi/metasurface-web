@@ -1826,6 +1826,7 @@ with tab2:
         with col_fp2:
             st.markdown("<br>", unsafe_allow_html=True)
             fp_search_btn = st.button("FP腔搜索", use_container_width=True)
+            st.caption("预计搜索时间约 30 秒（粗扫 550 组 + 精细 300 组）")
 
         if fp_search_btn:
             fp_tr = int(fp_target_hex[1:3], 16)
