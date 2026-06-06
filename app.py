@@ -1525,21 +1525,22 @@ with tab1:
     # --- AI Analysis (DeepSeek LLM) ---
     col_ai1, col_ai2 = st.columns([3, 1])
     with col_ai2:
-        if st.button(u"🤖 AI 分析", key="ai_analyze_color", use_container_width=True,
-                     help=u"使用 DeepSeek 大模型分析当前颜色结果"):
-            with st.spinner(u"AI 分析中..."):
-                params = {}
-                if is_fp:
-                    params = {u"腔长 T": f"{st.session_state.fp_t_val:.0f}nm",
-                              u"反射镜": st.session_state.get('fp_mirror_type', 'DBR')}
-                else:
-                    params = {u"D": f"{diameter:.0f}nm", u"H": f"{height:.0f}nm", u"P": f"{period:.0f}nm"}
-                params[u"材料"] = material
-                params[u"衬底"] = substrate
-                params[u"偏振"] = polarization
-                params[u"角度"] = f"{angle:.0f}°"
-                result = analyze_color(hex_color, params)
-                st.info(result)
+        ai_clicked = st.button(u"🤖 AI 分析", key="ai_analyze_color", use_container_width=True,
+                     help=u"使用 DeepSeek 大模型分析当前颜色结果")
+    if ai_clicked:
+        with st.spinner(u"AI 分析中..."):
+            params = {}
+            if is_fp:
+                params = {u"腔长 T": f"{st.session_state.fp_t_val:.0f}nm",
+                          u"反射镜": st.session_state.get('fp_mirror_type', 'DBR')}
+            else:
+                params = {u"D": f"{diameter:.0f}nm", u"H": f"{height:.0f}nm", u"P": f"{period:.0f}nm"}
+            params[u"材料"] = material
+            params[u"衬底"] = substrate
+            params[u"偏振"] = polarization
+            params[u"角度"] = f"{angle:.0f}°"
+            result = analyze_color(hex_color, params)
+        st.info(result)
 
     # --- Color gamut notice (non-FP only) ---
     if not is_fp and "TiO2" in material:
