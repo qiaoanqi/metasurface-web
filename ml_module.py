@@ -114,16 +114,16 @@ def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="Ti
         mat_code = float(MATERIAL_CODES.get(material, 0))
         sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
         with torch.no_grad():
-        x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code, sub_code]], dtype=torch.float32) if _IS_V8 else torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
-        spec = _ML_FWD(x)
-        wl = torch.linspace(380, 780, 81)
-        X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
-        Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
-        Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
-        xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
-        rgb_lin = xyz @ _ML_SRGB_M.T
-        rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
-        return torch.clamp(rgb, 0, 1).squeeze().numpy()
+            x = torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code, sub_code]], dtype=torch.float32) if _IS_V8 else torch.tensor([[(d_nm-50)/300, (h_nm-80)/520, (p_nm-200)/400, angle_deg/80, pol_code, mat_code]], dtype=torch.float32)
+            spec = _ML_FWD(x)
+            wl = torch.linspace(380, 780, 81)
+            X = torch.trapezoid(spec * _ML_CIE_X.unsqueeze(0), wl, dim=1)
+            Y = torch.trapezoid(spec * _ML_CIE_Y.unsqueeze(0), wl, dim=1)
+            Z = torch.trapezoid(spec * _ML_CIE_Z.unsqueeze(0), wl, dim=1)
+            xyz = torch.stack([X/_ML_CIE_NORM, Y/_ML_CIE_NORM, Z/_ML_CIE_NORM], dim=1).float()
+            rgb_lin = xyz @ _ML_SRGB_M.T
+            rgb = torch.where(rgb_lin <= 0.0031308, 12.92*rgb_lin, 1.055*torch.clamp(rgb_lin, min=0.0).pow(1/2.4)-0.055)
+            return torch.clamp(rgb, 0, 1).squeeze().numpy()
     except Exception:
         return None
 
