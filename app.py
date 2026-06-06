@@ -1051,20 +1051,19 @@ with st.sidebar:
         disabled=not _ml_ready,
         help='使用神经网络代替 Lorentzian 物理模型'
     )
-    if _ml_ready:
-        try:
-            if ml_module._IS_V8 and ml_module._ML_AVAILABLE:
+    # Read ML state directly from ml_module globals (not _ml_ready)
+    try:
+        if ml_module._ML_AVAILABLE:
+            if ml_module._IS_V8:
                 st.caption("Model: v8 Substrate | 7-dim | 256x4 ResBlocks | 4 mats + 3 subs")
-            elif ml_module._ML_AVAILABLE:
-                st.caption("Model: v7 Multi | 6-dim | 256x4 ResBlocks | 4 materials")
             else:
-                st.caption("Model: init OK but ML not loaded (check logs)")
-        except Exception as e:
-            st.caption(f"Model: Error - {e}")
-        if ml_module._DUAL_ML_AVAILABLE:
-            st.caption("Dual ML: DualResMLP v3 (Multi) available")
-    if _ml_ready and st.session_state.get('ml_accel', False) and st.session_state.get('far_field', False):
-        st.caption('⚠️ 远场传播模式下 ML 代理自动禁用（ML 未训练远场数据）')
+                st.caption("Model: v7 Multi | 6-dim | 256x4 ResBlocks | 4 materials")
+        else:
+            st.caption("Model: not loaded (torch/models missing on cloud)")
+    except Exception as e:
+        st.caption(f"Model: error - {e}")
+    if ml_module._DUAL_ML_AVAILABLE:
+        st.caption("Dual ML: DualResMLP v3 (Multi) available")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
         st.warning(f"\u26a0\ufe0f \u300c{material}\u300d\u4e0d\u5728 ML \u8bad\u7ec3\u6570\u636e\u4e2d\uff0c\u5df2\u81ea\u52a8\u5207\u6362\u4e3a\u7269\u7406\u6a21\u578b\uff08\u7cbe\u5ea6\u4e0d\u53d7\u5f71\u54cd\uff09")
