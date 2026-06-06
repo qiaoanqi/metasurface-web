@@ -1,0 +1,120 @@
+﻿"""DeepSeek API client for metasurface color analysis.
+
+Uses DeepSeek Chat API (OpenAI-compatible) for intelligent color insights.
+API key should be set as environment variable DEEPSEEK_API_KEY.
+"""
+
+import os
+import json
+import urllib.request
+import urllib.error
+
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+
+def _get_api_key() -> str:
+    """Get DeepSeek API key from environment."""
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not key:
+        key = os.environ.get("DEEPSEEK_API_KEY", "")
+    return key
+
+
+def chat(prompt: str, system_prompt: str = "", model: str = "deepseek-chat",
+         temperature: float = 0.7, max_tokens: int = 1024) -> str:
+    """Call DeepSeek Chat API.
+
+    Args:
+        prompt: User message.
+        system_prompt: System role instruction.
+        model: Model name (deepseek-chat or deepseek-reasoner).
+        temperature: Sampling temperature.
+        max_tokens: Max output tokens.
+
+    Returns:
+        Model response text, or error message on failure.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return u"[错误] 未设置 DEEPSEEK_API_KEY 环境变量。请在终端运行: set DEEPSEEK_API_KEY=你的key"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(DEEPSEEK_API_URL, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        return f"[API 错误 {e.code}] {body[:300]}"
+    except Exception as e:
+        return f"[网络错误] {str(e)}"
+
+
+def analyze_color(hex_color: str, params: dict, spectrum_info: str = "") -> str:
+    """Analyze current metasurface color result with AI insights.
+
+    Args:
+        hex_color: Hex color code (e.g. "#80c8ff").
+        params: Dict with keys like D, H, P, material, substrate, etc.
+        spectrum_info: Optional spectral analysis summary.
+
+    Returns:
+        AI analysis text in Chinese.
+    """
+    system = (
+        u"你是超表面光学专家，精通纳米光子学、米氏共振、结构色原理。"
+        u"用户会给你超表面结构色的设计参数和颜色结果，"
+        u"请你用通俗易懂的中文解释颜色产生的物理原因，"
+        u"并给出优化建议。回答控制在200字以内，分2-3个要点。"
+    )
+
+    param_str = ", ".join(f"{k}={v}" for k, v in params.items())
+    prompt = (
+        f"超表面结构色参数: {param_str}\n"
+        f"得到的颜色: {hex_color}\n"
+        f"{'光谱分析: ' + spectrum_info if spectrum_info else ''}\n"
+        f"请简要分析这个颜色的物理来源并给出优化建议。"
+    )
+    return chat(prompt, system_prompt=system, max_tokens=512)
+
+
+def suggest_params(target_color: str, material: str, current_params: dict) -> str:
+    """Suggest parameter adjustments to approach a target color.
+
+    Args:
+        target_color: Target hex color.
+        material: Material name.
+        current_params: Current parameter dict.
+
+    Returns:
+        AI suggestion text.
+    """
+    system = (
+        u"你是超表面逆设计专家。根据目标颜色和当前参数，"
+        u"给出调整建议（增大/减小直径D、高度H、周期P的方向和幅度）。"
+        u"回答简洁，分点列出，每点一行。"
+    )
+
+    cur = ", ".join(f"{k}={v}" for k, v in current_params.items())
+    prompt = (
+        f"材料: {material}\n"
+        f"目标颜色: {target_color}\n"
+        f"当前参数: {cur}\n"
+        f"请建议如何调整参数来逼近目标颜色。"
+    )
+    return chat(prompt, system_prompt=system, max_tokens=512)
