@@ -404,7 +404,7 @@ class MetaSurfaceColorEngine:
                         material=param.material
                     )
                     rgb = _tm.batch_spectrum_to_rgb(spec)
-                    return rgb.squeeze(0).numpy()
+                    return np.nan_to_num(rgb.squeeze(0).numpy(), nan=0.5)
                 except Exception:
                     wls = np.arange(380, 785, 5)
                     refl = np.zeros(len(wls))
@@ -415,14 +415,14 @@ class MetaSurfaceColorEngine:
                             param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                         refl[i] = float(abs(I1)**2 + abs(I2)**2)
                     refl = refl / 0.86
-                    return spectrum_to_srgb(wls, refl)
+                    return np.nan_to_num(spectrum_to_srgb(wls, refl), nan=0.5)
         # Single pillar (MetaSurfaceParam)
         if getattr(self, '_enable_far_field', False):
             if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
                 wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
             else:
                 wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
-            return spectrum_to_srgb(wls, refl)
+            return np.nan_to_num(spectrum_to_srgb(wls, refl), nan=0.5)
         # PyTorch batch mode: 81 wavelengths in one pass (~10x faster)
         try:
             import torch_model as _tm
@@ -436,12 +436,12 @@ class MetaSurfaceColorEngine:
                 material=param.material, substrate=param.substrate
             )
             rgb = _tm.batch_spectrum_to_rgb(spec)
-            return rgb.squeeze(0).numpy()
+            return np.nan_to_num(rgb.squeeze(0).numpy(), nan=0.5)
         except Exception:
             wls = np.arange(380, 785, 5)
             refl = np.array([self._single_wl_response(param, wl) for wl in wls])
             refl = refl / 0.86
-            return spectrum_to_srgb(wls, refl)
+            return np.nan_to_num(spectrum_to_srgb(wls, refl), nan=0.5)
 
     def ai_predict_color(self, param: MetaSurfaceParam) -> np.ndarray:
         d, h = param.diameter_nm, param.height_nm
@@ -505,8 +505,11 @@ class MetaSurfaceColorEngine:
         return float(combined * fill_amp * loss)
 
     def _complex_pillar_response(self, param, wl_nm):
+        d_s = max(getattr(param, "diameter_nm", 180), 10.0)
+        h_s = max(getattr(param, "height_nm", 300), 10.0)
+        p_s = max(getattr(param, "period_nm", 400), 100.0)
         r, _ = _single_pillar_complex(
-            param.diameter_nm, param.height_nm, param.period_nm,
+            d_s, h_s, p_s,
             param.material, param.polarization, param.angle_deg, wl_nm)
         return r
 
