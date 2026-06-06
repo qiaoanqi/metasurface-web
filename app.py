@@ -99,8 +99,9 @@ def xyz_to_srgb(xyz):
 
 
 def spectrum_to_srgb(wavelengths_nm, reflectance):
+    reflectance = np.nan_to_num(np.asarray(reflectance, dtype=float), nan=0.0, posinf=1.0, neginf=0.0)
     xyz = spectrum_to_xyz(wavelengths_nm, reflectance)
-    return np.clip(xyz_to_srgb(xyz), 0, 1)
+    return np.nan_to_num(np.clip(xyz_to_srgb(xyz), 0, 1), nan=0.0)
 
 
 def clamp01(x):
@@ -139,10 +140,12 @@ def rgb_to_lab(rgb):
     return xyz_to_lab(rgb_to_xyz(rgb))
 
 def rgb_to_hex(rgb):
+    rgb = np.nan_to_num(np.asarray(rgb, dtype=float), nan=0.0, posinf=1.0, neginf=0.0)
     r, g, b = np.rint(clamp01(rgb) * 255).astype(int)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 def rgb_255(rgb):
+    rgb = np.nan_to_num(np.asarray(rgb, dtype=float), nan=0.0, posinf=1.0, neginf=0.0)
     r, g, b = np.rint(clamp01(rgb) * 255).astype(int)
     return int(r), int(g), int(b)
 
@@ -1069,17 +1072,24 @@ with st.sidebar:
     st.divider()
     st.header('📏 纳米柱尺寸')
 
-    if 'dual_pillar' not in st.session_state:
-        st.session_state.dual_pillar = False
-    st.session_state.dual_pillar = st.checkbox(
-        '🔀 双柱超单元模式 (Dual-Pillar Supercell)',
-        value=st.session_state.dual_pillar,
-        help='启用后使用两根不同尺寸纳米柱，可产生4个独立调谐峰，显著扩展色域'
+    if 'structure_type' not in st.session_state:
+        st.session_state.structure_type = 'single'
+    st.session_state.structure_type = st.radio(
+        '📏 结构类型',
+        ['单柱 (Single)', '双柱 (Dual)', 'FP腔 (Fabry-Perot)'],
+        index=0 if st.session_state.structure_type == 'single' else (1 if st.session_state.structure_type == 'dual' else 2),
+        horizontal=True,
+        help='单柱/双柱纳米柱或法布里-珀罗腔'
     )
-    st.caption("双柱模式搜索空间大，勾选后下方出现自动优化")
+    _struct_map = {'单柱 (Single)': 'single', '双柱 (Dual)': 'dual', 'FP腔 (Fabry-Perot)': 'fp'}
+    st.session_state.structure_type = _struct_map[st.session_state.structure_type]
+    is_fp = st.session_state.structure_type == 'fp'
+    is_dual = st.session_state.structure_type == 'dual'
+    st.session_state.dual_pillar = is_dual
+    st.caption('单柱/双柱纳米柱或FP腔 | 双柱模式搜索空间大')
 
     # Dual-pillar auto inverse design button
-    if st.session_state.dual_pillar:
+    if is_dual:
         st.divider()
         st.subheader("双柱自动逆设计 (PyTorch 梯度优化)")
         target_hex_dual = st.color_picker("目标颜色", "#80c8ff", key="dual_target_color")
@@ -1189,6 +1199,34 @@ with st.sidebar:
             st.warning('⚠️ D1={:.0f} D2={:.0f} >= P={:.0f}: 超出单元边界'.format(d1, d2, pv))
         if fill1 + fill2 > 0.85:
             st.warning('⚠️ 占空比总和 {:.2f} > 0.85: 纳米柱可能重叠'.format(fill1+fill2))
+    elif is_fp:
+        # --- FP Cavity Controls ---
+        if 'fp_t_val' not in st.session_state:
+            st.session_state.fp_t_val = 200.0
+        if 'fp_mirror_type' not in st.session_state:
+            st.session_state.fp_mirror_type = '介质 DBR (TiO2/SiO2)'
+        if 'fp_target_wl' not in st.session_state:
+            st.session_state.fp_target_wl = 450.0
+
+        st.session_state.fp_mirror_type = st.selectbox(
+            '反射镜类型',
+            ['介质 DBR (TiO2/SiO2)', '金属 Ag (减色)'],
+            index=0 if st.session_state.fp_mirror_type.startswith('介质') else 1,
+        )
+
+        if st.session_state.fp_mirror_type.startswith('介质'):
+            st.session_state.fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, st.session_state.fp_target_wl, 5.0)
+
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            st.session_state.fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
+        with col_t2:
+            st.session_state.fp_t_val = st.number_input('腔长 T', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
+        diameter = 0; height = st.session_state.fp_t_val; period = 0
+        if st.session_state.fp_mirror_type.startswith('介质'):
+            st.caption('FP腔 (DBR): (TiO2/SiO2)3 / TiO2(T) / (SiO2/TiO2)5 | 高饱和度')
+        else:
+            st.caption('FP腔 (Ag): Ag(30nm) / TiO2(T) / Ag(bulk) | 减色型 | 颜色偏淡')
     else:
         # --- Single-Pillar Controls (original) ---
         col_d1, col_d2 = st.columns([3, 1])
@@ -1251,6 +1289,8 @@ if st.session_state.get('dual_pillar', False):
     st.session_state._prev_dual_params = (
         st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val
     )
+elif is_fp:
+    param = MetaSurfaceParam(0, st.session_state.fp_t_val, 0, 'TiO2 (anatase)', 'SiO2 (fused silica)', polarization, angle)  # FP dummy
 else:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
 # Cached color lookup: avoid recomputing for same parameters
@@ -1266,6 +1306,112 @@ def _cached_physical_color(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm, d
     else:
         p = MetaSurfaceParam(d_nm, h_nm, p_nm, mat, sub, pol, ang)
     return engine.physical_color(p)
+
+
+# ============================================================
+# Fabry-Perot (FP) cavity: Ag/TiO2/Ag and DBR mirror modes
+# ============================================================
+
+_AG_NK_TABLE = {
+    380: (0.17, 1.62), 385: (0.17, 1.63), 390: (0.17, 1.64), 395: (0.17, 1.66),
+    400: (0.17, 1.67), 405: (0.17, 1.68), 410: (0.17, 1.70), 415: (0.17, 1.72),
+    420: (0.17, 1.73), 425: (0.17, 1.75), 430: (0.17, 1.77), 435: (0.17, 1.79),
+    440: (0.17, 1.81), 445: (0.17, 1.83), 450: (0.17, 1.85), 455: (0.17, 1.87),
+    460: (0.17, 1.90), 465: (0.17, 1.92), 470: (0.17, 1.95), 475: (0.17, 1.98),
+    480: (0.17, 2.01), 485: (0.16, 2.04), 490: (0.16, 2.07), 495: (0.16, 2.10),
+    500: (0.15, 2.13), 505: (0.15, 2.16), 510: (0.15, 2.20), 515: (0.15, 2.23),
+    520: (0.14, 2.27), 525: (0.14, 2.30), 530: (0.14, 2.34), 535: (0.14, 2.38),
+    540: (0.13, 2.42), 545: (0.13, 2.46), 550: (0.13, 2.50), 555: (0.13, 2.54),
+    560: (0.12, 2.58), 565: (0.12, 2.63), 570: (0.12, 2.67), 575: (0.12, 2.72),
+    580: (0.12, 2.77), 585: (0.12, 2.82), 590: (0.12, 2.87), 595: (0.12, 2.92),
+    600: (0.12, 2.97), 605: (0.12, 3.02), 610: (0.12, 3.08), 615: (0.12, 3.13),
+    620: (0.12, 3.19), 625: (0.12, 3.25), 630: (0.12, 3.31), 635: (0.12, 3.37),
+    640: (0.12, 3.44), 645: (0.13, 3.50), 650: (0.13, 3.57), 655: (0.13, 3.64),
+    660: (0.14, 3.71), 665: (0.14, 3.78), 670: (0.14, 3.86), 675: (0.14, 3.93),
+    680: (0.14, 4.01), 685: (0.14, 4.09), 690: (0.15, 4.17), 695: (0.15, 4.26),
+    700: (0.15, 4.34), 705: (0.15, 4.43), 710: (0.15, 4.52), 715: (0.15, 4.61),
+    720: (0.15, 4.71), 725: (0.15, 4.80), 730: (0.15, 4.90), 735: (0.15, 5.00),
+    740: (0.15, 5.10), 745: (0.15, 5.21), 750: (0.15, 5.32), 755: (0.15, 5.43),
+    760: (0.15, 5.55), 765: (0.15, 5.67), 770: (0.15, 5.79), 775: (0.15, 5.91),
+    780: (0.15, 6.04),
+}
+
+def _ag_nk(wl_nm):
+    wls = list(_AG_NK_TABLE.keys())
+    if wl_nm <= wls[0]: return _AG_NK_TABLE[wls[0]]
+    if wl_nm >= wls[-1]: return _AG_NK_TABLE[wls[-1]]
+    for i in range(len(wls)-1):
+        if wls[i] <= wl_nm <= wls[i+1]:
+            frac = (wl_nm - wls[i]) / (wls[i+1] - wls[i])
+            n1, k1 = _AG_NK_TABLE[wls[i]]
+            n2, k2 = _AG_NK_TABLE[wls[i+1]]
+            return (n1 + frac*(n2-n1), k1 + frac*(k2-k1))
+    return _AG_NK_TABLE[wls[-1]]
+
+def _n_sio2_sellmeier(wl_nm):
+    wl_um = wl_nm / 1000.0
+    return np.sqrt(1 + 0.6961663*wl_um**2/(wl_um**2 - 0.0684043**2)
+                   + 0.4079426*wl_um**2/(wl_um**2 - 0.1162414**2)
+                   + 0.8974794*wl_um**2/(wl_um**2 - 9.896161**2))
+
+def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
+    """Metal-mirror FP: Ag(30nm)/TiO2(T)/Ag(bulk). 减色型."""
+    wls = np.arange(380, 785, 5)
+    d_top = 30.0; theta = angle_deg * np.pi / 180.0; n_inc = 1.0
+    refl = np.zeros(len(wls))
+    for i, wl in enumerate(wls):
+        n_top_n, n_top_k = _ag_nk(wl)
+        n_top_c = complex(n_top_n, n_top_k)
+        n_tio2 = MaterialLibrary.n_at_wavelength("TiO2 (anatase)", wl)
+        n_tio2_c = complex(n_tio2, 0.0)
+        n_bot_n, n_bot_k = _ag_nk(wl)
+        n_bot_c = complex(n_bot_n, n_bot_k)
+        cos_inc = np.cos(theta); sin_inc = np.sin(theta)
+        def _cos(n): return np.emath.sqrt(1.0 - (sin_inc*n_inc/n)**2)
+        cos_top, cos_tio2, cos_bot = _cos(n_top_c), _cos(n_tio2_c), _cos(n_bot_c)
+        def _layer(n, d, c, te):
+            delta = 2.0*np.pi*n*d*c/wl
+            p = n*c if te else c/n
+            cd, sd = np.cos(delta), np.sin(delta)
+            return np.array([[cd, 1j*sd/p], [1j*p*sd, cd]])
+        M = _layer(n_top_c, d_top, cos_top, pol_TE)
+        M = M @ _layer(n_tio2_c, T_nm, cos_tio2, pol_TE)
+        p_inc = n_inc*cos_inc if pol_TE else cos_inc/n_inc
+        p_bot = n_bot_c*cos_bot if pol_TE else cos_bot/n_bot_c
+        a = M[0,0] + M[0,1]*p_bot; b = M[1,0] + M[1,1]*p_bot
+        r = (a*p_inc - b)/(a*p_inc + b)
+        refl[i] = float(abs(r)**2)
+    return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
+
+def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, angle_deg=0.0, pol_TE=True):
+    """DBR FP cavity: (TiO2/SiO2)^n/TiO2(T)/(SiO2/TiO2)^n. 高饱和度."""
+    wls = np.arange(380, 785, 5)
+    theta = angle_deg * np.pi / 180.0; n_inc = 1.0
+    refl = np.zeros(len(wls))
+    n_tio2_ref = MaterialLibrary.n_at_wavelength("TiO2 (anatase)", target_wl)
+    n_sio2_ref = _n_sio2_sellmeier(target_wl)
+    dH = target_wl/(4.0*n_tio2_ref); dL = target_wl/(4.0*n_sio2_ref)
+    for i, wl in enumerate(wls):
+        nH = complex(MaterialLibrary.n_at_wavelength("TiO2 (anatase)", wl), 0.0)
+        nL = complex(_n_sio2_sellmeier(wl), 0.0)
+        cos_inc = np.cos(theta); sin_inc = np.sin(theta)
+        def _cos(n): return np.emath.sqrt(1.0 - (sin_inc*n_inc/n)**2)
+        cH, cL = _cos(nH), _cos(nL)
+        def _layer(n, d, c):
+            delta = 2.0*np.pi*n*d*c/wl; p = n*c
+            cd, sd = np.cos(delta), np.sin(delta)
+            return np.array([[cd, 1j*sd/p], [1j*p*sd, cd]])
+        M = np.eye(2, dtype=complex)
+        for _ in range(n_pairs_top):
+            M = M @ _layer(nH, dH, cH) @ _layer(nL, dL, cL)
+        M = M @ _layer(nH, T_nm, cH)
+        for _ in range(n_pairs_bot):
+            M = M @ _layer(nL, dL, cL) @ _layer(nH, dH, cH)
+        p_inc = n_inc*cos_inc; p_sub = nL*cL
+        a = M[0,0] + M[0,1]*p_sub; b = M[1,0] + M[1,1]*p_sub
+        r = (a*p_inc - b)/(a*p_inc + b)
+        refl[i] = float(abs(r)**2)
+    return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
 
 
 use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
@@ -1318,6 +1464,18 @@ else:
             round(st.session_state.get('na_val', 0.1), 2),
             round(st.session_state.get('theta_obs', 0.0), 1))
 
+
+# FP mode: compute cavity spectrum color (after ML/physical fallback to prevent overwrite)
+is_dbr_fp = st.session_state.get('fp_mirror_type', '').startswith('介质')
+_fp_done = (st.session_state.structure_type == 'fp')
+if _fp_done:
+    if is_dbr_fp:
+        _twl = st.session_state.get('fp_target_wl', 450.0)
+        _wls, _refl = fp_dielectric_spectrum(st.session_state.fp_t_val, _twl, 3, 5, angle, polarization.startswith('TE'))
+    else:
+        _wls, _refl = fp_cavity_spectrum(st.session_state.fp_t_val, angle, polarization.startswith('TE'))
+    rgb = spectrum_to_srgb(_wls, _refl)
+
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔬 实时预览", "🎯 逆设计", "🖼️ 图案生成",
@@ -1338,7 +1496,10 @@ with tab1:
             st.caption(f"参数已修正: {st.session_state._dual_correction}")
 
     # --- Color swatch card ---
-    if st.session_state.get('dual_pillar', False):
+    if is_fp:
+        mirror_label = st.session_state.get('fp_mirror_type', '介质 DBR (TiO2/SiO2)')
+        param_info = f"腔长 T={st.session_state.fp_t_val:.0f}nm | FP腔: {mirror_label}"
+    elif st.session_state.get('dual_pillar', False):
         param_info = f"D1={st.session_state.d1_val:.0f}nm H1={st.session_state.h1_val:.0f}nm | D2={st.session_state.d2_val:.0f}nm H2={st.session_state.h2_val:.0f}nm | P={period:.0f}nm"
     else:
         param_info = f"D={diameter:.0f}nm  H={height:.0f}nm  P={period:.0f}nm"
@@ -1353,105 +1514,106 @@ with tab1:
         <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{hex_color}</div>
         <div style="font-size:14px;opacity:0.85;">RGB({r255}, {g255}, {b255})</div>
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
-          {material} on {substrate}<br>
+          {st.session_state.get('fp_mirror_type', material) if is_fp else material} on {substrate}<br>
           {param_info}<br>
           {polarization} &nbsp; &theta;={angle:.0f}&deg;
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
-    # --- Color gamut notice ---
-    st.info(
-        """TiO2????????????????D 60-267nm, H 80-600nm??????????????B<0.45??????
-?? Lorentzian ??? RCWA ??????????????
-???1) ?? ML ??????????????  2) ?? a-Si/Si3N4 ?????????"""
-This is a fundamental physics limitation confirmed by both Lorentzian model and RCWA rigorous simulation.
-Tips: 1) Enable ML proxy for better color matching within gamut  2) Try a-Si/Si3N4 materials for wider gamut."""
+    # --- Color gamut notice (non-FP only) ---
+    if not is_fp:
+        st.info(
+        "TiO2 纳米柱在当前参数范围（D 60-267nm, H 80-600nm）内无法产生高饱和青蓝色或纯红色。"
+        "这是 Lorentzian 模型和 RCWA 严格仿真共同验证的物理限制。"
+        "提示：1) 启用 ML 代理模型 2) 尝试 a-Si/Si3N4 材料以获得更宽色域。"
     )
 
-    # --- Pillar visualization with pure CSS ---
-    scale = 160.0 / max(height, 100)
-    pw = max(diameter * scale * 0.45, 20)
-    ph = height * scale * 0.45
-    sh = 45
-    period_w = period * scale * 0.45
+    # --- Pillar visualization with pure CSS (non-FP only) ---
+    if not is_fp:
+        scale = 160.0 / max(height, 100)
+        pw = max(diameter * scale * 0.45, 20)
+        ph = height * scale * 0.45
+        sh = 45
+        period_w = period * scale * 0.45
 
-    st.markdown(f"""
-    <div style="background:#1a1a2e;border-radius:16px;padding:24px 24px 16px 24px;">
-      <div style="text-align:center;color:#888;font-size:12px;margin-bottom:16px;
-                  letter-spacing:0.5px;">
-        CROSS-SECTION &nbsp;&middot;&nbsp; {param_info}
-      </div>
-      <div style="display:flex;justify-content:center;align-items:flex-end;
-                  height:230px;position:relative;">
-        <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);
-                    width:{period_w*2.2:.0f}px;height:{sh}px;
-                    background:linear-gradient(180deg, #3a3a5c, #252540);
-                    border-radius:4px 4px 0 0;"></div>
-        <div style="position:absolute;bottom:{sh}px;left:50%;transform:translateX(-50%);
-                    width:{period_w*2.2:.0f}px;height:2px;
-                    background:rgba(255,255,255,0.06);"></div>
-        <div style="width:{pw:.0f}px;height:{ph:.0f}px;
-                    background:linear-gradient(180deg, {hex_color}ee, {hex_color}77, {hex_color}cc);
-                    border-radius:6px 6px 3px 3px;
-                    box-shadow:0 6px 24px {hex_color}33, inset 0 1px 0 rgba(255,255,255,0.12);
-                    position:relative;z-index:2;margin-bottom:{sh}px;
-                    transition:all 0.3s ease;"></div>
-        <!-- Height dimension line -->
-        <div style="position:absolute;bottom:{sh}px;left:calc(50% + {pw/2+16:.0f}px);
-                    width:1px;height:{ph:.0f}px;background:rgba(255,255,255,0.15);"></div>
-        <div style="position:absolute;bottom:{sh+ph/2:.0f}px;left:calc(50% + {pw/2+22:.0f}px);
-                    color:#666;font-size:10px;">{height:.0f}</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:#1a1a2e;border-radius:16px;padding:24px 24px 16px 24px;">
+          <div style="text-align:center;color:#888;font-size:12px;margin-bottom:16px;
+                      letter-spacing:0.5px;">
+            CROSS-SECTION &nbsp;&middot;&nbsp; {param_info}
+          </div>
+          <div style="display:flex;justify-content:center;align-items:flex-end;
+                      height:230px;position:relative;">
+            <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+                        width:{period_w*2.2:.0f}px;height:{sh}px;
+                        background:linear-gradient(180deg, #3a3a5c, #252540);
+                        border-radius:4px 4px 0 0;"></div>
+            <div style="position:absolute;bottom:{sh}px;left:50%;transform:translateX(-50%);
+                        width:{period_w*2.2:.0f}px;height:2px;
+                        background:rgba(255,255,255,0.06);"></div>
+            <div style="width:{pw:.0f}px;height:{ph:.0f}px;
+                        background:linear-gradient(180deg, {hex_color}ee, {hex_color}77, {hex_color}cc);
+                        border-radius:6px 6px 3px 3px;
+                        box-shadow:0 6px 24px {hex_color}33, inset 0 1px 0 rgba(255,255,255,0.12);
+                        position:relative;z-index:2;margin-bottom:{sh}px;
+                        transition:all 0.3s ease;"></div>
+            <!-- Height dimension line -->
+            <div style="position:absolute;bottom:{sh}px;left:calc(50% + {pw/2+16:.0f}px);
+                        width:1px;height:{ph:.0f}px;background:rgba(255,255,255,0.15);"></div>
+            <div style="position:absolute;bottom:{sh+ph/2:.0f}px;left:calc(50% + {pw/2+22:.0f}px);
+                        color:#666;font-size:10px;">{height:.0f}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Parameter sensitivity: +/-5nm tolerance
-    st.divider()
-    st.subheader("参数灵敏度 (工艺容差 +/-5nm)")
-    try:
-        import torch_model as _tm_sens
-        import torch as _torch_sens
-        tol = 5.0
-        params = [
-            ("D", diameter, height, period, "diameter"),
-            ("H", diameter, height, period, "height"),
-            ("P", diameter, height, period, "period"),
-        ]
-        cols = st.columns(4)
-        cols[0].markdown("**参数**")
-        cols[1].markdown(f"**-{tol:.0f}nm**")
-        cols[2].markdown("**当前**")
-        cols[3].markdown(f"**+{tol:.0f}nm**")
+    # Parameter sensitivity: +/-5nm tolerance (non-FP only)
+    if not is_fp:
+        st.divider()
+        st.subheader("参数灵敏度 (工艺容差 +/-5nm)")
+        try:
+            import torch_model as _tm_sens
+            import torch as _torch_sens
+            tol = 5.0
+            params = [
+                ("D", diameter, height, period, "diameter"),
+                ("H", diameter, height, period, "height"),
+                ("P", diameter, height, period, "period"),
+            ]
+            cols = st.columns(4)
+            cols[0].markdown("**参数**")
+            cols[1].markdown(f"**-{tol:.0f}nm**")
+            cols[2].markdown("**当前**")
+            cols[3].markdown(f"**+{tol:.0f}nm**")
         
-        for label, d_val, h_val, p_val, which in params:
-            if which == "diameter":
-                d_lo, d_hi = max(50, d_val-tol), min(350, d_val+tol)
-                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
-                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
-            elif which == "height":
-                h_lo, h_hi = max(80, h_val-tol), min(600, h_val+tol)
-                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material)
-                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material)
-            else:
-                d_min = max(d_val, 50); p_lo = max(d_min*1.2, p_val-tol); p_hi = min(600, p_val+tol)
-                sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material)
-                sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material)
+            for label, d_val, h_val, p_val, which in params:
+                if which == "diameter":
+                    d_lo, d_hi = max(50, d_val-tol), min(350, d_val+tol)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
+                elif which == "height":
+                    h_lo, h_hi = max(80, h_val-tol), min(600, h_val+tol)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material)
+                else:
+                    d_min = max(d_val, 50); p_lo = max(d_min*1.2, p_val-tol); p_hi = min(600, p_val+tol)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material)
             
-            rgb_lo = _tm_sens.batch_spectrum_to_rgb(sp_lo).squeeze().numpy()
-            rgb_hi = _tm_sens.batch_spectrum_to_rgb(sp_hi).squeeze().numpy()
-            hex_lo = rgb_to_hex(rgb_lo); hex_hi = rgb_to_hex(rgb_hi)
-            de_lo = np.sqrt(np.sum((rgb - rgb_lo)**2))
-            de_hi = np.sqrt(np.sum((rgb - rgb_hi)**2))
+                rgb_lo = _tm_sens.batch_spectrum_to_rgb(sp_lo).squeeze().numpy()
+                rgb_hi = _tm_sens.batch_spectrum_to_rgb(sp_hi).squeeze().numpy()
+                hex_lo = rgb_to_hex(rgb_lo); hex_hi = rgb_to_hex(rgb_hi)
+                de_lo = np.sqrt(np.sum((rgb - rgb_lo)**2))
+                de_hi = np.sqrt(np.sum((rgb - rgb_hi)**2))
             
-            c1, c2, c3, c4 = st.columns(4)
-            c1.markdown(f"**{label}**")
-            c2.markdown(f'<div style="width:40px;height:24px;background:{hex_lo};border-radius:4px;"></div><small>ΔE={de_lo:.3f}</small>', unsafe_allow_html=True)
-            c3.markdown(f'<div style="width:40px;height:24px;background:{hex_color};border-radius:4px;border:2px solid white;"></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div style="width:40px;height:24px;background:{hex_hi};border-radius:4px;"></div><small>ΔE={de_hi:.3f}</small>', unsafe_allow_html=True)
-        st.caption("工艺容差 ±5nm 下的颜色偏差 (ΔE < 0.02 肉眼不可分辨)")
-    except Exception as e:
-        st.caption(f"灵敏度分析不可用: {e}")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.markdown(f"**{label}**")
+                c2.markdown(f'<div style="width:40px;height:24px;background:{hex_lo};border-radius:4px;"></div><small>ΔE={de_lo:.3f}</small>', unsafe_allow_html=True)
+                c3.markdown(f'<div style="width:40px;height:24px;background:{hex_color};border-radius:4px;border:2px solid white;"></div>', unsafe_allow_html=True)
+                c4.markdown(f'<div style="width:40px;height:24px;background:{hex_hi};border-radius:4px;"></div><small>ΔE={de_hi:.3f}</small>', unsafe_allow_html=True)
+            st.caption("工艺容差 ±5nm 下的颜色偏差 (ΔE < 0.02 肉眼不可分辨)")
+        except Exception as e:
+            st.caption(f"灵敏度分析不可用: {e}")
 
 # Tab 2: Inverse Design
 with tab2:
@@ -1839,7 +2001,13 @@ with tab5:
 
     with col_spec:
         st.subheader("反射光谱 (380-780 nm)")
-        wls, refl = engine.compute_spectrum(param, 380, 780, 81)
+        if is_fp:
+            if is_dbr_fp:
+                wls, refl = fp_dielectric_spectrum(st.session_state.fp_t_val, st.session_state.get("fp_target_wl", 450.0), 3, 5, angle, polarization.startswith("TE"))
+            else:
+                wls, refl = fp_cavity_spectrum(st.session_state.fp_t_val, angle, polarization.startswith("TE"))
+        else:
+            wls, refl = engine.compute_spectrum(param, 380, 780, 81)
 
         fig5, ax5 = _get_plt().subplots(figsize=(10, 4))
         # Color the spectrum curve with the actual computed color
