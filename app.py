@@ -1,4 +1,4 @@
-# ===================== Streamlit 版本：超表面结构色设计系统 =====================
+﻿# ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
 import io, os
@@ -1059,8 +1059,8 @@ with st.sidebar:
         help='使用神经网络代替 Lorentzian 物理模型'
     )
     try:
-        if ml_module._ML_AVAILABLE:
-            if getattr(ml_module, "_IS_V8", False):
+        if ml_module._ORT_AVAILABLE:
+            if ml_module._ORT_IS_V8:
                 st.caption("模型: v8 Substrate | 7维输入(含衬底) | 256x4残差块 | 4种材料+3种衬底")
             else:
                 st.caption("模型: v7 Multi | 6维输入 | 256x4残差块 | 4种材料")
@@ -1068,7 +1068,7 @@ with st.sidebar:
             st.caption("模型: 未加载 (缺少torch或模型文件)")
     except Exception as e:
         st.caption(f"模型: 错误 - {e}")
-    if ml_module._DUAL_ML_AVAILABLE:
+    if ml_module._DUAL_ORT_AVAILABLE:
         st.caption("双柱 ML: DualResMLP v3 (Multi) 可用")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
@@ -1391,8 +1391,8 @@ def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, 
     return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
 
 
-use_ml = st.session_state.get('ml_accel', False) and ml_module._ML_AVAILABLE and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
-use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ML_AVAILABLE
+use_ml = st.session_state.get('ml_accel', False) and ml_module._ORT_AVAILABLE and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
+use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ORT_AVAILABLE
 
 # v7 multi-material ML supports all materials
 if use_dual_ml:
