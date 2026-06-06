@@ -10,7 +10,16 @@ import urllib.request
 import urllib.error
 
 
-# --- Auto-load API key from .env file ---
+# --- Auto-load API key ---
+# Priority: 1) st.secrets (Streamlit Cloud)  2) .env file (local)  3) env var
+try:
+    import streamlit as _st
+    if hasattr(_st, 'secrets') and 'DEEPSEEK_API_KEY' in _st.secrets:
+        os.environ['DEEPSEEK_API_KEY'] = _st.secrets['DEEPSEEK_API_KEY']
+except Exception:
+    pass
+
+# Fallback: .env file (local)
 for _base in [
     os.path.dirname(os.path.abspath(__file__)),
     os.getcwd(),
