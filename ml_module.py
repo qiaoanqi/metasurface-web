@@ -1,4 +1,4 @@
-﻿# ml_module.py - ML acceleration for metasurface color engine (ONNX Runtime + optional PyTorch)
+# ml_module.py - ML acceleration for metasurface color engine (ONNX Runtime + optional PyTorch)
 import os, numpy as np
 
 # ---- globals ----

@@ -1,4 +1,4 @@
-﻿# ===================== Streamlit 版本：超表面结构色设计系统 =====================
+# ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
 import io, os
@@ -975,9 +975,10 @@ except Exception as e:
 
 @st.cache_resource
 def get_ml_ready():
-    return ml_module.init_ml()
+    ok = ml_module.init_ml()
+    return (ok, ml_module._ORT_IS_V8 if ok else False)
 
-_ml_ready = get_ml_ready()
+_ml_ready, _ml_is_v8 = get_ml_ready()
 
 @st.cache_resource
 def get_dual_ml_ready():
@@ -1059,16 +1060,16 @@ with st.sidebar:
         help='使用神经网络代替 Lorentzian 物理模型'
     )
     try:
-        if ml_module._ORT_AVAILABLE:
-            if ml_module._ORT_IS_V8:
+        if _ml_ready:
+            if _ml_is_v8:
                 st.caption("模型: v8 Substrate | 7维输入(含衬底) | 256x4残差块 | 4种材料+3种衬底")
             else:
                 st.caption("模型: v7 Multi | 6维输入 | 256x4残差块 | 4种材料")
         else:
-            st.caption("模型: 未加载 (缺少torch或模型文件)")
+            st.caption("模型: 未加载 (缺少onnxruntime或ONNX模型文件)")
     except Exception as e:
         st.caption(f"模型: 错误 - {e}")
-    if ml_module._DUAL_ORT_AVAILABLE:
+    if _dual_ml_ready:
         st.caption("双柱 ML: DualResMLP v3 (Multi) 可用")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
@@ -1391,8 +1392,8 @@ def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, 
     return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
 
 
-use_ml = st.session_state.get('ml_accel', False) and ml_module._ORT_AVAILABLE and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
-use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and ml_module._DUAL_ORT_AVAILABLE
+use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
+use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
 
 # v7 multi-material ML supports all materials
 if use_dual_ml:
@@ -1602,11 +1603,7 @@ with tab2:
         picker_hex = st.color_picker("目标颜色", "#80c8ff")
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            run_btn = st.button('网格搜索', use_container_width=True, help='传统网格搜索: 精度高')
-        with col_b2:
-            ml_btn = st.button("ML快速搜索", use_container_width=True, disabled=not _ml_ready, help="ML梯度优化: 复杂模型更快")
+        run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
@@ -1654,39 +1651,6 @@ with tab2:
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
-    if ml_btn and _ml_ready:
-        with st.spinner("ML梯度优化中... 约10-30秒"):
-            result = ml_module.inverse_design_ml(target_rgb_norm, n_steps=200, n_restarts=15, material=material, substrate=substrate)
-            if result is not None:
-                d_ml, h_ml, p_ml, pred_rgb_ml, loss_ml = result
-                ml_param = MetaSurfaceParam(float(d_ml), float(h_ml), float(p_ml), material, substrate, polarization, angle)
-                ml_rgb = pred_rgb_ml
-                lab_t = rgb_to_lab(target_rgb_norm)
-                lab_m = rgb_to_lab(ml_rgb)
-                de76 = delta_e76(lab_t, lab_m)
-                de2k = delta_e2000(lab_t, lab_m)
-                # Build top3 by perturbing optimal result for nearby alternatives
-                top3 = []
-                for perturb in [(1.0, 1.0), (0.95, 1.05), (1.05, 0.95)]:
-                    d_p = min(350, max(50, d_ml * perturb[0]))
-                    h_p = min(600, max(80, h_ml * perturb[1]))
-                    p_p = max(d_p * 1.2, p_ml)
-                    param_p = MetaSurfaceParam(float(d_p), float(h_p), float(p_p), material, substrate, polarization, angle)
-                    rgb_p = engine.physical_color(param_p)
-                    lab_t = rgb_to_lab(target_rgb_norm)
-                    lab_p = rgb_to_lab(rgb_p)
-                    de_p = delta_e76(lab_t, lab_p)
-                    de2k_p = delta_e2000(lab_t, lab_p)
-                    top3.append((de2k_p, param_p, rgb_p, de_p, de2k_p))
-                top3.sort(key=lambda x: x[0])
-                st.session_state.top3_results = top3[:3]
-                if "search_cache" not in st.session_state:
-                    st.session_state.search_cache = {}
-                cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
-                st.session_state.search_cache[cache_key] = st.session_state.top3_results
-                st.success(f"ML模型搜索完成! D={d_ml:.1f}nm H={h_ml:.1f}nm P={p_ml:.1f}nm dE2000={de2k:.1f}")
-            
-
     if 'top3_results' in st.session_state:
         col_a, col_b = st.columns(2)
         with col_a:
