@@ -324,7 +324,8 @@ def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, 
     lam_md = 400 + 0.75*(d_nm-60) + 0.25*(h_nm-120) + 32*dn
     sigma_md = max(35 + 0.12*(d_nm-200), 10)  # FDTD-calibrated
 
-    fill = np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.01, 0.70)
+    p_safe = max(p_nm, 200.0)
+    fill = np.clip(np.pi*(d_nm/2)**2/(p_safe**2), 0.01, 0.70)
     fill_amp = 0.30 + 0.80*fill
     loss = np.exp(-0.0006*max(h_nm-600, 0))
 
@@ -521,7 +522,8 @@ class MetaSurfaceColorEngine:
         """
         wls = np.arange(380, 785, 5)
         d_nm, h_nm, p_nm = param.diameter_nm, param.height_nm, param.period_nm
-        fill = float(np.clip(np.pi*(d_nm/2)**2/(p_nm**2), 0.03, 0.70))
+        p_safe = max(p_nm, 200.0)
+        fill = float(np.clip(np.pi*(d_nm/2)**2/(p_safe**2), 0.03, 0.70))
 
         n_sub = MaterialLibrary.n_at_wavelength(param.substrate, 550.0)
         r_sub = (1.0 - n_sub) / (1.0 + n_sub)
