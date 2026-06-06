@@ -1051,18 +1051,18 @@ with st.sidebar:
         disabled=not _ml_ready,
         help='使用神经网络代替 Lorentzian 物理模型'
     )
-    # Read ML state directly from ml_module globals (not _ml_ready)
     try:
         if ml_module._ML_AVAILABLE:
             if ml_module._IS_V8:
-                st.caption("Model: v8 Substrate | 7-dim | 256x4 ResBlocks | 4 mats + 3 subs")
+                st.caption("\u6a21\u578b: v8 Substrate | 7\u7ef4\u8f93\u5165(\u542b\u886c\u5e95) | 256x4\u6b8b\u5dee\u5757 | 4\u79cd\u6750\u6599+3\u79cd\u886c\u5e95")
             else:
-                st.caption("Model: v7 Multi | 6-dim | 256x4 ResBlocks | 4 materials")
+                st.caption("\u6a21\u578b: v7 Multi | 6\u7ef4\u8f93\u5165 | 256x4\u6b8b\u5dee\u5757 | 4\u79cd\u6750\u6599")
         else:
-            st.caption("Model: not loaded (torch/models missing on cloud)")
+            st.caption("\u6a21\u578b: \u672a\u52a0\u8f7d (\u4e91\u7aef\u7f3a\u5c11torch\u6216\u6a21\u578b\u6587\u4ef6)")
     except Exception as e:
-        st.caption(f"Model: error - {e}")
+        st.caption(f"\u6a21\u578b: \u9519\u8bef - {e}")
     if ml_module._DUAL_ML_AVAILABLE:
+        st.caption("\u53cc\u67f1 ML: DualResMLP v3 (Multi) \u53ef\u7528")
         st.caption("Dual ML: DualResMLP v3 (Multi) available")
 
     if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
