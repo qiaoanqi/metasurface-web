@@ -1009,10 +1009,13 @@ with st.sidebar:
     st.header('🔭 远场传播 (角谱理论)')
     if 'far_field' not in st.session_state:
         st.session_state.far_field = False
+    if is_fp:
+        st.session_state.far_field = False
     st.session_state.far_field = st.checkbox(
         '启用角谱远场传播 (Angular Spectrum)',
         value=st.session_state.far_field,
-        help='N×N超表面阵列FFT角谱 + NA锥积分，计算探测器实际接收光谱'
+        disabled=is_fp,
+        help='FP腔模式不需要角谱（平面薄膜无衍射）' if is_fp else 'N×N超表面阵列FFT角谱 + NA锥积分，计算探测器实际接收光谱'
     )
     if 'theta_obs' not in st.session_state:
         st.session_state.theta_obs = 0.0
