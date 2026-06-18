@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 import streamlit as st
 import ml_module
+import rl_design  # RL agent for inverse design
 
 # LLM module (DeepSeek API)
 try:
@@ -1647,6 +1648,7 @@ with tab2:
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
+        rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
 
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
@@ -1658,6 +1660,30 @@ with tab2:
         st.caption("💡 TiO₂ 做不出纯红色，建议切换到 **a-Si** + Si₃N₄ 衬底")
 
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
+
+    if rl_btn:
+        with st.spinner("🎮 RL智能体搜索中 (Q-learning, 约3秒)..."):
+            try:
+                rl = rl_design.get_trained_rl()
+                d_rl, h_rl, p_rl, hex_rl, de_rl = rl.search(picker_hex)
+                r255_rl = int(hex_rl[1:3], 16)
+                g255_rl = int(hex_rl[3:5], 16)
+                b255_rl = int(hex_rl[5:7], 16)
+                st.success(f"🎮 RL搜索完成! {hex_rl} | ΔE2000={de_rl:.1f}")
+                c1rl, c2rl, c3rl = st.columns([1, 3, 1])
+                with c1rl:
+                    st.markdown(f'<div style="width:64px;height:64px;background:{hex_rl};border-radius:12px;"></div>', unsafe_allow_html=True)
+                with c2rl:
+                    st.markdown(f"**{hex_rl}**  RGB({r255_rl}, {g255_rl}, {b255_rl})  \nD={d_rl:.1f}nm  H={h_rl:.1f}nm  P={p_rl:.1f}nm  \nΔE2000 = {de_rl:.1f} (RL智能体)")
+                with c3rl:
+                    if st.button("应用RL参数", key="apply_rl_result"):
+                        st.session_state.d_val = d_rl
+                        st.session_state.h_val = h_rl
+                        st.session_state.p_val = p_rl
+                        st.rerun()
+                st.caption("强化学习通过试错学习参数调整方向，速度快但精度低于网格搜索。建议先用RL快速定位，再网格精搜。")
+            except Exception as e:
+                st.warning(f"RL搜索不可用: {e}")
 
     if run_btn:
         # Result cache: skip search for previously-searched colors
@@ -2272,3 +2298,4 @@ st.sidebar.markdown("---")
 st.sidebar.caption("长沙理工大学 物理与电子科学学院")
 st.sidebar.caption("光电2501 乔安琪")
 
+import rl_design  # RL agent for inverse design

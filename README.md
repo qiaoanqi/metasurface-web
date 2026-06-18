@@ -8,7 +8,7 @@
 
 基于深度学习和物理模型的超表面纳米柱结构色智能设计平台。支持 TiO₂、a-Si 等多种材料的单柱/双柱纳米结构正向预测与逆设计，结合 FP 腔（Fabry-Pérot）实现高饱和度色彩调控。
 
-**云端演示**: [Streamlit Cloud](https://metasurface-web-a5mzzj8p98wur8njywdxat.streamlit.app/)
+**云端演示**: [Streamlit Cloud](https://metasurface-web-2you8jsy6wxhmhqgc9vwhm.streamlit.app/)
 
 ## 功能速览
 
