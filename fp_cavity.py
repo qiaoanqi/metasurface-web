@@ -1,4 +1,6 @@
-# fp_cavity.py - Fabry-Perot cavity spectrum computation\r\nimport numpy as np\r\nfrom engine import MaterialLibrary
+# fp_cavity.py - Fabry-Perot cavity spectrum computation
+import numpy as np
+from engine import MaterialLibrary
 
 
 
