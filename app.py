@@ -6,6 +6,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
 from PIL import Image
 import streamlit as st
+import logging
 import ml_module
 import rl_design  # RL agent for inverse design
 from color_utils import (
@@ -21,7 +22,8 @@ from color_utils import (
 try:
     from llm.deepseek_client import analyze_color, suggest_params
     _LLM_AVAILABLE = True
-except Exception:
+except Exception as e:
+    logging.warning(f"app fallback: {e}")
     _LLM_AVAILABLE = False
     def analyze_color(*a, **kw): return u'[LLM模块加载失败，请检查 llm/ 目录]'
     def suggest_params(*a, **kw): return u'[LLM模块加载失败]'

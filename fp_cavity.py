@@ -1,20 +1,5 @@
-# fp_cavity.py — Fabry-Perot cavity spectrum computation
-# Extracted from app.py for modularity.
-import numpy as np
+# fp_cavity.py - Fabry-Perot cavity spectrum computation\r\nimport numpy as np\r\nfrom engine import MaterialLibrary
 
-
-class _MaterialLibStub:
-    """Minimal stub for refractive index lookup (avoids circular import)."""
-    CAUCHY = {
-        "TiO2 (anatase)":      (2.3000, 0.03500, 0.0),
-        "SiO2 (fused silica)": (1.4580, 0.00354, 0.0),
-    }
-
-    @classmethod
-    def n_at_wavelength(cls, material, wavelength_nm):
-        A, B, C = cls.CAUCHY.get(material, cls.CAUCHY["SiO2 (fused silica)"])
-        wl_um = max(wavelength_nm / 1000.0, 0.15)
-        return A + B / (wl_um ** 2) + C / (wl_um ** 4)
 
 
 
@@ -70,7 +55,7 @@ def _n_sio2_sellmeier(wl_nm):
                    + 0.8974794*wl_um**2/(wl_um**2 - 9.896161**2))
 
 def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
-    """Metal-mirror FP: Ag(30nm)/TiO2(T)/Ag(bulk). 减色型. (向量化版本)"""
+    """Metal-mirror FP: Ag(30nm)/TiO2(T)/Ag(bulk). 鍑忚壊鍨? (鍚戦噺鍖栫増鏈?"""
     wls = np.arange(380, 785, 5).astype(float)
     d_top = 30.0; theta = angle_deg * np.pi / 180.0; n_inc = 1.0
     # Vectorized refractive indices
@@ -102,11 +87,11 @@ def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
     return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
 
 def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, angle_deg=0.0, pol_TE=True):
-    """DBR FP cavity: (TiO2/SiO2)^n/TiO2(T)/(SiO2/TiO2)^n. 高饱和度. (向量化版本)"""
+    """DBR FP cavity: (TiO2/SiO2)^n/TiO2(T)/(SiO2/TiO2)^n. 楂橀ケ鍜屽害. (鍚戦噺鍖栫増鏈?"""
     wls = np.arange(380, 785, 5).astype(float)
     N = len(wls)
     theta = angle_deg * np.pi / 180.0; n_inc = 1.0
-    n_tio2_ref = _MaterialLibStub.n_at_wavelength("TiO2 (anatase)", target_wl)
+    n_tio2_ref = MaterialLibrary.n_at_wavelength("TiO2 (anatase)", target_wl)
     n_sio2_ref = _n_sio2_sellmeier(target_wl)
     dH = target_wl / (4.0 * n_tio2_ref); dL = target_wl / (4.0 * n_sio2_ref)
     # Vectorized refractive indices across all wavelengths
@@ -137,4 +122,5 @@ def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, 
     r = (a * p_inc - b) / (a * p_inc + b)
     refl = np.abs(r)**2
     return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
+
 
