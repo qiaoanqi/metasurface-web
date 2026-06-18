@@ -1,17 +1,18 @@
-# torch_model.py - PyTorch batch Lorentzian model (v2 - full Cauchy + coherent)
+# torch_model.py - PyTorch batch Lorentzian/Fano model (v2 - full Cauchy + coherent)
 import torch
 import numpy as np
+from color_utils import CIE_X as _CIE_X_NP, CIE_Y as _CIE_Y_NP, CIE_Z as _CIE_Z_NP
+from color_utils import SRGB_M as _SRGB_M_NP
 
 # ============================================================
-# CIE 1931 (81 points, 380-780nm step 5nm)
+# CIE 1931 (81 points, 380-780nm step 5nm) — from color_utils
 # ============================================================
-CIE_X = torch.tensor([0.001368,0.002236,0.004243,0.007650,0.014310,0.023190,0.043510,0.077630,0.134380,0.214770,0.283900,0.328500,0.348280,0.348060,0.336200,0.318700,0.290800,0.251100,0.195360,0.142100,0.095640,0.058010,0.032010,0.014700,0.004900,0.002400,0.009300,0.029100,0.063270,0.109600,0.165500,0.225750,0.290400,0.359700,0.433450,0.512050,0.594500,0.678400,0.762100,0.842500,0.916300,0.978600,1.026300,1.056700,1.062200,1.045600,1.002600,0.938400,0.854450,0.751400,0.642400,0.541900,0.447900,0.360800,0.283500,0.218700,0.164900,0.121200,0.087400,0.063600,0.046770,0.032900,0.022700,0.015840,0.011359,0.008111,0.005790,0.004109,0.002899,0.002049,0.001440,0.001000,0.000690,0.000476,0.000332,0.000235,0.000166,0.000117,0.000083,0.000059,0.000042], dtype=torch.float32)
-CIE_Y = torch.tensor([0.000039,0.000064,0.000120,0.000217,0.000396,0.000640,0.001210,0.002180,0.004000,0.007300,0.011600,0.016840,0.023000,0.029800,0.038000,0.048000,0.060000,0.073900,0.090980,0.112600,0.139020,0.169300,0.208020,0.258600,0.323000,0.407300,0.503000,0.608200,0.710000,0.793200,0.862000,0.914850,0.954000,0.980300,0.994950,1.000000,0.995000,0.978600,0.952000,0.915400,0.870000,0.816300,0.757000,0.694900,0.631000,0.566800,0.503000,0.441200,0.381000,0.321000,0.265000,0.217000,0.175000,0.138200,0.107000,0.081600,0.061000,0.044580,0.032000,0.023200,0.017000,0.011920,0.008210,0.005723,0.004102,0.002929,0.002091,0.001484,0.001047,0.000740,0.000520,0.000361,0.000249,0.000172,0.000120,0.000085,0.000060,0.000042,0.000030,0.000021,0.000015], dtype=torch.float32)
-CIE_Z = torch.tensor([0.006450,0.010550,0.020050,0.036210,0.067850,0.110200,0.207400,0.371300,0.645600,1.039050,1.385600,1.622960,1.747060,1.782600,1.772110,1.744100,1.669200,1.528100,1.287640,0.999550,0.716900,0.484400,0.311900,0.190300,0.104200,0.049200,0.020300,0.008700,0.003900,0.002100,0.001650,0.001100,0.000800,0.000550,0.000350,0.000250,0.000150,0.000100,0.000050]+ [0.0]*42, dtype=torch.float32)
-
+CIE_X = torch.from_numpy(_CIE_X_NP.astype(np.float32))
+CIE_Y = torch.from_numpy(_CIE_Y_NP.astype(np.float32))
+CIE_Z = torch.from_numpy(_CIE_Z_NP.astype(np.float32))
 WL = torch.linspace(380, 780, 81)
 CIE_NORM = torch.trapezoid(CIE_Y, WL)
-SRGB_M = torch.tensor([[3.2406,-1.5372,-0.4986],[-0.9689,1.8758,0.0415],[0.0557,-0.2040,1.0570]], dtype=torch.float32)
+SRGB_M = torch.from_numpy(_SRGB_M_NP.astype(np.float32))
 
 # Cauchy coefficients (A, B) for n(um) = A + B/um^2
 CAUCHY_DB = {
@@ -83,13 +84,7 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None, su
     w_ed = torch.clamp(0.80 - 0.003*(D-60), 0.0, 0.80).unsqueeze(1)
     w_md = 1.0 - w_ed
 
-    # Fano resonance shapes (batch, 81)
-    # R = (q + eps)^2 / ((1+q^2)(1+eps^2))   where eps = (wl-lam)/sigma
-    # Complex amplitude: r = (q+eps)/sqrt(1+q^2) / (1 + i*eps)
-    # r_real = (q+eps)/(sqrt(1+q^2)*(1+eps^2)), r_imag = -(q+eps)*eps/(sqrt(1+q^2)*(1+eps^2))
-
-    # Fano asymmetry parameters: higher q = more Lorentzian-like
-    # ED tends to be more asymmetric (lower q) due to stronger continuum coupling
+    # Fano asymmetry parameters
     aspect = H.unsqueeze(1) / D.unsqueeze(1).clamp(min=50.0)
     q_ed = torch.clamp(2.5 + 0.5 * (aspect - 1.0), 1.5, 6.0)
     q_md = torch.clamp(4.0 + 0.3 * (aspect - 1.0), 2.5, 8.0)
@@ -98,7 +93,7 @@ def batch_lorentzian_spectrum(D, H, P, theta=0.0, pol_TE=True, material=None, su
 
     ed_center = lam_ed + ed_shift
     detune_ed = (wl - ed_center) / sigma_ed
-    fano_num_ed = q_ed + detune_ed  # (batch, 81)
+    fano_num_ed = q_ed + detune_ed
     denom_ed = 1.0 + detune_ed**2
     r_ed_real = fano_num_ed * inv_norm_ed / denom_ed * torch.sqrt(ed_amp_a)
     r_ed_imag = -fano_num_ed * detune_ed * inv_norm_ed / denom_ed * torch.sqrt(ed_amp_a)
@@ -150,8 +145,6 @@ def batch_color_map_grid(D_grid, H_grid, P_val=400.0):
     return rgb_flat.reshape(D_mesh.shape[0], D_mesh.shape[1], 3)
 
 
-
-
 # ============================================================
 # Dual-pillar batch functions
 # ============================================================
@@ -170,24 +163,23 @@ def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=No
 
 
 def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, substrate=None):
-    """Batched gradient-based inverse design for dual-pillar. All restarts optimized in parallel on GPU."""
+    """Batched gradient-based inverse design for dual-pillar."""
     if not isinstance(target_rgb, torch.Tensor):
-        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)  # (1, 3)
+        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
     else:
         target = target_rgb.clone().detach().unsqueeze(0)
-    
+
     device = target.device
     n = n_restarts
-    
-    # Initialize all restarts as batched tensors
+
     d1 = (torch.rand(n, device=device) * 207 + 60).requires_grad_(True)
     h1 = (torch.rand(n, device=device) * 520 + 80).requires_grad_(True)
     d2 = (torch.rand(n, device=device) * 207 + 60).requires_grad_(True)
     h2 = (torch.rand(n, device=device) * 520 + 80).requires_grad_(True)
     p  = (torch.rand(n, device=device) * 400 + 200).requires_grad_(True)
-    
+
     opt = torch.optim.Adam([d1, h1, d2, h2, p], lr=1.0)
-    
+
     for step in range(n_steps):
         opt.zero_grad()
         d1_c = torch.clamp(d1, 60.0, 267.0)
@@ -196,17 +188,15 @@ def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, s
         h2_c = torch.clamp(h2, 80.0, 600.0)
         min_p = torch.maximum(d1_c.detach(), d2_c.detach()) * 1.2 + 20
         p_c = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p)
-        
-        spec = batch_dual_pillar_spectrum(d1_c, h1_c, d2_c, h2_c, p_c, 
+
+        spec = batch_dual_pillar_spectrum(d1_c, h1_c, d2_c, h2_c, p_c,
                                           torch.zeros(n, device=device), True, material, substrate)
         rgb = batch_spectrum_to_rgb(spec)
-        # Loss: MSE to target, broadcast over batch
         loss = ((rgb - target)**2).mean(dim=1).sum()
         loss.backward()
         torch.nn.utils.clip_grad_value_([d1, h1, d2, h2, p], 1.0)
         opt.step()
-    
-    # Find best result
+
     with torch.no_grad():
         d1_f = torch.clamp(d1, 60, 267)
         h1_f = torch.clamp(h1, 80, 600)
@@ -214,13 +204,13 @@ def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, s
         h2_f = torch.clamp(h2, 80, 600)
         min_p_f = torch.maximum(d1_f, d2_f) * 1.2 + 20
         p_f = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p_f)
-        
+
         spec = batch_dual_pillar_spectrum(d1_f, h1_f, d2_f, h2_f, p_f,
                                           torch.zeros(n, device=device), True, material, substrate)
-        pred = batch_spectrum_to_rgb(spec)  # (n, 3)
-        losses = ((pred - target)**2).sum(dim=1)  # (n,)
+        pred = batch_spectrum_to_rgb(spec)
+        losses = ((pred - target)**2).sum(dim=1)
         best_idx = torch.argmin(losses).item()
-        
+
         best_d1 = float(d1_f[best_idx])
         best_h1 = float(h1_f[best_idx])
         best_d2 = float(d2_f[best_idx])
@@ -228,16 +218,17 @@ def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, s
         best_p  = float(p_f[best_idx])
         best_rgb = pred[best_idx].cpu().numpy()
         best_loss = float(losses[best_idx])
-    
+
     return (best_d1, best_h1, best_d2, best_h2, best_p, best_rgb, best_loss)
 
-# Quick test
 
 def batch_single_pillar_rgb_norm(D, H, P, theta=0.0, pol_TE=True):
     spec = batch_lorentzian_spectrum(D, H, P, theta, pol_TE)
     mx = spec.max(dim=1, keepdim=True).values
     mx = torch.where(mx > 1e-12, mx, torch.ones_like(mx))
     return batch_spectrum_to_rgb(spec / mx)
+
+
 if __name__ == "__main__":
     import time, sys
     sys.stdout.reconfigure(encoding="utf-8")
@@ -260,4 +251,3 @@ if __name__ == "__main__":
     t0 = time.time()
     grid = batch_color_map_grid(D_vals, H_vals)
     print(f"Color map 12x12: {(time.time()-t0)*1000:.1f}ms")
-
