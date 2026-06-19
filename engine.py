@@ -1,4 +1,4 @@
-# engine.py 鈥?Core metasurface color engine
+# engine.py - Core metasurface color engine
 # Extracted from app.py for modularity.
 from __future__ import annotations
 import numpy as np; import logging
@@ -65,13 +65,13 @@ class MetaSurfaceParam:
 
 @dataclass
 class DualPillarParam:
-    """鍙屽紓璐ㄧ撼绫虫煴瓒呭崟鍏冨弬鏁?(鑷姩閽冲埗闈炴硶鍊?
+    """Dual-pillar meta-atom parameters with auto-clamping."""
 
-    鍙傛暟淇浼樺厛绾?
-      1. 鍛ㄦ湡P >= max(D1,D2)*1.2, 纭繚姣忔牴鏌卞瓙閮藉湪鍗曞厓鍐?
-      2. 鍗曟煴鐩村緞D <= P*0.8, 闄愬埗鍗曟煴鍗犵┖姣?
-      3. 鎬诲崰绌烘瘮(fill1+fill2) <= 0.85, 缂╂斁D1/D2绛夋瘮渚?
-    """
+    # Parameter correction priority:
+    #  1. P >= max(D1,D2)*1.2, ensure both pillars fit in unit cell
+    #  2. D <= P*0.8 to limit fill factor
+    #  3. Total fill (fill1+fill2) <= 0.85, prevent D1/D2 overlap
+
     d1_nm:       float
     h1_nm:       float
     d2_nm:       float
@@ -90,7 +90,7 @@ class DualPillarParam:
         orig_d1 = self.d1_nm
         orig_d2 = self.d2_nm
 
-        # 浼樺厛绾?: P >= max(D1,D2)*1.2
+# Priority: P >= max(D1,D2)*1.2
         min_p = max(self.d1_nm, self.d2_nm) * 1.20
         if self.period_nm < min_p:
             object.__setattr__(self, 'period_nm', max(min_p, 380.0))
@@ -99,7 +99,7 @@ class DualPillarParam:
         if self.period_nm != orig_p:
             msgs.append(f"P {orig_p:.0f}->{self.period_nm:.0f}nm")
 
-        # 浼樺厛绾?: D <= P*0.8
+# Priority: D <= P*0.8
         max_d = self.period_nm * 0.80
         if self.d1_nm > max_d:
             object.__setattr__(self, 'd1_nm', max_d)
@@ -108,15 +108,15 @@ class DualPillarParam:
             object.__setattr__(self, 'd2_nm', max_d)
             msgs.append(f"D2 {orig_d2:.0f}->{self.d2_nm:.0f}nm")
 
-        # 浼樺厛绾?: 鎬诲崰绌烘瘮 <= 0.85
+# Priority: total fill ratio <= 0.85
         fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
         fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
         if fill1 + fill2 > 0.85:
             scale = np.sqrt(0.80 / (fill1 + fill2))
             new_d1 = self.d1_nm * scale
-            new_d2 = self.d2_nm * scale
-            msgs.append(f"D1 {self.d1_nm:.0f}->{new_d1:.0f} D2 {self.d2_nm:.0f}->{new_d2:.0f}nm (鍗犵┖姣旇繃楂?")
-            object.__setattr__(self, 'd1_nm', new_d1)
+            msgs.append(f"D1 {self.d1_nm:.0f}->{new_d1:.0f} D2 {self.d2_nm:.0f}->{new_d2:.0f}nm (fill ratio too high)")
+            object.__setattr__(self, "d1_nm", new_d1)
+            object.__setattr__(self, "d2_nm", new_d2)
             object.__setattr__(self, 'd2_nm', new_d2)
 
         if msgs:
@@ -124,9 +124,9 @@ class DualPillarParam:
             object.__setattr__(self, '_correction_msg', "; ".join(msgs))
 
 def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, wl_nm, substrate=None):
-    """闈欐€佹柟娉? 璁＄畻鍗曟牴绾崇背鏌辩殑澶嶆暟鍙嶅皠绯绘暟銆?
-    渚涘崟鏌卞拰鍙屾煴妯″瀷鍏辩敤, 閬垮厤浠ｇ爜閲嶅銆?
-    """
+    """Compute complex reflection coefficient for a single nanopillar. Shared by single-pillar and dual-pillar models."""
+
+
     n_mat = MaterialLibrary.n_at_wavelength(material, wl_nm)
     n_sub = MaterialLibrary.n_at_wavelength(substrate, wl_nm) if substrate else 1.458
     n_env = (1.0 + n_sub) / 2.0
@@ -188,8 +188,8 @@ class MetaSurfaceColorEngine:
             self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
         except Exception as e:
             import traceback
-            st.error(f"Library build failed: {e}")
-            st.code(traceback.format_exc())
+            logging.error(f"Library build failed: {e}")
+            logging.error(traceback.format_exc())
             # Fallback: empty library
             self.grid_params = np.zeros((0, 3))
             self.grid_rgb = np.zeros((0, 3))
@@ -197,7 +197,7 @@ class MetaSurfaceColorEngine:
             self.grid_xy = np.zeros((0, 2))
 
     def physical_color(self, param) -> np.ndarray:
-        """鏀寔鍗曟煴(MetaSurfaceParam)鍜屽弻鏌?DualPillarParam)鍙傛暟"""
+        """Compute sRGB color from MetaSurfaceParam or DualPillarParam."""
         if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
             if getattr(self, '_enable_far_field', False):
                 wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
@@ -337,15 +337,15 @@ class MetaSurfaceColorEngine:
         return r
 
     def _far_field_spectrum(self, param, na=0.1, theta_obs_deg=0.0, N=12):
-        """瑙掕氨鐞嗚杩滃満浼犳挱 鈥?楂樻柉NA + Lorentzian瑙掑害鍝嶅簲銆?
+        """Far-field propagation: Gaussian NA + Lorentzian angular response."""
 
-        鐗╃悊妯″瀷:
-        1. 鏈夐檺鐩稿共闃靛垪 N脳N 鈫?0闃朵富鐡?~ 2D楂樻柉 (蟽=0.5)
-        2. NA閿ョН鍒? f_NA = 1-exp(-w_max虏/(2蟽虏)), w_max=NA路N路P/位
-        3. 瑙掑害鍝嶅簲: f_theta = 1/(1+(w_shift/纬)虏), w_shift=N路P路sin(胃)/位
-           (Lorentzian姣旈珮鏂洿閫傚悎鎻忚堪鍏辨尟澧炲己鐨勮搴︽暎灏?
-        4. R_eff = |r_0|虏 路 f_NA 路 f_theta
-        """
+        # Physical model:
+        # 1. Finite coherent array NxN -> 0th order lobe ~ 2D Gaussian (sigma=0.5)
+        # 2. NA cone integration: f_NA = 1-exp(-w_max^2/(2*sigma^2)), w_max=NA*N*P/lambda
+        # 3. Angular response: f_theta = 1/(1+(w_shift/gamma)^2), w_shift=N*P*sin(theta)/lambda
+        # (Lorentzian better than Gaussian at modeling resonance angular dispersion)
+        # 4. R_eff = |r_0|^2 * f_NA * f_theta
+
         wls = np.arange(380, 785, 5)
         d_nm = max(getattr(param, "diameter_nm", 180), 10.0)
         h_nm = max(getattr(param, "height_nm", 300), 10.0)
@@ -443,10 +443,10 @@ class MetaSurfaceColorEngine:
                 for i, wl_nm in enumerate(wls):
                     I1, _ = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                     I2, _ = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                            param.material, param.polarization, param.angle_deg, wl_nm)
+                            param.material, param.polarization, param.angle_deg, wl_nm, param.substrate)
                     _, f1 = _single_pillar_complex(param.d1_nm, param.h1_nm, param.period_nm, param.material, param.polarization, param.angle_deg, 550.0, param.substrate)
                     _, f2 = _single_pillar_complex(param.d2_nm, param.h2_nm, param.period_nm,
-                        param.material, param.polarization, param.angle_deg, 550.0)
+                        param.material, param.polarization, param.angle_deg, 550.0, param.substrate)
                     refl[i] = float(f1*abs(I1)**2 + f2*abs(I2)**2)
                 refl = refl / 0.86
                 return wls, refl
@@ -578,7 +578,7 @@ class MetaSurfaceColorEngine:
             _labs = rgb_to_lab(_rgbs)
             for ri, idx in enumerate(top_idx):
                 if progress_callback:
-                    progress_callback(ri, total_rerank, "绮楁壂閲嶆帓")
+                    progress_callback(ri, total_rerank, "Coarse rerank")
                 d, h, p_val = self.grid_params[idx]
                 rgb = _rgbs[ri]
                 lab = _labs[ri]
@@ -588,7 +588,7 @@ class MetaSurfaceColorEngine:
             logging.warning(f"engine fallback: {e}")
             for ri, idx in enumerate(top_idx):
                 if progress_callback:
-                    progress_callback(ri, total_rerank, "绮楁壂閲嶆帓")
+                    progress_callback(ri, total_rerank, "Coarse rerank")
                 d, h, p_val = self.grid_params[idx]
                 param = MetaSurfaceParam(float(d), float(h), float(p_val),
                     self._last_material, self._last_substrate,
@@ -598,14 +598,14 @@ class MetaSurfaceColorEngine:
                 de2k = delta_e2000(target_lab, lab)
                 real_scores.append((de2k, d, h, p_val, rgb, lab, de2k))
         real_scores.sort(key=lambda x: x[0])
-        # Stage 2: fine search 鈥?collect candidates then batch infer (~50-100x faster)
+        # Stage 2: fine search - collect candidates then batch infer (~50-100x faster)
         top3 = []  # (score, param, rgb, de76, de2k)
         seen = set()
         fine_candidates = []  # (dd, dh, dp)
         fine_count = len(real_scores[:8])
         for fi, (_, d, h, p_val, _, _, _) in enumerate(real_scores[:8]):
             if progress_callback:
-                progress_callback(fi, fine_count, "绮剧粏鎼滅储")
+                progress_callback(fi, fine_count, "Fine search")
             for dd in np.arange(max(50, d-10), min(350, d+11), 2.0):
                 for dh in np.arange(max(80, h-30), min(600, h+32), 4.0):
                     for dp in np.arange(max(200, p_val-30), min(600, p_val+35), 10.0):
@@ -648,7 +648,7 @@ class MetaSurfaceColorEngine:
                 de76 = delta_e76(target_lab, lab)
                 top3.append((de2k, param, rgb, de76, de2k))
         top3.sort(key=lambda x: x[0])
-        # Deduplicate: param diversity (D>=15nm, H>=20nm, P>=30nm) + color diversity (螖E>=1.5)
+        # Deduplicate: param diversity (D>=15nm, H>=20nm, P>=30nm) + color diversity (dE>=1.5)
         D_DUP, H_DUP, P_DUP, DE_COLOR_DUP = 15.0, 20.0, 30.0, 1.5
         unique_top3 = []
         for item in top3:
