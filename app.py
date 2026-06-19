@@ -799,6 +799,10 @@ with tab2:
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
     if 'top3_results' in st.session_state:
+        if st.button('✕ 清除结果', key='clear_results'):
+            for k in ['top3_results', '_rl_d', '_gd_d', '_dual_gd_d1', 'search_history']:
+                st.session_state.pop(k, None)
+            st.rerun()
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**🎯 目标颜色**")
