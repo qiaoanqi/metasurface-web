@@ -635,6 +635,7 @@ with tab2:
     st.subheader("选择目标颜色，自动匹配最优纳米柱参数")
     st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效 | 网格搜索仅优化单柱 (D,H,P)，双柱请手动微调")
 
+    dual_gd_btn = False
     col_pick, col_btn = st.columns([3, 1])
     with col_pick:
         picker_hex = st.color_picker("目标颜色", "#80c8ff")
@@ -643,6 +644,7 @@ with tab2:
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
         gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch梯度下降逆设计, ~15-25秒, 需torch')
+        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='PyTorch双柱梯度下降逆设计, ~30-50秒, 需torch')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -718,6 +720,44 @@ with tab2:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"梯度优化不可用: {e}")
 
+
+    if st.session_state.get('dual_pillar', False) and dual_gd_btn:
+        with st.spinner("🎯 双柱梯度优化中 (PyTorch Adam, ~30-50秒)..."):
+            try:
+                import torch_model as _tm_gd
+                result = _tm_gd.inverse_design_dual(
+                    target_rgb_norm, n_steps=300, n_restarts=20,
+                    material=material, substrate=substrate
+                )
+                d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, loss = result
+                rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
+                from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
+                de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
+                st.session_state._dual_gd_d1 = float(d1_gd)
+                st.session_state._dual_gd_h1 = float(h1_gd)
+                st.session_state._dual_gd_d2 = float(d2_gd)
+                st.session_state._dual_gd_h2 = float(h2_gd)
+                st.session_state._dual_gd_p = float(p_gd)
+                st.success(f"🎯 双柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
+                c1gd, c2gd = st.columns([1, 3])
+                with c1gd:
+                    st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
+                with c2gd:
+                    st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD1={d1_gd:.1f}nm H1={h1_gd:.1f}nm D2={d2_gd:.1f}nm H2={h2_gd:.1f}nm P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (双柱梯度优化)")
+                def _apply_dual_gd_cb():
+                    st.session_state.d_val = float(st.session_state._dual_gd_d1)
+                    st.session_state.h_val = float(st.session_state._dual_gd_h1)
+                    st.session_state.d1_val = float(st.session_state._dual_gd_d1)
+                    st.session_state.h1_val = float(st.session_state._dual_gd_h1)
+                    st.session_state.d2_val = float(st.session_state._dual_gd_d2)
+                    st.session_state.h2_val = float(st.session_state._dual_gd_h2)
+                    st.session_state.p_val = float(st.session_state._dual_gd_p)
+                st.button("应用双柱梯度参数", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
+                st.caption("双柱梯度下降同时优化5个参数(D1,H1,D2,H2,P)，搜索空间更大，耗时更长但能找到更优解。")
+            except Exception as e:
+                logging.warning(f"app fallback: {e}")
+                st.warning(f"双柱梯度优化不可用: {e}")
     if run_btn:
         # Result cache: skip search for previously-searched colors
         cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
