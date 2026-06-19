@@ -112,12 +112,12 @@ class DualPillarParam:
         fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
         fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
         if fill1 + fill2 > 0.85:
+            scale = np.sqrt(0.80 / (fill1 + fill2))
             new_d1 = self.d1_nm * scale
             new_d2 = self.d2_nm * scale
             msgs.append(f"D1 {self.d1_nm:.0f}->{new_d1:.0f} D2 {self.d2_nm:.0f}->{new_d2:.0f}nm (fill ratio too high)")
             object.__setattr__(self, "d1_nm", new_d1)
             object.__setattr__(self, "d2_nm", new_d2)
-
 
         if msgs:
             object.__setattr__(self, '_corrected', True)
