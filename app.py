@@ -643,8 +643,8 @@ with tab2:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
-        gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch梯度下降逆设计, ~15-25秒, 需torch')
-        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='PyTorch双柱梯度下降逆设计, ~30-50秒, 需torch')
+        gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch批量梯度下降, ~3-5秒, 需torch')
+        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='PyTorch批量双柱梯度下降, ~3-5秒, 需torch')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -687,9 +687,10 @@ with tab2:
                 st.warning(f"RL搜索不可用: {e}")
 
     if gd_btn:
-        with st.spinner("🎯 梯度优化中 (PyTorch Adam, ~15-25秒)..."):
+        with st.spinner("🎯 梯度优化中 (PyTorch批量Adam, ~3-5秒)..."):
             try:
-                result = ml_module.inverse_design_ml(
+                import torch_model as _tm_batch
+                result = _tm_batch.inverse_design_ml_batch(
                     target_rgb_norm, n_steps=300, n_restarts=20,
                     material=material, substrate=substrate
                 )
@@ -722,7 +723,7 @@ with tab2:
 
 
     if st.session_state.get('dual_pillar', False) and dual_gd_btn:
-        with st.spinner("🎯 双柱梯度优化中 (PyTorch Adam, ~30-50秒)..."):
+        with st.spinner("🎯 双柱梯度优化中 (PyTorch批量Adam, ~3-5秒)..."):
             try:
                 import torch_model as _tm_gd
                 result = _tm_gd.inverse_design_dual(

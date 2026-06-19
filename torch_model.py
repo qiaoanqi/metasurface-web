@@ -251,3 +251,55 @@ if __name__ == "__main__":
     t0 = time.time()
     grid = batch_color_map_grid(D_vals, H_vals)
     print(f"Color map 12x12: {(time.time()-t0)*1000:.1f}ms")
+
+
+def inverse_design_ml_batch(target_rgb, n_steps=300, n_restarts=20, material=None, substrate=None):
+    """Batched gradient-based inverse design for single pillar (same pattern as inverse_design_dual)."""
+    if not isinstance(target_rgb, torch.Tensor):
+        target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
+    else:
+        target = target_rgb.clone().detach().unsqueeze(0)
+
+    device = target.device
+    n = n_restarts
+
+    d = (torch.rand(n, device=device) * 300 + 50).requires_grad_(True)
+    h = (torch.rand(n, device=device) * 520 + 80).requires_grad_(True)
+    p = (torch.rand(n, device=device) * 400 + 200).requires_grad_(True)
+
+    opt = torch.optim.Adam([d, h, p], lr=1.0)
+
+    for step in range(n_steps):
+        opt.zero_grad()
+        d_c = torch.clamp(d, 50.0, 350.0)
+        h_c = torch.clamp(h, 80.0, 600.0)
+        min_p = d_c.detach() * 1.2
+        p_c = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p)
+
+        spec = batch_lorentzian_spectrum(d_c, h_c, p_c,
+                                         torch.zeros(n, device=device), True, material, substrate)
+        rgb = batch_spectrum_to_rgb(spec)
+        loss = ((rgb - target)**2).mean(dim=1).sum()
+        loss.backward()
+        torch.nn.utils.clip_grad_value_([d, h, p], 1.0)
+        opt.step()
+
+    with torch.no_grad():
+        d_f = torch.clamp(d, 50, 350)
+        h_f = torch.clamp(h, 80, 600)
+        min_p_f = d_f * 1.2
+        p_f = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p_f)
+
+        spec = batch_lorentzian_spectrum(d_f, h_f, p_f,
+                                         torch.zeros(n, device=device), True, material, substrate)
+        pred = batch_spectrum_to_rgb(spec)
+        losses = ((pred - target)**2).sum(dim=1)
+        best_idx = torch.argmin(losses).item()
+
+        best_d = float(d_f[best_idx])
+        best_h = float(h_f[best_idx])
+        best_p = float(p_f[best_idx])
+        best_rgb = pred[best_idx].cpu().numpy()
+        best_loss = float(losses[best_idx])
+
+    return (best_d, best_h, best_p, best_rgb, best_loss)
