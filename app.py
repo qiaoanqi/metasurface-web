@@ -642,7 +642,7 @@ with tab2:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
-        gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch梯度下降逆设计, ~10秒, 需torch')
+        gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch梯度下降逆设计, ~15-25秒, 需torch')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -685,10 +685,10 @@ with tab2:
                 st.warning(f"RL搜索不可用: {e}")
 
     if gd_btn:
-        with st.spinner("🎯 梯度优化中 (PyTorch Adam, ~10秒)..."):
+        with st.spinner("🎯 梯度优化中 (PyTorch Adam, ~15-25秒)..."):
             try:
                 result = ml_module.inverse_design_ml(
-                    target_rgb_norm, n_steps=300, n_restarts=40,
+                    target_rgb_norm, n_steps=300, n_restarts=20,
                     material=material, substrate=substrate
                 )
                 if result is None:
