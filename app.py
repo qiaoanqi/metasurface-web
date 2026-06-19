@@ -684,6 +684,40 @@ with tab2:
             except Exception as e:
                 st.warning(f"RL搜索不可用: {e}")
 
+    if gd_btn:
+        with st.spinner("🎯 梯度优化中 (PyTorch Adam, ~10秒)..."):
+            try:
+                result = ml_module.inverse_design_ml(
+                    target_rgb_norm, n_steps=300, n_restarts=40,
+                    material=material, substrate=substrate
+                )
+                if result is None:
+                    st.warning("梯度优化不可用: 需要安装PyTorch")
+                else:
+                    d_gd, h_gd, p_gd, pred_rgb, loss = result
+                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
+                    from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
+                    de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
+                    st.session_state._gd_d = float(d_gd)
+                    st.session_state._gd_h = float(h_gd)
+                    st.session_state._gd_p = float(p_gd)
+                    st.success(f"🎯 梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
+                    c1gd, c2gd = st.columns([1, 3])
+                    with c1gd:
+                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
+                    with c2gd:
+                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_gd:.1f}nm  H={h_gd:.1f}nm  P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (梯度优化)")
+                    def _apply_gd_cb():
+                        st.session_state.d_val = float(st.session_state._gd_d)
+                        st.session_state.h_val = float(st.session_state._gd_h)
+                        st.session_state.p_val = float(st.session_state._gd_p)
+                    st.button("应用梯度参数", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
+                    st.caption("梯度下降直接优化物理模型，精度高于RL，速度低于网格搜索。推荐在RL定位后用梯度精调。")
+            except Exception as e:
+                logging.warning(f"app fallback: {e}")
+                st.warning(f"梯度优化不可用: {e}")
+
     if run_btn:
         # Result cache: skip search for previously-searched colors
         cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
