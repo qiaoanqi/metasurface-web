@@ -643,8 +643,8 @@ with tab2:
         st.markdown("<br>", unsafe_allow_html=True)
         run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
-        gd_btn = st.button('🎯 梯度优化', use_container_width=True, help='PyTorch批量梯度下降, ~3-5秒, 需torch')
-        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='PyTorch批量双柱梯度下降, ~3-5秒, 需torch')
+        gd_btn = st.button('🎯 单柱梯度', use_container_width=True, help='单柱批量梯度下降, ~3-5秒, 需torch')
+        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱批量梯度下降, ~3-5秒, 需torch')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -687,7 +687,7 @@ with tab2:
                 st.warning(f"RL搜索不可用: {e}")
 
     if gd_btn:
-        with st.spinner("🎯 梯度优化中 (PyTorch批量Adam, ~3-5秒)..."):
+        with st.spinner("🎯 单柱梯度优化中 (批量Adam, ~3-5秒)..."):
             try:
                 import torch_model as _tm_batch
                 result = _tm_batch.inverse_design_ml_batch(
@@ -695,7 +695,7 @@ with tab2:
                     material=material, substrate=substrate
                 )
                 if result is None:
-                    st.warning("梯度优化不可用: 需要安装PyTorch")
+                    st.warning("单柱梯度不可用: 需要安装PyTorch")
                 else:
                     d_gd, h_gd, p_gd, pred_rgb, loss = result
                     rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
@@ -705,7 +705,7 @@ with tab2:
                     st.session_state._gd_d = float(d_gd)
                     st.session_state._gd_h = float(h_gd)
                     st.session_state._gd_p = float(p_gd)
-                    st.success(f"🎯 梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
+                    st.success(f"🎯 单柱梯度完成! {hex_gd} | ΔE2000={de_gd:.1f}")
                     c1gd, c2gd = st.columns([1, 3])
                     with c1gd:
                         st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
@@ -719,7 +719,7 @@ with tab2:
                     st.caption("梯度下降直接优化物理模型，精度高于RL，速度低于网格搜索。推荐在RL定位后用梯度精调。")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
-                st.warning(f"梯度优化不可用: {e}")
+                st.warning(f"单柱梯度不可用: {e}")
 
 
     if st.session_state.get('dual_pillar', False) and dual_gd_btn:
