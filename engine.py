@@ -112,12 +112,12 @@ class DualPillarParam:
         fill1 = np.pi*(self.d1_nm/2)**2/(self.period_nm**2)
         fill2 = np.pi*(self.d2_nm/2)**2/(self.period_nm**2)
         if fill1 + fill2 > 0.85:
-            scale = np.sqrt(0.80 / (fill1 + fill2))
             new_d1 = self.d1_nm * scale
+            new_d2 = self.d2_nm * scale
             msgs.append(f"D1 {self.d1_nm:.0f}->{new_d1:.0f} D2 {self.d2_nm:.0f}->{new_d2:.0f}nm (fill ratio too high)")
             object.__setattr__(self, "d1_nm", new_d1)
             object.__setattr__(self, "d2_nm", new_d2)
-            object.__setattr__(self, 'd2_nm', new_d2)
+
 
         if msgs:
             object.__setattr__(self, '_corrected', True)
@@ -230,13 +230,13 @@ class MetaSurfaceColorEngine:
                         refl[i] = float(abs(I1)**2 + abs(I2)**2)
                     refl = refl / 0.86
                     return np.nan_to_num(spectrum_to_srgb(wls, refl), nan=0.5)
-        # Single pillar (MetaSurfaceParam)
+        # Single pillar (MetaSurfaceParam) — far-field
         if getattr(self, '_enable_far_field', False):
-            if isinstance(param, DualPillarParam) or type(param).__name__ == 'DualPillarParam':
-                wls, refl = self._dual_far_field_spectrum(param, self._na, self._theta_obs_deg)
-            else:
-                wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
+            wls, refl = self._far_field_spectrum(param, self._na, self._theta_obs_deg)
             return np.nan_to_num(spectrum_to_srgb(wls, refl), nan=0.5)
+
+
+
         # PyTorch batch mode: 81 wavelengths in one pass (~10x faster)
         try:
             import torch_model as _tm
