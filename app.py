@@ -645,6 +645,8 @@ with tab2:
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
         gd_btn = st.button('🎯 单柱梯度', use_container_width=True, help='单柱批量梯度下降, ~3-5秒, 需torch')
         dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱批量梯度下降, ~3-5秒, 需torch')
+        ai_btn = st.button('🤖 AI 智能寻色', use_container_width=True,
+                         help='同时试 TiO2 / a-Si / FP腔，自动选最优')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -765,6 +767,54 @@ with tab2:
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化不可用: {e}")
+    if ai_btn:
+        with st.spinner("🤖 AI全系统搜索中 (TiO2 / a-Si / FP腔)..."):
+            candidates = []
+            # TiO2
+            try:
+                engine.rebuild_library("TiO2 (anatase)", "SiO2 (fused silica)", polarization, angle)
+                r = engine.inverse_design(target_rgb_norm)
+                if r:
+                    candidates.append((r[0][4], "TiO2 纳米柱", r, "meta"))
+            except Exception as e: logging.warning(f"AI TiO2: {e}")
+            # a-Si
+            try:
+                engine.rebuild_library("a-Si (amorphous)", "SiO2 (fused silica)", polarization, angle)
+                r = engine.inverse_design(target_rgb_norm)
+                if r:
+                    candidates.append((r[0][4], "a-Si 纳米柱", r, "meta"))
+            except Exception as e: logging.warning(f"AI a-Si: {e}")
+            # FP DBR (same pattern as FP cavity tab search)
+            try:
+                from color_utils import spectrum_to_srgb, rgb_to_lab, delta_e2000
+                tl = rgb_to_lab(target_rgb_norm)
+                pol_te = polarization.startswith("TE")
+                best = None; best_de = 999
+                # Coarse grid matching existing FP search pattern
+                for wl in range(380, 785, 20):
+                    for t in range(50, 605, 20):
+                        wls, refl = fp_dielectric_spectrum(t, float(wl), 3, 5, angle, pol_te)
+                        rgb_c = spectrum_to_srgb(wls, refl)
+                        de = delta_e2000(tl, rgb_to_lab(rgb_c))
+                        if de < best_de: best_de = de; best = (de, t, wl, rgb_c)
+                if best:
+                    candidates.append((best_de, "FP DBR 腔", best, "fp"))
+            except Exception as e:
+                logging.warning(f"AI FP: {e}")
+                import traceback; logging.warning(traceback.format_exc())
+            # Sort and store
+            candidates.sort(key=lambda x: x[0])
+            st.session_state._ai_candidates = candidates
+            # AI commentary
+            if _LLM_AVAILABLE and candidates:
+                try:
+                    best_name = candidates[0][1]
+                    best_de = candidates[0][0]
+                    adv = analyze_color(picker_hex, {"方案": best_name, "ΔE2000": f"{best_de:.1f}"})
+                    st.info(f"🤖 AI: {adv}")
+                except Exception as e: logging.warning(f"ai: {e}")
+        st.rerun()
+
     if run_btn:
         # Result cache: skip search for previously-searched colors
         cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
@@ -876,6 +926,46 @@ with tab2:
                 with c_exp2:
                     st.download_button("💾 导出 JSON", json_buf.getvalue(),
                         "metasurface_results.json", "application/json", use_container_width=True)
+
+    # --- AI smart search results ---
+    if '_ai_candidates' in st.session_state:
+        st.markdown("---")
+        st.markdown("**🤖 AI 智能寻色 结果**")
+        for rank, (de, name, data, typ) in enumerate(st.session_state._ai_candidates):
+            marker = "🏆" if rank == 0 else ""
+            if typ == "meta":
+                _, bp, brgb, _, _ = data[0]
+                hx = rgb_to_hex(brgb)
+                r,g,b = rgb_255(brgb)
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;
+                            background:{'#e8f5e9' if rank==0 else '#f5f5f5'};margin:4px 0;">
+                <div style="width:40px;height:40px;background:{hx};border-radius:8px;"></div>
+                <div style="flex:1;">
+                <b>{marker} {name}</b> &nbsp; {hx} RGB({r},{g},{b})<br>
+                <span style="font-size:12px;opacity:0.7;">D={bp.diameter_nm:.0f}nm H={bp.height_nm:.0f}nm P={bp.period_nm:.0f}nm</span>
+                </div>
+                <b style="color:#22aa22;">ΔE={de:.1f}</b>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                de_val, ft, fw, frgb = data
+                hx = rgb_to_hex(frgb)
+                r,g,b = rgb_255(frgb)
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;
+                            background:{'#e8f5e9' if rank==0 else '#f5f5f5'};margin:4px 0;">
+                <div style="width:40px;height:40px;background:{hx};border-radius:8px;"></div>
+                <div style="flex:1;">
+                <b>{marker} {name}</b> &nbsp; {hx} RGB({r},{g},{b})<br>
+                <span style="font-size:12px;opacity:0.7;">T={ft}nm | λ<sub>c</sub>={fw}nm</span>
+                </div>
+                <b style="color:#22aa22;">ΔE={de:.1f}</b>
+                </div>
+                """, unsafe_allow_html=True)
+        if st.button('✕ 清除 AI 结果', key='clear_ai_results'):
+            st.session_state.pop('_ai_candidates', None)
+            st.rerun()
 
     if 'top3_results' in st.session_state:
         if st.button('✕ 清除结果', key='clear_results'):
