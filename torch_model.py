@@ -162,7 +162,7 @@ def batch_dual_pillar_rgb(D1, H1, D2, H2, P, theta=0.0, pol_TE=True, material=No
     return batch_spectrum_to_rgb(spec)
 
 
-def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, substrate=None):
+def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, substrate=None, theta=0.0):
     """Batched gradient-based inverse design for dual-pillar."""
     if not isinstance(target_rgb, torch.Tensor):
         target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
@@ -190,7 +190,7 @@ def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, s
         p_c = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p)
 
         spec = batch_dual_pillar_spectrum(d1_c, h1_c, d2_c, h2_c, p_c,
-                                          torch.zeros(n, device=device), True, material, substrate)
+                                          torch.full((n,), theta, device=device), True, material, substrate)
         rgb = batch_spectrum_to_rgb(spec)
         loss = ((rgb - target)**2).mean(dim=1).sum()
         loss.backward()
@@ -206,7 +206,7 @@ def inverse_design_dual(target_rgb, n_steps=300, n_restarts=30, material=None, s
         p_f = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p_f)
 
         spec = batch_dual_pillar_spectrum(d1_f, h1_f, d2_f, h2_f, p_f,
-                                          torch.zeros(n, device=device), True, material, substrate)
+                                          torch.full((n,), theta, device=device), True, material, substrate)
         pred = batch_spectrum_to_rgb(spec)
         losses = ((pred - target)**2).sum(dim=1)
         best_idx = torch.argmin(losses).item()
@@ -253,7 +253,7 @@ if __name__ == "__main__":
     print(f"Color map 12x12: {(time.time()-t0)*1000:.1f}ms")
 
 
-def inverse_design_ml_batch(target_rgb, n_steps=300, n_restarts=20, material=None, substrate=None):
+def inverse_design_ml_batch(target_rgb, n_steps=300, n_restarts=20, material=None, substrate=None, theta=0.0):
     """Batched gradient-based inverse design for single pillar (same pattern as inverse_design_dual)."""
     if not isinstance(target_rgb, torch.Tensor):
         target = torch.tensor(target_rgb, dtype=torch.float32).unsqueeze(0)
@@ -277,7 +277,7 @@ def inverse_design_ml_batch(target_rgb, n_steps=300, n_restarts=20, material=Non
         p_c = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p)
 
         spec = batch_lorentzian_spectrum(d_c, h_c, p_c,
-                                         torch.zeros(n, device=device), True, material, substrate)
+                                         torch.full((n,), theta, device=device), True, material, substrate)
         rgb = batch_spectrum_to_rgb(spec)
         loss = ((rgb - target)**2).mean(dim=1).sum()
         loss.backward()
@@ -291,7 +291,7 @@ def inverse_design_ml_batch(target_rgb, n_steps=300, n_restarts=20, material=Non
         p_f = torch.maximum(torch.minimum(p, torch.tensor(600.0, device=device)), min_p_f)
 
         spec = batch_lorentzian_spectrum(d_f, h_f, p_f,
-                                         torch.zeros(n, device=device), True, material, substrate)
+                                         torch.full((n,), theta, device=device), True, material, substrate)
         pred = batch_spectrum_to_rgb(spec)
         losses = ((pred - target)**2).sum(dim=1)
         best_idx = torch.argmin(losses).item()

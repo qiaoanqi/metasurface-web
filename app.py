@@ -694,7 +694,7 @@ with tab2:
                 import torch_model as _tm_batch
                 result = _tm_batch.inverse_design_ml_batch(
                     target_rgb_norm, n_steps=300, n_restarts=20,
-                    material=material, substrate=substrate
+                    material=material, substrate=substrate, theta=angle
                 )
                 if result is None:
                     st.warning("单柱梯度不可用: 需要安装PyTorch")
@@ -733,7 +733,7 @@ with tab2:
                 import torch_model as _tm_gd
                 result = _tm_gd.inverse_design_dual(
                     target_rgb_norm, n_steps=300, n_restarts=20,
-                    material=material, substrate=substrate
+                    material=material, substrate=substrate, theta=angle
                 )
                 d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, loss = result
                 rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
@@ -772,14 +772,14 @@ with tab2:
             candidates = []
             # TiO2
             try:
-                engine.rebuild_library("TiO2 (anatase)", "SiO2 (fused silica)", polarization, angle)
+                engine.rebuild_library("TiO2 (anatase)", substrate, polarization, angle)
                 r = engine.inverse_design(target_rgb_norm)
                 if r:
                     candidates.append((r[0][4], "TiO2 纳米柱", r, "meta"))
             except Exception as e: logging.warning(f"AI TiO2: {e}")
             # a-Si
             try:
-                engine.rebuild_library("a-Si (amorphous)", "SiO2 (fused silica)", polarization, angle)
+                engine.rebuild_library("a-Si (amorphous)", substrate, polarization, angle)
                 r = engine.inverse_design(target_rgb_norm)
                 if r:
                     candidates.append((r[0][4], "a-Si 纳米柱", r, "meta"))

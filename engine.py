@@ -225,7 +225,8 @@ class MetaSurfaceColorEngine:
                         _tm.torch.tensor([param.period_nm]),
                         _tm.torch.tensor([param.angle_deg]),
                         pol_TE,
-                        material=param.material
+                        material=param.material,
+                        substrate=param.substrate
                     )
                     rgb = _tm.batch_spectrum_to_rgb(spec)
                     return np.nan_to_num(rgb.squeeze(0).numpy(), nan=0.5)
@@ -443,7 +444,8 @@ class MetaSurfaceColorEngine:
                     _tm.torch.tensor([param.period_nm]),
                     _tm.torch.tensor([param.angle_deg]),
                     pol_TE,
-                    material=param.material
+                    material=param.material,
+                    substrate=param.substrate
                 )
                 wls = np.linspace(wl_start, wl_end, n_pts)
                 return wls, (spec.squeeze(0).numpy() / 0.86)
