@@ -1435,7 +1435,10 @@ with tab5:
             fp_xy = _fp_physical_gamut_xy()
             fp_ag_xy = _fp_ag_gamut_xy()
 
-        from scipy.spatial import ConvexHull
+        try:
+            from scipy.spatial import ConvexHull
+        except Exception:
+            ConvexHull = None
 
         fig_gamut, ax_g = _get_plt().subplots(figsize=(6.5, 6.5))
         # Spectrum locus
@@ -1459,17 +1462,17 @@ with tab5:
                 continue
             step = max(1, len(pts) // 1200)
             ax_g.scatter(pts[::step, 0], pts[::step, 1], c=color, s=2, alpha=0.20, label=label)
-            try:
-                hull = ConvexHull(pts)
-                hull_pts = np.append(hull.vertices, hull.vertices[0])
-                ax_g.plot(pts[hull_pts, 0], pts[hull_pts, 1], "-", color=color, lw=2.0, alpha=0.90)
-                # Annotate hull area
-                cx, cy = pts[hull.vertices].mean(axis=0)
-                ax_g.annotate(f"{hull.volume*100:.0f}", (cx, cy),
-                              fontsize=7, color=color, ha="center", va="center",
-                              bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.7))
-            except Exception as e:
-                logging.warning(f"gamut hull: {e}")
+            if ConvexHull is not None:
+                try:
+                    hull = ConvexHull(pts)
+                    hull_pts = np.append(hull.vertices, hull.vertices[0])
+                    ax_g.plot(pts[hull_pts, 0], pts[hull_pts, 1], "-", color=color, lw=2.0, alpha=0.90)
+                    cx, cy = pts[hull.vertices].mean(axis=0)
+                    ax_g.annotate(f"{hull.volume*100:.0f}", (cx, cy),
+                                  fontsize=7, color=color, ha="center", va="center",
+                                  bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.7))
+                except Exception as e:
+                    logging.warning(f"gamut hull: {e}")
 
         ax_g.legend(fontsize=7, loc="lower left", framealpha=0.85, ncol=1)
         ax_g.set_xlabel("x"); ax_g.set_ylabel("y")
