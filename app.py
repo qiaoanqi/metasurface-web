@@ -1486,7 +1486,7 @@ with tab5:
 
     # Angle scan: color vs incident angle
     st.divider()
-    st.subheader("Angle Scan (0-80 deg)")
+    st.subheader("入射角扫描 (0° → 80°)")
     angles_scan = np.arange(0, 85, 5)
     try:
         import torch_model as _tm2
