@@ -1360,7 +1360,10 @@ with tab5:
     @st.cache_data
     def _physical_gamut_xy(material, substrate):
         """Compute gamut using full Fano/Lorentzian physical model (not approximate grid)."""
-        import torch_model as _tm
+        try:
+            import torch_model as _tm
+        except Exception:
+            return np.zeros((0, 2))
         D = np.arange(60, 340, 20, dtype=np.float32)
         H = np.arange(100, 580, 40, dtype=np.float32)
         P = np.arange(220, 580, 40, dtype=np.float32)

@@ -4,5 +4,4 @@ numpy>=1.23
 pillow>=9.0
 matplotlib>=3.7
 onnxruntime>=1.17
-# Optional: uncomment for gradient-based inverse design and batch acceleration
-# torch>=2.0
+torch>=2.0
