@@ -45,7 +45,7 @@ for _base in [
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# --- LRU response cache (max 50 entries, 30s TTL) ---
+# --- LRU response cache (max 50 entries, 300s TTL) ---
 _CACHE = {}
 _CACHE_MAX = 50
 _CACHE_TTL = 300  # seconds (5 min for academic use)

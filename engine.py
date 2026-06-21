@@ -10,6 +10,10 @@ from color_utils import (
     spectrum_to_srgb, clamp01, rgb_to_lab, rgb_to_xy,
     xyz_to_srgb, delta_e76, delta_e2000,
 )
+import os, hashlib, pickle as _pickle
+_GRID_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_grid_cache")
+_GRID_CACHE_VERSION = "v1"
+os.makedirs(_GRID_CACHE_DIR, exist_ok=True)
 
 
 # ===================== Material Library =====================
@@ -185,7 +189,14 @@ class MetaSurfaceColorEngine:
         self._na = 0.1
         self._theta_obs_deg = 0.0
         try:
-            self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
+            default_key = (self._last_material, self._last_substrate, self._last_polarization, self._last_angle)
+            # Try loading from on-disk cache first (survives app restarts)
+            loaded = self._load_grid_disk(default_key)
+            if loaded is not None:
+                self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = loaded
+            else:
+                self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
+                self._save_grid_disk(default_key, (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy))
         except Exception as e:
             import traceback
             logging.error(f"Library build failed: {e}")
@@ -526,6 +537,12 @@ class MetaSurfaceColorEngine:
         if key in self._cache:
             self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy = self._cache[key]
             return
+        # Try on-disk cache (persists across app restarts)
+        loaded = self._load_grid_disk(key)
+        if loaded is not None:
+            self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = loaded
+            self._cache[key] = (self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy)
+            return
         d_vals = np.arange(self.d_min, self.d_max + 0.1, 5.0)
         h_vals = np.arange(self.h_min, self.h_max + 0.1, 10.0)
         p_vals = np.arange(self.p_min, self.p_max + 0.1, 20.0)
@@ -551,6 +568,33 @@ class MetaSurfaceColorEngine:
         self.grid_lab = rgb_to_lab(self.grid_rgb)
         self.grid_xy = rgb_to_xy(self.grid_rgb)
         self._cache[key] = (self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy)
+        self._save_grid_disk(key, (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy))
+
+    @staticmethod
+    def _grid_cache_path(key):
+        h = hashlib.sha256((str(key) + _GRID_CACHE_VERSION).encode()).hexdigest()[:16]
+        return os.path.join(_GRID_CACHE_DIR, f"grid_{h}.pkl")
+
+    @staticmethod
+    def _load_grid_disk(key):
+        path = MetaSurfaceColorEngine._grid_cache_path(key)
+        try:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    return _pickle.load(f)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _save_grid_disk(key, data):
+        path = MetaSurfaceColorEngine._grid_cache_path(key)
+        try:
+            with open(path + ".tmp", "wb") as f:
+                _pickle.dump(data, f, protocol=_pickle.HIGHEST_PROTOCOL)
+            os.replace(path + ".tmp", path)
+        except Exception:
+            pass
 
     def nearest_lab_indices(self, target_lab: np.ndarray) -> np.ndarray:
         target_lab = np.asarray(target_lab, dtype=float)

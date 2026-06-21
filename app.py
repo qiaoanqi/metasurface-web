@@ -37,8 +37,8 @@ def _get_plt():
     import matplotlib.font_manager as fm
     try:
         fm._load_fontmanager(try_read_cache=False)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"font cache load: {e}")
     available = {f.name for f in fm.fontManager.ttflist}
     fonts = ['WenQuanYi Micro Hei', 'SimHei', 'Microsoft YaHei', 'Noto Sans CJK SC', 'DejaVu Sans']
     chosen = 'DejaVu Sans'
@@ -241,8 +241,8 @@ with st.sidebar:
                 st.session_state.d2_val = pre.d2_nm
                 st.session_state._dual_correction = pre._correction_msg
                 st.session_state._prev_dual_params = (pre.d1_nm, pre.d2_nm, pre.period_nm)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"dual param preview: {e}")
 
         # --- Dual-Pillar Controls ---
         # Safety clamp all values before rendering widgets
@@ -705,6 +705,9 @@ with tab2:
                     st.session_state._gd_d = float(d_gd)
                     st.session_state._gd_h = float(h_gd)
                     st.session_state._gd_p = float(p_gd)
+                    st.session_state._gd_hex = hex_gd
+                    st.session_state._gd_de = float(de_gd)
+                    st.session_state._gd_rgb = tuple(rc)
                     st.success(f"🎯 单柱梯度完成! {hex_gd} | ΔE2000={de_gd:.1f}")
                     c1gd, c2gd = st.columns([1, 3])
                     with c1gd:
@@ -740,6 +743,9 @@ with tab2:
                 st.session_state._dual_gd_d2 = float(d2_gd)
                 st.session_state._dual_gd_h2 = float(h2_gd)
                 st.session_state._dual_gd_p = float(p_gd)
+                st.session_state._dual_gd_hex = hex_gd
+                st.session_state._dual_gd_de = float(de_gd)
+                st.session_state._dual_gd_rgb = tuple(rc)
                 st.success(f"🎯 双柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
                 c1gd, c2gd = st.columns([1, 3])
                 with c1gd:
@@ -798,9 +804,82 @@ with tab2:
             st.session_state.search_history = st.session_state.search_history[:10]
             progress_bar.progress(1.0)
             status_text.caption("搜索完成!")
+    # --- Export results ---
+    _has_results = ('top3_results' in st.session_state or '_gd_d' in st.session_state
+                    or '_dual_gd_d1' in st.session_state or 'fp_search_cache' in st.session_state)
+    if _has_results:
+        with st.expander("📥 导出结果 (CSV/JSON)", expanded=False):
+            import io as _io, json as _json
+            rows = []
+            if 'top3_results' in st.session_state:
+                for i, (_, bp, brgb, bde, bde2k) in enumerate(st.session_state.top3_results):
+                    hx = rgb_to_hex(brgb)
+                    r, g, b = rgb_255(brgb)
+                    rows.append({
+                        "类型": "网格搜索", "排名": i+1,
+                        "hex": hx, "R": r, "G": g, "B": b,
+                        "D(nm)": round(bp.diameter_nm, 1), "H(nm)": round(bp.height_nm, 1),
+                        "P(nm)": round(bp.period_nm, 1),
+                        "ΔE76": round(bde, 1), "ΔE2000": round(bde2k, 1)
+                    })
+            if '_gd_d' in st.session_state:
+                gd_rgb = st.session_state.get('_gd_rgb', (0,0,0))
+                rows.append({
+                    "类型": "单柱梯度", "排名": "-",
+                    "hex": st.session_state.get('_gd_hex', ''),
+                    "R": gd_rgb[0], "G": gd_rgb[1], "B": gd_rgb[2],
+                    "D(nm)": round(st.session_state._gd_d, 1),
+                    "H(nm)": round(st.session_state._gd_h, 1),
+                    "P(nm)": round(st.session_state._gd_p, 1),
+                    "ΔE76": "-",
+                    "ΔE2000": round(st.session_state.get('_gd_de', 0), 1)
+                })
+            if '_dual_gd_d1' in st.session_state:
+                dg_rgb = st.session_state.get('_dual_gd_rgb', (0,0,0))
+                rows.append({
+                    "类型": "双柱梯度", "排名": "-",
+                    "hex": st.session_state.get('_dual_gd_hex', ''),
+                    "R": dg_rgb[0], "G": dg_rgb[1], "B": dg_rgb[2],
+                    "D1(nm)": round(st.session_state._dual_gd_d1, 1),
+                    "H1(nm)": round(st.session_state._dual_gd_h1, 1),
+                    "D2(nm)": round(st.session_state._dual_gd_d2, 1),
+                    "H2(nm)": round(st.session_state._dual_gd_h2, 1),
+                    "P(nm)": round(st.session_state._dual_gd_p, 1),
+                    "ΔE76": "-",
+                    "ΔE2000": round(st.session_state.get('_dual_gd_de', 0), 1)
+                })
+            if 'fp_search_cache' in st.session_state:
+                for ck, top3 in st.session_state.fp_search_cache.items():
+                    for rank, (de, wl, t, rgb_val) in enumerate(top3):
+                        hx = rgb_to_hex(rgb_val)
+                        r, g, b = rgb_255(rgb_val)
+                        rows.append({
+                            "类型": "FP腔", "排名": f"#{rank+1}",
+                            "hex": hx, "R": r, "G": g, "B": b,
+                            "T(nm)": round(t, 1), "λ_c(nm)": round(wl, 1),
+                            "ΔE2000": round(de, 1)
+                        })
+
+            if rows:
+                csv_buf = _io.StringIO()
+                json_buf = _io.StringIO()
+                all_keys = list(rows[0].keys())
+                csv_buf.write(",".join(all_keys) + chr(10))
+                for row in rows:
+                    csv_buf.write(",".join(str(row.get(k, "")) for k in all_keys) + chr(10))
+                _json.dump(rows, json_buf, ensure_ascii=False, indent=2)
+
+                c_exp1, c_exp2 = st.columns(2)
+                with c_exp1:
+                    st.download_button("💾 导出 CSV", csv_buf.getvalue(),
+                        "metasurface_results.csv", "text/csv", use_container_width=True)
+                with c_exp2:
+                    st.download_button("💾 导出 JSON", json_buf.getvalue(),
+                        "metasurface_results.json", "application/json", use_container_width=True)
+
     if 'top3_results' in st.session_state:
         if st.button('✕ 清除结果', key='clear_results'):
-            for k in ['top3_results', '_rl_d', '_gd_d', '_dual_gd_d1', 'search_history']:
+            for k in ['top3_results', '_rl_d', '_gd_d', '_gd_hex', '_gd_de', '_gd_rgb', '_dual_gd_d1', '_dual_gd_h1', '_dual_gd_d2', '_dual_gd_h2', '_dual_gd_p', '_dual_gd_hex', '_dual_gd_de', '_dual_gd_rgb', 'search_history']:
                 st.session_state.pop(k, None)
             st.rerun()
         col_a, col_b = st.columns(2)
@@ -1088,7 +1167,8 @@ with tab4:
         _H_grid = torch_model.torch.tensor(h_sample, dtype=torch_model.torch.float32)
         _rgb_grid = _tm.batch_single_pillar_rgb_norm(_D_grid, _H_grid, period)
         _use_torch = True
-    except Exception:
+    except Exception as e:
+        logging.warning(f"torch batch color map: {e}")
         _use_torch = False
 
     for di, d in enumerate(d_sample):
@@ -1186,8 +1266,8 @@ with tab4:
                 ax.plot(px, py, "ro", markersize=8, markeredgecolor="white", markeredgewidth=1.5)
                 ax.annotate(f"({px:.3f},{py:.3f})", (px, py), textcoords="offset points",
                            xytext=(10,10), fontsize=9, color="#333")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"chromaticity annotate: {e}")
         ax.set_xlim(0, 0.8); ax.set_ylim(0, 0.9)
         ax.set_xlabel("x"); ax.set_ylabel("y")
         ax.set_title(f"{material}  |  D={diameter:.0f}nm H={height:.0f}nm P={period:.0f}nm", fontsize=9)
@@ -1272,6 +1352,132 @@ with tab5:
         st.pyplot(fig_cie)
         _get_plt().close(fig_cie)
 
+
+    # === Material gamut comparison (physical model) ===
+    st.divider()
+    st.subheader("材料色域对比")
+
+    @st.cache_data
+    def _physical_gamut_xy(material, substrate):
+        """Compute gamut using full Fano/Lorentzian physical model (not approximate grid)."""
+        import torch_model as _tm
+        D = np.arange(60, 340, 20, dtype=np.float32)
+        H = np.arange(100, 580, 40, dtype=np.float32)
+        P = np.arange(220, 580, 40, dtype=np.float32)
+        pol_TE = True
+        xy_list = []
+        # Process in batches to avoid OOM
+        for d in D:
+            d_batch = []; h_batch = []; p_batch = []
+            for h in H:
+                for p in P:
+                    if d >= p:
+                        continue
+                    fr = np.pi*(d/2)**2/(p**2)
+                    if fr < 0.03 or fr > 0.70:
+                        continue
+                    d_batch.append(d); h_batch.append(h); p_batch.append(p)
+            if not d_batch:
+                continue
+            d_t = _tm.torch.tensor(d_batch, dtype=_tm.torch.float32)
+            h_t = _tm.torch.tensor(h_batch, dtype=_tm.torch.float32)
+            p_t = _tm.torch.tensor(p_batch, dtype=_tm.torch.float32)
+            spec = _tm.batch_lorentzian_spectrum(d_t, h_t, p_t,
+                _tm.torch.zeros(len(d_batch)), pol_TE,
+                material=material, substrate=substrate)
+            rgb = _tm.batch_spectrum_to_rgb(spec).numpy()
+            for r in rgb:
+                r = np.clip(r, 0, 1)
+                xy_list.append(rgb_to_xy(r))
+        return np.array(xy_list) if xy_list else np.zeros((0, 2))
+
+    @st.cache_data
+    def _fp_physical_gamut_xy():
+        """FP DBR cavity gamut with dense sampling."""
+        from fp_cavity import fp_dielectric_spectrum
+        from color_utils import spectrum_to_srgb as _g2s, rgb_to_xy as _g2xy
+        pts = []
+        for t in range(50, 601, 10):
+            for wl_c in range(380, 781, 10):
+                try:
+                    wls, refl = fp_dielectric_spectrum(t, float(wl_c), 3, 5, 0.0, True)
+                    rgb = _g2s(wls, np.clip(refl, 0, None))
+                    pts.append(_g2xy(rgb))
+                except Exception:
+                    pass
+        return np.array(pts) if pts else np.zeros((0, 2))
+
+    @st.cache_data
+    def _fp_ag_gamut_xy():
+        """FP Ag-mirror cavity gamut."""
+        from fp_cavity import fp_cavity_spectrum
+        from color_utils import spectrum_to_srgb as _g2s, rgb_to_xy as _g2xy
+        pts = []
+        for t in range(50, 601, 10):
+            for angle in range(0, 81, 10):
+                try:
+                    wls, refl = fp_cavity_spectrum(t, float(angle), True)
+                    rgb = _g2s(wls, np.clip(refl, 0, None))
+                    pts.append(_g2xy(rgb))
+                except Exception:
+                    pass
+        return np.array(pts) if pts else np.zeros((0, 2))
+
+    show_gamut = st.checkbox("显示色域对比图", value=True,
+        help="基于 Fano/Lorentzian 物理模型计算的三种材料体系 CIE 色域边界")
+    if show_gamut:
+        with st.spinner("物理模型计算色域中 (TiO2, a-Si, FP腔)..."):
+            tio2_xy = _physical_gamut_xy("TiO2 (anatase)", "SiO2 (fused silica)")
+            asi_xy = _physical_gamut_xy("a-Si (amorphous)", "SiO2 (fused silica)")
+            fp_xy = _fp_physical_gamut_xy()
+            fp_ag_xy = _fp_ag_gamut_xy()
+
+        from scipy.spatial import ConvexHull
+
+        fig_gamut, ax_g = _get_plt().subplots(figsize=(6.5, 6.5))
+        # Spectrum locus
+        ax_g.plot(x_xy, y_xy, "k-", lw=1.0, alpha=0.7)
+        ax_g.fill(x_xy, y_xy, alpha=0.04, color="gray")
+        # D65 white point
+        ax_g.plot(0.3127, 0.3290, "k+", ms=8, label="D65")
+        # sRGB triangle (prominent)
+        ax_g.plot(srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
+                  "k--", lw=1.0, alpha=0.7, label="sRGB gamut")
+
+        gamuts = [
+            (asi_xy, "#00aaff", "a-Si metasurface"),
+            (tio2_xy, "#ff6b35", "TiO2 metasurface"),
+            (fp_xy, "#44cc44", "FP DBR cavity"),
+            (fp_ag_xy, "#cc44cc", "FP Ag cavity"),
+        ]
+
+        for pts, color, label in gamuts:
+            if len(pts) < 3:
+                continue
+            step = max(1, len(pts) // 1200)
+            ax_g.scatter(pts[::step, 0], pts[::step, 1], c=color, s=2, alpha=0.20, label=label)
+            try:
+                hull = ConvexHull(pts)
+                hull_pts = np.append(hull.vertices, hull.vertices[0])
+                ax_g.plot(pts[hull_pts, 0], pts[hull_pts, 1], "-", color=color, lw=2.0, alpha=0.90)
+                # Annotate hull area
+                cx, cy = pts[hull.vertices].mean(axis=0)
+                ax_g.annotate(f"{hull.volume*100:.0f}", (cx, cy),
+                              fontsize=7, color=color, ha="center", va="center",
+                              bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.7))
+            except Exception:
+                pass
+
+        ax_g.legend(fontsize=7, loc="lower left", framealpha=0.85, ncol=1)
+        ax_g.set_xlabel("x"); ax_g.set_ylabel("y")
+        ax_g.set_title("Physical Gamut Comparison (Fano model, TE, 0deg, on SiO2)")
+        ax_g.set_xlim(0, 0.75); ax_g.set_ylim(0, 0.85)
+        ax_g.set_aspect("equal")
+        ax_g.grid(True, alpha=0.15)
+        fig_gamut.tight_layout()
+        st.pyplot(fig_gamut)
+        _get_plt().close(fig_gamut)
+
     # Angle scan: color vs incident angle
     st.divider()
     st.subheader("入射角扫描 (0° → 80°)")
@@ -1285,7 +1491,8 @@ with tab5:
             torch_model.torch.tensor([period]*len(angles_scan)),
             _ang_t)
         scan_rgbs = _scan_rgb.numpy()
-    except Exception:
+    except Exception as e:
+        logging.warning(f"angle scan batch: {e}")
         scan_rgbs = []
         for a in angles_scan:
             param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))

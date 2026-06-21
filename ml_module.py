@@ -114,6 +114,8 @@ def predict_rgb(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", material="Ti
         return None
     if material not in MATERIAL_CODES:
         return None
+    if substrate not in SUBSTRATE_CODES:
+        return None
     x = _build_input(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
     spec = _ORT_SESSION.run(None, {"input": x})[0][0]
     return _spectrum_to_rgb(spec)
@@ -122,6 +124,8 @@ def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", materia
     if not _ORT_AVAILABLE:
         return None
     if material not in MATERIAL_CODES:
+        return None
+    if substrate not in SUBSTRATE_CODES:
         return None
     x = _build_input(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
     spec = _ORT_SESSION.run(None, {"input": x})[0][0]
