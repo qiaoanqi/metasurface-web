@@ -645,7 +645,7 @@ with tab2:
         rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
         gd_btn = st.button('🎯 单柱梯度', use_container_width=True, help='单柱批量梯度下降, ~3-5秒, 需torch')
         dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱批量梯度下降, ~3-5秒, 需torch')
-        ai_btn = st.button('🤖 AI 智能寻色', use_container_width=True,
+        ai_btn = st.button('📊 三方案对比', use_container_width=True,
                          help='同时试 TiO2 / a-Si / FP腔，自动选最优')
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
@@ -768,7 +768,7 @@ with tab2:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化不可用: {e}")
     if ai_btn:
-        with st.spinner("🤖 AI全系统搜索中 (TiO2 / a-Si / FP腔)..."):
+        with st.spinner("🤖 三方案并行搜索中 (TiO2 / a-Si / FP腔)..."):
             candidates = []
             # TiO2
             try:
@@ -930,7 +930,7 @@ with tab2:
     # --- AI smart search results ---
     if '_ai_candidates' in st.session_state:
         st.markdown("---")
-        st.markdown("**🤖 AI 智能寻色 结果**")
+        st.markdown("**📊 三方案对比 结果**")
         for rank, (de, name, data, typ) in enumerate(st.session_state._ai_candidates):
             marker = "🏆" if rank == 0 else ""
             if typ == "meta":
@@ -963,7 +963,7 @@ with tab2:
                 <b style="color:#22aa22;">ΔE={de:.1f}</b>
                 </div>
                 """, unsafe_allow_html=True)
-        if st.button('✕ 清除 AI 结果', key='clear_ai_results'):
+        if st.button('✕ 清除结果', key='clear_ai_results'):
             st.session_state.pop('_ai_candidates', None)
             st.rerun()
 
