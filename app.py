@@ -1403,8 +1403,8 @@ with tab5:
                     wls, refl = fp_dielectric_spectrum(t, float(wl_c), 3, 5, 0.0, True)
                     rgb = _g2s(wls, np.clip(refl, 0, None))
                     pts.append(_g2xy(rgb))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"fp dbr gamut: {e}")
         return np.array(pts) if pts else np.zeros((0, 2))
 
     @st.cache_data
@@ -1419,8 +1419,8 @@ with tab5:
                     wls, refl = fp_cavity_spectrum(t, float(angle), True)
                     rgb = _g2s(wls, np.clip(refl, 0, None))
                     pts.append(_g2xy(rgb))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"fp ag gamut: {e}")
         return np.array(pts) if pts else np.zeros((0, 2))
 
     show_gamut = st.checkbox("显示色域对比图", value=True,
@@ -1465,8 +1465,8 @@ with tab5:
                 ax_g.annotate(f"{hull.volume*100:.0f}", (cx, cy),
                               fontsize=7, color=color, ha="center", va="center",
                               bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.7))
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"gamut hull: {e}")
 
         ax_g.legend(fontsize=7, loc="lower left", framealpha=0.85, ncol=1)
         ax_g.set_xlabel("x"); ax_g.set_ylabel("y")
