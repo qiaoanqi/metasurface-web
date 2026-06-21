@@ -968,8 +968,8 @@ with tab2:
         ax_spec.annotate(f"匹配峰值 {wls_m[np.argmax(refl_m_norm)]:.0f}nm",
                          xy=(wls_m[np.argmax(refl_m_norm)], 0.85),
                          fontsize=8, color="#007e97", ha="center")
-        ax_spec.set_xlabel("波长 (nm)")
-        ax_spec.set_ylabel("归一化反射率")
+        ax_spec.set_xlabel("Wavelength (nm)")
+        ax_spec.set_ylabel("Normalized Reflectance")
         ax_spec.set_xlim(380, 780)
         ax_spec.set_ylim(0, 1.1)
         ax_spec.legend(fontsize=8, loc="upper right")
@@ -1298,7 +1298,7 @@ with tab5:
         ax5.plot(wls, refl, color="#333", lw=2.5,
                  label=f"D={diameter:.0f} H={height:.0f}nm")
         ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
-        ax5.set_xlabel("波长 (nm)")
+        ax5.set_xlabel("Wavelength (nm)")
         ax5.set_ylabel("Reflectance")
         ax5.set_title(f"Spectrum: {material} on {substrate}")
         ax5.set_xlim(380, 780)
@@ -1486,7 +1486,7 @@ with tab5:
 
     # Angle scan: color vs incident angle
     st.divider()
-    st.subheader("入射角扫描 (0° → 80°)")
+    st.subheader("Angle Scan (0-80 deg)")
     angles_scan = np.arange(0, 85, 5)
     try:
         import torch_model as _tm2
@@ -1510,12 +1510,12 @@ with tab5:
     ax1.plot(angles_scan, scan_rgbs[:, 0], "r-", lw=1.5, label="R")
     ax1.plot(angles_scan, scan_rgbs[:, 1], "g-", lw=1.5, label="G")
     ax1.plot(angles_scan, scan_rgbs[:, 2], "b-", lw=1.5, label="B")
-    ax1.set_xlabel("入射角 (°)")
+    ax1.set_xlabel("Incident Angle (deg)")
     ax1.set_ylabel("sRGB")
     ax1.set_ylim(0, 1.05)
     ax1.legend(fontsize=7)
     ax1.grid(True, alpha=0.3)
-    ax1.set_title("RGB分量 vs 角度")
+    ax1.set_title("RGB vs Incident Angle")
     for i, a in enumerate(angles_scan):
         ax2.add_patch(_get_plt().Rectangle((i, 0), 1, 1, facecolor=scan_hex[i], edgecolor="white", lw=0.3))
     ax2.set_xlim(0, len(angles_scan))
@@ -1523,7 +1523,7 @@ with tab5:
     ax2.set_xticks(np.arange(len(angles_scan)) + 0.5)
     ax2.set_xticklabels([f"{int(a)}" for a in angles_scan], fontsize=6)
     ax2.set_yticks([])
-    ax2.set_title("色块 vs 角度 (°)")
+    ax2.set_title("Color vs Incident Angle (deg)")
     fig_ang.tight_layout()
     st.pyplot(fig_ang)
     _get_plt().close(fig_ang)
