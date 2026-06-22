@@ -57,7 +57,7 @@ def _n_sio2_sellmeier(wl_nm):
                    + 0.8974794*wl_um**2/(wl_um**2 - 9.896161**2))
 
 def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
-    """Metal-mirror FP: Ag(30nm)/TiO2(T)/Ag(bulk). 鍑忚壊鍨? (鍚戦噺鍖栫増鏈?"""
+    """Metal-mirror FP: Ag(30nm)/TiO2(T)/Ag(bulk). 减色型 (向量化版本)"""
     wls = np.arange(380, 785, 5).astype(float)
     d_top = 30.0; theta = angle_deg * np.pi / 180.0; n_inc = 1.0
     # Vectorized refractive indices
@@ -89,7 +89,7 @@ def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
     return wls, np.nan_to_num(np.clip(refl, 0, 1), nan=0.0, posinf=1.0, neginf=0.0)
 
 def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, angle_deg=0.0, pol_TE=True):
-    """DBR FP cavity: (TiO2/SiO2)^n/TiO2(T)/(SiO2/TiO2)^n. 楂橀ケ鍜屽害. (鍚戦噺鍖栫増鏈?"""
+    """DBR FP cavity: (TiO2/SiO2)^n/TiO2(T)/(SiO2/TiO2)^n. 高饱和度. (向量化版本)"""
     wls = np.arange(380, 785, 5).astype(float)
     N = len(wls)
     theta = angle_deg * np.pi / 180.0; n_inc = 1.0

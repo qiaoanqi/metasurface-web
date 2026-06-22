@@ -602,16 +602,16 @@ with tab1:
             for label, d_val, h_val, p_val, which in params:
                 if which == "diameter":
                     d_lo, d_hi = max(50, d_val-tol), min(350, d_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
                 elif which == "height":
                     h_lo, h_hi = max(80, h_val-tol), min(600, h_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
                 else:
                     d_min = max(d_val, 50); p_lo = max(d_min*1.2, p_val-tol); p_hi = min(600, p_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material)
+                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material, substrate=substrate)
+                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material, substrate=substrate)
             
                 rgb_lo = _tm_sens.batch_spectrum_to_rgb(sp_lo).squeeze().numpy()
                 rgb_hi = _tm_sens.batch_spectrum_to_rgb(sp_hi).squeeze().numpy()
@@ -1251,8 +1251,8 @@ with tab4:
     # Try PyTorch batch acceleration for color map
     try:
         import torch_model as _tm
-        _D_grid = torch_model.torch.tensor(d_sample, dtype=torch_model.torch.float32)
-        _H_grid = torch_model.torch.tensor(h_sample, dtype=torch_model.torch.float32)
+        _D_grid = _tm.torch.tensor(d_sample, dtype=_tm.torch.float32)
+        _H_grid = _tm.torch.tensor(h_sample, dtype=_tm.torch.float32)
         _rgb_grid = _tm.batch_single_pillar_rgb_norm(_D_grid, _H_grid, period)
         _use_torch = True
     except Exception as e:
@@ -1337,12 +1337,12 @@ with tab4:
                     _torch.tensor([st.session_state.d1_val]), _torch.tensor([st.session_state.h1_val]),
                     _torch.tensor([st.session_state.d2_val]), _torch.tensor([st.session_state.h2_val]),
                     _torch.tensor([st.session_state.p_val]),
-                    material=material
+                    material=material, substrate=substrate
                 )
             else:
                 sp = _tm2.batch_lorentzian_spectrum(
                     _torch.tensor([diameter]), _torch.tensor([height]), _torch.tensor([period]),
-                    material=material
+                    material=material, substrate=substrate
                 )
             sp_np = sp.squeeze().detach().numpy()
             Xv = np.trapezoid(sp_np * _cie_x, _wl)
@@ -1806,11 +1806,11 @@ with tab5:
     angles_scan = np.arange(0, 85, 5)
     try:
         import torch_model as _tm2
-        _ang_t = torch_model.torch.tensor(angles_scan, dtype=torch_model.torch.float32)
+        _ang_t = _tm2.torch.tensor(angles_scan, dtype=_tm2.torch.float32)
         _scan_rgb = _tm2.batch_single_pillar_rgb_norm(
-            torch_model.torch.tensor([diameter]*len(angles_scan)),
-            torch_model.torch.tensor([height]*len(angles_scan)),
-            torch_model.torch.tensor([period]*len(angles_scan)),
+            _tm2.torch.tensor([diameter]*len(angles_scan)),
+            _tm2.torch.tensor([height]*len(angles_scan)),
+            _tm2.torch.tensor([period]*len(angles_scan)),
             _ang_t)
         scan_rgbs = _scan_rgb.numpy()
     except Exception as e:
@@ -1856,7 +1856,7 @@ if st.session_state.get("dual_pillar", False):
             _torch_exp.tensor([st.session_state.d1_val]), _torch_exp.tensor([st.session_state.h1_val]),
             _torch_exp.tensor([st.session_state.d2_val]), _torch_exp.tensor([st.session_state.h2_val]),
             _torch_exp.tensor([st.session_state.p_val]),
-            material=material
+            material=material, substrate=substrate
         )
         spec_export = sp_dual.squeeze().detach().numpy()
     except Exception as e:
@@ -1867,7 +1867,7 @@ else:
         import torch as _torch_exp
         sp_single = _tm_exp.batch_lorentzian_spectrum(
             _torch_exp.tensor([diameter]), _torch_exp.tensor([height]), _torch_exp.tensor([period]),
-            material=material
+            material=material, substrate=substrate
         )
         spec_export = sp_single.squeeze().detach().numpy()
     except Exception as e:
