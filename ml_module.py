@@ -154,7 +154,7 @@ def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarizati
     return _spectrum_to_rgb(spec)
 
 # ---- inverse design (PyTorch gradient-based, requires torch) ----
-def inverse_design_ml(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
+def _inverse_design_ml_serial(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
     if not _init_torch_for_inverse():
         return None
     import torch
