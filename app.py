@@ -1,4 +1,4 @@
-# ===================== Streamlit 版本：超表面结构色设计系统 =====================
+﻿# ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
 import io, os
@@ -67,7 +67,6 @@ def _apply_fp_params(wl, t):
 # CIE 1931 data imported from color_utils
 
 
-
 # Engine module imported from engine.py
 from engine import (
     MaterialLibrary, MetaSurfaceParam, DualPillarParam,
@@ -100,7 +99,6 @@ _ml_ready, _ml_is_v8 = get_ml_ready()
 def get_dual_ml_ready():
     return ml_module.init_dual_ml()
 _dual_ml_ready = get_dual_ml_ready()
-
 
 
 st.title("🎨 AI超表面结构色设计助手")
@@ -1574,8 +1572,236 @@ with tab5:
         st.pyplot(fig_gamut)
         _get_plt().close(fig_gamut)
 
+    # === Method timing comparison ===
+    st.divider()
+    with st.expander("⚡ 方法耗时对比 (5种逆设计方法)", expanded=False):
+        @st.cache_data
+        def _benchmark_methods():
+            """Benchmark all 5 inverse design methods with a standard target."""
+            import time, torch_model as _tm_bm, ml_module as _ml_bm
+            import torch as _t_bm
+            from engine import MetaSurfaceColorEngine as _Eng
+            from rl_design import RLDesigner as _RL
+            from fp_cavity import fp_cavity_spectrum
+            from color_utils import spectrum_to_srgb, delta_e2000, rgb_to_lab
+            target_rgb = np.array([0.478, 0.310, 0.133])  # #7a4f22
+            target_lab = rgb_to_lab(target_rgb)
+            mat = "TiO2 (anatase)"
+            sub = "SiO2 (fused silica)"
+            results = {}
+
+            # 1. Grid search
+            t0 = time.perf_counter()
+            try:
+                _eng = _Eng()
+                _eng.rebuild_library(mat, sub, "TE", 0)
+                grid_res = _eng.inverse_design(target_rgb)
+                t1 = time.perf_counter()
+                de_grid = grid_res[0][4] if grid_res else 99
+                results["网格搜索"] = (t1 - t0, de_grid, grid_res[0][1] if grid_res else None)
+            except Exception as e:
+                results["网格搜索"] = (0, 99, f"ERR: {e}")
+
+            # 2. RL Q-learning
+            t0 = time.perf_counter()
+            try:
+                from rl_design import get_trained_rl as _gtrl
+                _rl = _gtrl()
+                target_hex = "#7a4f22"
+                d_rl, h_rl, p_rl, hex_rl, de_rl = _rl.search(target_hex, steps=30)
+                t1 = time.perf_counter()
+                results["RL Q-learning"] = (t1 - t0, float(de_rl), None)
+            except Exception as e:
+                results["RL Q-learning"] = (0, 99, f"ERR: {e}")
+
+            # 3. Single-pillar gradient
+            t0 = time.perf_counter()
+            try:
+                _ml_bm.init_ml()
+                gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
+                    target_rgb, n_restarts=20, material=mat, substrate=sub
+                )
+                t1 = time.perf_counter()
+                results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
+            except Exception as e:
+                results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
+
+            # 4. Dual-pillar gradient
+            t0 = time.perf_counter()
+            try:
+                dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
+                    target_rgb, n_restarts=20, material=mat, substrate=sub
+                )
+                t1 = time.perf_counter()
+                results["双柱梯度优化"] = (t1 - t0, float(dde), None)
+            except Exception as e:
+                results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
+
+            # 5. Three-method comparison (TiO2 + a-Si grid + FP cavity)
+            t0 = time.perf_counter()
+            try:
+                best3_de = 999.0
+                _eng = _Eng()
+                # TiO2 grid
+                _eng.rebuild_library(mat, sub, "TE", 0)
+                res1 = _eng.inverse_design(target_rgb)
+                if res1: best3_de = min(best3_de, res1[0][4])
+                # a-Si grid
+                _eng.rebuild_library("a-Si (amorphous)", sub, "TE", 0)
+                res2 = _eng.inverse_design(target_rgb)
+                if res2: best3_de = min(best3_de, res2[0][4])
+                # FP cavity coarse search
+                for t_nm in range(50, 601, 20):
+                    wls, refl = fp_cavity_spectrum(t_nm, 0.0, True)
+                    rgb_fp = spectrum_to_srgb(wls, np.clip(refl, 0, None))
+                    de_fp = delta_e2000(target_lab, rgb_to_lab(rgb_fp))
+                    if de_fp < best3_de: best3_de = de_fp
+                t1 = time.perf_counter()
+                results["三方案对比"] = (t1 - t0, best3_de, None)
+            except Exception as e:
+                results["三方案对比"] = (0, 99, f"ERR: {e}")
+
+            return results
+
+        bench = _benchmark_methods()
+        methods = list(bench.keys())
+        times = [bench[m][0] for m in methods]
+        des = [bench[m][1] for m in methods]
+
+        col_t1, col_t2 = st.columns([1, 1])
+        with col_t1:
+            fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
+            colors_t = ["#ff6b35", "#00aaff", "#44cc44", "#cc44cc", "#ffaa00"]
+            bars = ax_t.barh(methods[::-1], times[::-1], color=colors_t[::-1], edgecolor="white")
+            for bar, t in zip(bars, times[::-1]):
+                ax_t.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2,
+                         f"{t:.1f}s", va="center", fontsize=8, fontweight="bold")
+            ax_t.set_xlabel("耗时 (s)")
+            ax_t.set_title(f"方法耗时对比 (目标: #7a4f22)")
+            ax_t.grid(True, alpha=0.2, axis="x")
+            fig_t.tight_layout()
+            st.pyplot(fig_t)
+            _get_plt().close(fig_t)
+        with col_t2:
+            rows = "| 方法 | 耗时 | ΔE2000 | 定位 |\n|------|------|------|------|\n"
+            labels = ["网格搜索", "RL Q-learning", "单柱梯度优化", "双柱梯度优化", "三方案对比"]
+            roles = ["全空间精确筛选", "离散探索", "连续值精调", "双柱联合优化", "三方案并行"]
+            for m, role in zip(labels, roles):
+                t = bench[m][0]
+                de = bench[m][1]
+                rows += f"| {m} | {t:.1f}s | {de:.1f} | {role} |\n"
+            st.markdown(rows)
+            st.caption("耗时为单次推理，含缓存命中时更快。ΔE2000越低越好，人眼阈值 2.3。")
+
+    # === Fano vs FDTD validation (small-D, shape-normalized) ===
+    st.divider()
+    st.subheader("Fano 模型 vs FDTD 全波仿真验证")
+
+    col_v1, col_v2 = st.columns([3, 2])
+    with col_v1:
+        fdtc_img = os.path.join(os.path.dirname(__file__), "fdtd_data", "fano_vs_fdtd_smallD.png")
+        if os.path.exists(fdtc_img):
+            st.image(fdtc_img, caption="P=200nm, D=30-76nm | Mie共振主导区")
+        else:
+            st.warning("FDTD chart not found")
+    with col_v2:
+        st.markdown("""
+**验证范围**: 小直径 D=30-76nm (Mie 共振主导)
+
+**结果**:
+- 共振峰位偏差 16-24 nm
+- 光谱形状相关系数 0.48-0.51
+
+**定位说明**:
+- Fano 模型是**半解析近似**，用于快速筛选和趋势预测
+- FDTD 数据为透射振幅，大直径前向散射强，1-T ≠ R
+- 精确设计仍需 FDTD 全波仿真最终验证
+""")
+
+    # === ML model error statistics (Fano vs ONNX) ===
+    st.divider()
+    st.subheader("ML 模型精度定量分析 (Fano 物理模型 vs ONNX 推理)")
+
+    @st.cache_data
+    def _ml_error_stats(material, substrate, n_samples=400):
+        """Compare Fano physical model vs ONNX ML model over random (D,H,P)."""
+        import torch_model as _tm_es
+        import ml_module as _ml_es
+        import torch as _torch_es
+        from color_utils import delta_e2000 as _de2k, rgb_to_lab as _rgb2lab
+        rng = np.random.RandomState(42)
+        D = rng.uniform(50, 350, n_samples)
+        H = rng.uniform(80, 600, n_samples)
+        P = rng.uniform(200, 600, n_samples)
+        D_t = _torch_es.tensor(D, dtype=_torch_es.float32)
+        H_t = _torch_es.tensor(H, dtype=_torch_es.float32)
+        P_t = _torch_es.tensor(P, dtype=_torch_es.float32)
+        fano_rgb = _tm_es.batch_single_pillar_rgb(
+            D_t, H_t, P_t, _torch_es.zeros(n_samples), True, material, substrate
+        ).numpy()
+        ml_rgb_list = []
+        for i in range(n_samples):
+            rgb = _ml_es.predict_rgb(float(D[i]), float(H[i]), float(P[i]), 0.0, "TE", material, substrate)
+            ml_rgb_list.append(rgb if rgb is not None else [0, 0, 0])
+        ml_rgb = np.array(ml_rgb_list)
+        de2k_vals = []
+        for i in range(n_samples):
+            lab1 = _rgb2lab(fano_rgb[i])
+            lab2 = _rgb2lab(ml_rgb[i])
+            de2k_vals.append(_de2k(lab1, lab2))
+        de2k_arr = np.array(de2k_vals)
+        return de2k_arr, fano_rgb, ml_rgb
+
+    with st.spinner("计算 ML 模型误差分布 (400 组随机参数)..."):
+        de2k_arr, fano_rgb, ml_rgb = _ml_error_stats(material, substrate)
+
+    mean_de = float(np.mean(de2k_arr))
+    median_de = float(np.median(de2k_arr))
+    p95_de = float(np.percentile(de2k_arr, 95))
+    pct_lt5 = float(np.mean(de2k_arr < 5)) * 100
+    pct_lt10 = float(np.mean(de2k_arr < 10)) * 100
+    pct_lt23 = float(np.mean(de2k_arr < 2.3)) * 100
+
+    col_s1, col_s2 = st.columns([1, 1])
+    with col_s1:
+        fig_ml, ax_ml = _get_plt().subplots(figsize=(6, 4))
+        ax_ml.hist(de2k_arr, bins=40, color="#ff6b35", edgecolor="white", alpha=0.85)
+        ax_ml.axvline(mean_de, color="red", lw=1.5, ls="--", label=f"平均={mean_de:.1f}")
+        ax_ml.axvline(median_de, color="blue", lw=1.5, ls=":", label=f"中位数={median_de:.1f}")
+        ax_ml.axvline(2.3, color="green", lw=1.0, ls="-", alpha=0.7, label="人眼阈值=2.3")
+        ax_ml.set_xlabel("ΔE2000")
+        ax_ml.set_ylabel("样本数")
+        ax_ml.set_title(f"Fano vs ML ΔE2000 分布 (N={len(de2k_arr)})")
+        ax_ml.legend(fontsize=7)
+        ax_ml.grid(True, alpha=0.2)
+        ax_ml.text(0.98, 0.95, f"95%分位: {p95_de:.1f} | ΔE<2.3占比: {pct_lt23:.0f}%", transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
+                   bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+        fig_ml.tight_layout()
+        st.pyplot(fig_ml)
+        _get_plt().close(fig_ml)
+    with col_s2:
+        st.markdown(f"""
+**统计摘要**
+
+| 指标 | 数值 |
+|------|------|
+| 平均 ΔE2000 | **{mean_de:.1f}** |
+| 中位数 ΔE2000 | **{median_de:.1f}** |
+| 95% 分位 | **{p95_de:.1f}** |
+| ΔE<5 占比 | **{pct_lt5:.0f}%** |
+| ΔE<10 占比 | **{pct_lt10:.0f}%** |
+| 人眼可辨阈值 | 2.3 |
+
+**说明**:
+- ONNX ML 模型用合成数据训练，学习的是 Fano 物理模型的输出
+- ΔE 主要来自 ML 模型对共振峰形的近似误差
+- 系统实际色差主要取决于 Fano 物理模型的绝对精度
+""")
+
     # Angle scan: color vs incident angle
     st.divider()
+
+
     st.subheader("入射角扫描 (0° → 80°)")
     angles_scan = np.arange(0, 85, 5)
     try:
@@ -1670,7 +1896,8 @@ try:
         file_name=f"swatch_{hex_color.lstrip('#')}.png",
         mime="image/png", use_container_width=True
     )
-except:
+except Exception as e:
+    logging.warning(f"swatch export: {e}")
     pass
 
 st.sidebar.markdown("---")
