@@ -1604,8 +1604,13 @@ with tab5:
         @st.cache_data
         def _benchmark_methods():
             """Benchmark all 5 inverse design methods with a standard target."""
-            import time, torch_model as _tm_bm, ml_module as _ml_bm
-            import torch as _t_bm
+            import time
+            try:
+                import torch_model as _tm_bm, ml_module as _ml_bm
+                import torch as _t_bm
+                _HAS_TORCH = True
+            except ModuleNotFoundError:
+                _HAS_TORCH = False
             from engine import MetaSurfaceColorEngine as _Eng
             from rl_design import RLDesigner as _RL
             from fp_cavity import fp_cavity_spectrum
@@ -1642,26 +1647,32 @@ with tab5:
 
             # 3. Single-pillar gradient
             t0 = time.perf_counter()
-            try:
-                _ml_bm.init_ml()
-                gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
-                    target_rgb, n_restarts=20, material=mat, substrate=sub
-                )
-                t1 = time.perf_counter()
-                results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
-            except Exception as e:
-                results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
+            if _HAS_TORCH:
+                try:
+                    _ml_bm.init_ml()
+                    gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
+                        target_rgb, n_restarts=20, material=mat, substrate=sub
+                    )
+                    t1 = time.perf_counter()
+                    results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
+                except Exception as e:
+                    results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
+            else:
+                results["单柱梯度优化"] = (0, 99, "torch not installed")
 
             # 4. Dual-pillar gradient
             t0 = time.perf_counter()
-            try:
-                dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
-                    target_rgb, n_restarts=20, material=mat, substrate=sub
-                )
-                t1 = time.perf_counter()
-                results["双柱梯度优化"] = (t1 - t0, float(dde), None)
-            except Exception as e:
-                results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
+            if _HAS_TORCH:
+                try:
+                    dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
+                        target_rgb, n_restarts=20, material=mat, substrate=sub
+                    )
+                    t1 = time.perf_counter()
+                    results["双柱梯度优化"] = (t1 - t0, float(dde), None)
+                except Exception as e:
+                    results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
+            else:
+                results["双柱梯度优化"] = (0, 99, "torch not installed")
 
             # 5. Three-method comparison (TiO2 + a-Si grid + FP cavity)
             t0 = time.perf_counter()
