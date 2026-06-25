@@ -93,17 +93,30 @@ except Exception as e:
     import traceback; st.code(traceback.format_exc())
     st.stop()
 
-@st.cache_resource
-def get_ml_ready():
-    ok = ml_module.init_ml()
-    return (ok, ml_module._ORT_IS_V8 if ok else False)
+# Lazy ML init - only load models when user enables ML acceleration
+_ml_ready = False
+_ml_is_v8 = False
+_dual_ml_ready = False
+_ml_tried = False
+_dual_ml_tried = False
 
-_ml_ready, _ml_is_v8 = get_ml_ready()
+def _ensure_ml():
+    global _ml_ready, _ml_is_v8, _ml_tried
+    if _ml_tried: return
+    _ml_tried = True
+    try:
+        ok = ml_module.init_ml()
+        _ml_ready = ok
+        _ml_is_v8 = ml_module._ORT_IS_V8 if ok else False
+    except Exception: pass
 
-@st.cache_resource
-def get_dual_ml_ready():
-    return ml_module.init_dual_ml()
-_dual_ml_ready = get_dual_ml_ready()
+def _ensure_dual_ml():
+    global _dual_ml_ready, _dual_ml_tried
+    if _dual_ml_tried: return
+    _dual_ml_tried = True
+    try:
+        _dual_ml_ready = ml_module.init_dual_ml()
+    except Exception: pass
 
 
 st.title("🎨 AI超表面结构色设计助手")
@@ -411,6 +424,8 @@ from fp_cavity import (
     fp_cavity_spectrum, fp_dielectric_spectrum,
 )
 
+_ensure_ml()
+_ensure_dual_ml()
 use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
 use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
 
