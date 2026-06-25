@@ -562,7 +562,13 @@ with tab1:
             params[u"偏振"] = polarization
             params[u"角度"] = f"{angle:.0f}°"
             result = analyze_color(hex_color, params)
-        st.info(result)
+            st.session_state._ai_result = result
+        st.rerun()
+    if st.session_state.get('_ai_result'):
+        st.info(st.session_state._ai_result)
+        if st.button('✕ 清除', key='clear_ai_result'):
+            st.session_state.pop('_ai_result', None)
+            st.rerun()
 
     # --- Color gamut notice (non-FP only) ---
     if not is_fp and "TiO2" in material:
