@@ -11,7 +11,11 @@ CIE_X = torch.from_numpy(_CIE_X_NP.astype(np.float32))
 CIE_Y = torch.from_numpy(_CIE_Y_NP.astype(np.float32))
 CIE_Z = torch.from_numpy(_CIE_Z_NP.astype(np.float32))
 WL = torch.linspace(380, 780, 81)
-CIE_NORM = torch.trapezoid(CIE_Y, WL)
+# torch 1.x/2.x compatibility
+try:
+    CIE_NORM = torch.trapezoid(CIE_Y, WL)
+except AttributeError:
+    CIE_NORM = torch.trapz(CIE_Y, WL)
 SRGB_M = torch.from_numpy(_SRGB_M_NP.astype(np.float32))
 
 # Cauchy coefficients (A, B) for n(um) = A + B/um^2

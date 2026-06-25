@@ -1256,9 +1256,9 @@ with tab4:
     # Try PyTorch batch acceleration for color map
     try:
         import torch_model as _tm
-        _D_grid = _tm.torch.tensor(d_sample, dtype=_tm.torch.float32)
-        _H_grid = _tm.torch.tensor(h_sample, dtype=_tm.torch.float32)
-        _rgb_grid = _tm.batch_single_pillar_rgb_norm(_D_grid, _H_grid, period)
+        # Use batch_color_map_grid which properly meshes D and H
+        _rgb_grid = _tm.batch_color_map_grid(d_sample, h_sample, float(period))
+        _rgb_grid = _rgb_grid.reshape(len(d_sample), len(h_sample), 3)
         _use_torch = True
     except Exception as e:
         logging.warning(f"torch batch color map: {e}")
