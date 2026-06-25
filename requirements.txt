@@ -5,3 +5,4 @@ matplotlib
 scipy
 onnxruntime
 huggingface_hub
+torch
