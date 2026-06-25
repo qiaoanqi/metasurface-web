@@ -231,7 +231,7 @@ class MetaSurfaceColorEngine:
                     rgb = _tm.batch_spectrum_to_rgb(spec)
                     return np.nan_to_num(rgb.squeeze(0).numpy(), nan=0.5)
                 except Exception as e:
-                    logging.warning(f"engine fallback: {e}")
+                    logging.debug(f"engine fallback: {e}")
                     wls = np.arange(380, 785, 5)
                     refl = np.zeros(len(wls))
                     for i, wl_nm in enumerate(wls):
@@ -264,7 +264,7 @@ class MetaSurfaceColorEngine:
             rgb = _tm.batch_spectrum_to_rgb(spec)
             return np.nan_to_num(rgb.squeeze(0).numpy(), nan=0.5)
         except Exception as e:
-            logging.warning(f"engine fallback: {e}")
+            logging.debug(f"engine fallback: {e}")
             wls = np.arange(380, 785, 5)
             refl = np.array([self._single_wl_response(param, wl) for wl in wls])
             refl = refl / 0.86
@@ -450,7 +450,7 @@ class MetaSurfaceColorEngine:
                 wls = np.linspace(wl_start, wl_end, n_pts)
                 return wls, (spec.squeeze(0).numpy() / 0.86)
             except Exception as e:
-                logging.warning(f"engine fallback: {e}")
+                logging.debug(f"engine fallback: {e}")
                 wls = np.linspace(wl_start, wl_end, n_pts)
                 refl = np.zeros(len(wls))
                 for i, wl_nm in enumerate(wls):
@@ -482,7 +482,7 @@ class MetaSurfaceColorEngine:
             wls = np.linspace(wl_start, wl_end, n_pts)
             return wls, (spec.squeeze(0).numpy() / 0.86)
         except Exception as e:
-            logging.warning(f"engine fallback: {e}")
+            logging.debug(f"engine fallback: {e}")
             wls = np.linspace(wl_start, wl_end, n_pts)
             refl = np.array([self._single_wl_response(param, w) for w in wls])
             return wls, refl
@@ -632,7 +632,7 @@ class MetaSurfaceColorEngine:
                 de2k = delta_e2000(target_lab, lab)
                 real_scores.append((de2k, d, h, p_val, rgb, lab, de2k))
         except Exception as e:
-            logging.warning(f"engine fallback: {e}")
+            logging.debug(f"engine fallback: {e}")
             for ri, idx in enumerate(top_idx):
                 if progress_callback:
                     progress_callback(ri, total_rerank, "Coarse rerank")
@@ -683,7 +683,7 @@ class MetaSurfaceColorEngine:
                     self._last_polarization, self._last_angle)
                 top3.append((de2k, param, rgb, de76, de2k))
         except Exception as e:
-            logging.warning(f"engine fallback: {e}")
+            logging.debug(f"engine fallback: {e}")
             # Fallback: per-candidate inference
             for dd, dh, dp in fine_candidates:
                 param = MetaSurfaceParam(dd, dh, dp,
