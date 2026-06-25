@@ -426,7 +426,7 @@ from fp_cavity import (
 
 _ensure_ml()
 _ensure_dual_ml()
-use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
+use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES and not is_fp
 use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
 
 # Dual ML model does not support substrate selection (trained only on SiO2)
