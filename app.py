@@ -1773,9 +1773,15 @@ with tab5:
     @st.cache_data
     def _ml_error_stats(material, substrate, n_samples=400):
         """Compare Fano physical model vs ONNX ML model over random (D,H,P)."""
-        import torch_model as _tm_es
-        import ml_module as _ml_es
-        import torch as _torch_es
+        try:
+            import torch_model as _tm_es
+            import ml_module as _ml_es
+            import torch as _torch_es
+            _HAS_TORCH_ML = True
+        except ModuleNotFoundError:
+            _HAS_TORCH_ML = False
+        if not _HAS_TORCH_ML:
+            return None, None, None
         from color_utils import delta_e2000 as _de2k, rgb_to_lab as _rgb2lab
         rng = np.random.RandomState(42)
         D = rng.uniform(50, 350, n_samples)
@@ -1803,48 +1809,51 @@ with tab5:
     with st.spinner("计算 ML 模型误差分布 (400 组随机参数)..."):
         de2k_arr, fano_rgb, ml_rgb = _ml_error_stats(material, substrate)
 
-    mean_de = float(np.mean(de2k_arr))
-    median_de = float(np.median(de2k_arr))
-    p95_de = float(np.percentile(de2k_arr, 95))
-    pct_lt5 = float(np.mean(de2k_arr < 5)) * 100
-    pct_lt10 = float(np.mean(de2k_arr < 10)) * 100
-    pct_lt23 = float(np.mean(de2k_arr < 2.3)) * 100
+    if de2k_arr is None:
+        st.info("ML 精度分析需要 PyTorch 环境（HF 云端无 GPU，本功能需本地运行）")
+    else:
+        mean_de = float(np.mean(de2k_arr))
+        median_de = float(np.median(de2k_arr))
+        p95_de = float(np.percentile(de2k_arr, 95))
+        pct_lt5 = float(np.mean(de2k_arr < 5)) * 100
+        pct_lt10 = float(np.mean(de2k_arr < 10)) * 100
+        pct_lt23 = float(np.mean(de2k_arr < 2.3)) * 100
 
-    col_s1, col_s2 = st.columns([1, 1])
-    with col_s1:
-        fig_ml, ax_ml = _get_plt().subplots(figsize=(6, 4))
-        ax_ml.hist(de2k_arr, bins=40, color="#ff6b35", edgecolor="white", alpha=0.85)
-        ax_ml.axvline(mean_de, color="red", lw=1.5, ls="--", label=f"平均={mean_de:.1f}")
-        ax_ml.axvline(median_de, color="blue", lw=1.5, ls=":", label=f"中位数={median_de:.1f}")
-        ax_ml.axvline(2.3, color="green", lw=1.0, ls="-", alpha=0.7, label="人眼阈值=2.3")
-        ax_ml.set_xlabel("ΔE2000")
-        ax_ml.set_ylabel("样本数")
-        ax_ml.set_title(f"Fano vs ML ΔE2000 分布 (N={len(de2k_arr)})")
-        ax_ml.legend(fontsize=7)
-        ax_ml.grid(True, alpha=0.2)
-        ax_ml.text(0.98, 0.95, f"95%分位: {p95_de:.1f} | ΔE<2.3占比: {pct_lt23:.0f}%", transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
-                   bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
-        fig_ml.tight_layout()
-        st.pyplot(fig_ml)
-        _get_plt().close(fig_ml)
-    with col_s2:
-        st.markdown(f"""
-**统计摘要**
+        col_s1, col_s2 = st.columns([1, 1])
+        with col_s1:
+            fig_ml, ax_ml = _get_plt().subplots(figsize=(6, 4))
+            ax_ml.hist(de2k_arr, bins=40, color="#ff6b35", edgecolor="white", alpha=0.85)
+            ax_ml.axvline(mean_de, color="red", lw=1.5, ls="--", label=f"平均={mean_de:.1f}")
+            ax_ml.axvline(median_de, color="blue", lw=1.5, ls=":", label=f"中位数={median_de:.1f}")
+            ax_ml.axvline(2.3, color="green", lw=1.0, ls="-", alpha=0.7, label="人眼阈值=2.3")
+            ax_ml.set_xlabel("ΔE2000")
+            ax_ml.set_ylabel("样本数")
+            ax_ml.set_title(f"Fano vs ML ΔE2000 分布 (N={len(de2k_arr)})")
+            ax_ml.legend(fontsize=7)
+            ax_ml.grid(True, alpha=0.2)
+            ax_ml.text(0.98, 0.95, f"95%分位: {p95_de:.1f} | ΔE<2.3占比: {pct_lt23:.0f}%", transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
+                       bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+            fig_ml.tight_layout()
+            st.pyplot(fig_ml)
+            _get_plt().close(fig_ml)
+        with col_s2:
+            st.markdown(f"""
+    **统计摘要**
 
-| 指标 | 数值 |
-|------|------|
-| 平均 ΔE2000 | **{mean_de:.1f}** |
-| 中位数 ΔE2000 | **{median_de:.1f}** |
-| 95% 分位 | **{p95_de:.1f}** |
-| ΔE<5 占比 | **{pct_lt5:.0f}%** |
-| ΔE<10 占比 | **{pct_lt10:.0f}%** |
-| 人眼可辨阈值 | 2.3 |
+    | 指标 | 数值 |
+    |------|------|
+    | 平均 ΔE2000 | **{mean_de:.1f}** |
+    | 中位数 ΔE2000 | **{median_de:.1f}** |
+    | 95% 分位 | **{p95_de:.1f}** |
+    | ΔE<5 占比 | **{pct_lt5:.0f}%** |
+    | ΔE<10 占比 | **{pct_lt10:.0f}%** |
+    | 人眼可辨阈值 | 2.3 |
 
-**说明**:
-- ONNX ML 模型用合成数据训练，学习的是 Fano 物理模型的输出
-- ΔE 主要来自 ML 模型对共振峰形的近似误差
-- 系统实际色差主要取决于 Fano 物理模型的绝对精度
-""")
+    **说明**:
+    - ONNX ML 模型用合成数据训练，学习的是 Fano 物理模型的输出
+    - ΔE 主要来自 ML 模型对共振峰形的近似误差
+    - 系统实际色差主要取决于 Fano 物理模型的绝对精度
+    """)
 
     # Angle scan: color vs incident angle
     st.divider()
