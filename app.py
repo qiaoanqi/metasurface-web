@@ -649,8 +649,8 @@ with tab1:
                 c3.markdown(f'<div style="width:40px;height:24px;background:{hex_color};border-radius:4px;border:2px solid white;"></div>', unsafe_allow_html=True)
                 c4.markdown(f'<div style="width:40px;height:24px;background:{hex_hi};border-radius:4px;"></div><small>ΔE={de_hi:.3f}</small>', unsafe_allow_html=True)
             st.caption("工艺容差 ±5nm 下的颜色偏差 (ΔE < 0.02 肉眼不可分辨)")
-        except Exception as e:
-            st.caption(f"灵敏度分析不可用: {e}")
+        except Exception:
+            st.caption("灵敏度分析需 PyTorch（云端暂不支持，请本地运行）")
 
 # Tab 2: Inverse Design
 with tab2:
