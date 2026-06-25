@@ -748,7 +748,7 @@ with tab2:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"单柱梯度优化失败: {e}")
 
-if st.session_state.get('dual_pillar', False) and dual_gd_btn:
+    if st.session_state.get('dual_pillar', False) and dual_gd_btn:
         with st.spinner("📊 双柱梯度优化中 (numpy Adam, ~3-5秒)..."):
             try:
                 # numpy finite-difference (no torch needed)
@@ -791,7 +791,7 @@ if st.session_state.get('dual_pillar', False) and dual_gd_btn:
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化失败: {e}")
-if ai_btn:
+    if ai_btn:
         with st.spinner("🤖 三方案并行搜索中 (TiO2 / a-Si / FP腔)..."):
             candidates = []
             # TiO2
@@ -837,7 +837,7 @@ if ai_btn:
                     adv = analyze_color(picker_hex, {"方案": best_name, "ΔE2000": f"{best_de:.1f}"})
                     st.info(f"🤖 AI: {adv}")
                 except Exception as e: logging.warning(f"ai: {e}")
-        st.rerun()
+            st.rerun()
 
     if run_btn:
         # Result cache: skip search for previously-searched colors
