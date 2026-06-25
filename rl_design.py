@@ -26,7 +26,9 @@ def _ensure_model_file(rel_path):
             local_dir_use_symlinks=False)
     except Exception:
         return local
-CACHE_FILE = _ensure_model_file("models/rl_qtable.pkl")
+_CACHE_FILE_PATH = "models/rl_qtable.pkl"
+def _get_cache_file():
+    return _ensure_model_file(_CACHE_FILE_PATH)
 
 def _disc(v, lo, hi):
     return int(np.clip((v - lo) / (hi - lo) * (BINS - 1), 0, BINS - 1))
@@ -110,12 +112,14 @@ class RLDesigner:
                 break
         return best[0], best[1], best[2], best[3], best_de
 
-    def save(self, path=CACHE_FILE):
+    def save(self, path=None):
+        if path is None: path = _get_cache_file()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump({"q": self.q, "trained": self.trained}, f)
 
-    def load(self, path=CACHE_FILE):
+    def load(self, path=None):
+        if path is None: path = _get_cache_file()
         if os.path.exists(path):
             with open(path, "rb") as f:
                 d = pickle.load(f)
