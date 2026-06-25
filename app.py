@@ -4,6 +4,11 @@ from __future__ import annotations
 import io, os
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
+# NumPy 1.x/2.x compatibility
+if not hasattr(np, 'trapz'):
+    np.trapz = np.trapezoid
+if not hasattr(np, 'trapezoid'):
+    np.trapezoid = np.trapz
 from PIL import Image
 import streamlit as st
 import logging
