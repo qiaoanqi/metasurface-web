@@ -182,6 +182,8 @@ with st.sidebar:
     st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
 
     st.divider()
+    _ensure_ml()
+    _ensure_dual_ml()
     st.header("ML 加速")
     if 'ml_accel' not in st.session_state:
         st.session_state.ml_accel = _ml_ready
@@ -424,10 +426,14 @@ from fp_cavity import (
     fp_cavity_spectrum, fp_dielectric_spectrum,
 )
 
-_ensure_ml()
-_ensure_dual_ml()
-use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES and not is_fp
-use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
+try:
+    use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES and not is_fp
+except Exception:
+    use_ml = False
+try:
+    use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
+except Exception:
+    use_dual_ml = False
 
 # Dual ML model does not support substrate selection (trained only on SiO2)
 # When non-default substrate: fall back to physical model
