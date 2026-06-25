@@ -414,7 +414,11 @@ from fp_cavity import (
 use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES
 use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
 
-# v7 multi-material ML supports all materials
+# Dual ML model does not support substrate selection (trained only on SiO2)
+# When non-default substrate: fall back to physical model
+if use_dual_ml and substrate != "SiO2 (fused silica)":
+    use_dual_ml = False
+
 if use_dual_ml:
     d1v = st.session_state.get('d1_val', diameter)
     h1v = st.session_state.get('h1_val', height)

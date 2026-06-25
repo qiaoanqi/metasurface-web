@@ -148,7 +148,9 @@ def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", materia
     spec = _ORT_SESSION.run(None, {"input": x})[0][0]
     return np.clip(spec, 0, None)
 
-def predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
+def predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
+    if substrate != "SiO2 (fused silica)":
+        return None  # dual ML model does not support non-SiO2 substrate
     if not _DUAL_ORT_AVAILABLE:
         return None
     if material not in MATERIAL_CODES:
@@ -164,7 +166,9 @@ def predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polar
     spec = _DUAL_ORT_SESSION.run(None, {"input": x})[0][0]
     return np.clip(spec, 0, None)
 
-def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)"):
+def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarization="TE", material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
+    if substrate != "SiO2 (fused silica)":
+        return None  # dual ML model does not support non-SiO2 substrate
     spec = predict_dual_spectrum(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg, polarization, material)
     if spec is None:
         return None
