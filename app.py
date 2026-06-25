@@ -711,15 +711,15 @@ with tab2:
                 st.warning(f"RL搜索不可用: {e}")
 
     if gd_btn:
-        with st.spinner("🎯 单柱梯度优化中 (批量Adam, ~3-5秒)..."):
+        with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
             try:
-                import torch_model as _tm_batch
-                result = _tm_batch.inverse_design_ml_batch(
+                # numpy finite-difference (no torch needed)
+                result = ml_module._inverse_design_numpy(
                     target_rgb_norm, n_steps=300, n_restarts=20,
                     material=material, substrate=substrate, theta=angle
                 )
                 if result is None:
-                    st.warning("单柱梯度不可用: 需要安装PyTorch")
+                    st.warning("单柱梯度不可用: 需要ONNX模型")
                 else:
                     d_gd, h_gd, p_gd, pred_rgb, loss = result
                     rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
@@ -732,64 +732,66 @@ with tab2:
                     st.session_state._gd_hex = hex_gd
                     st.session_state._gd_de = float(de_gd)
                     st.session_state._gd_rgb = tuple(rc)
-                    st.success(f"🎯 单柱梯度完成! {hex_gd} | ΔE2000={de_gd:.1f}")
+                    st.success(f"🎉 单柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
                     c1gd, c2gd = st.columns([1, 3])
                     with c1gd:
                         st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
                     with c2gd:
-                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_gd:.1f}nm  H={h_gd:.1f}nm  P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (梯度优化)")
+                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_gd:.1f}nm  H={h_gd:.1f}nm  P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (单柱梯度优化)")
                     def _apply_gd_cb():
                         st.session_state.d_val = float(st.session_state._gd_d)
                         st.session_state.h_val = float(st.session_state._gd_h)
                         st.session_state.p_val = float(st.session_state._gd_p)
-                    st.button("应用梯度参数", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
-                    st.caption("梯度下降直接优化物理模型，精度高于RL，速度低于网格搜索。推荐在RL定位后用梯度精调。")
+                    st.button("✔️ 应用结果", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
+                    st.caption("✳️ 梯度优化找到最优解，如果不满意，可用RL搜索作为起点重新优化")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
-                st.warning(f"单柱梯度不可用: {e}")
+                st.warning(f"单柱梯度优化失败: {e}")
 
-
-    if st.session_state.get('dual_pillar', False) and dual_gd_btn:
-        with st.spinner("🎯 双柱梯度优化中 (PyTorch批量Adam, ~3-5秒)..."):
+if st.session_state.get('dual_pillar', False) and dual_gd_btn:
+        with st.spinner("📊 双柱梯度优化中 (numpy Adam, ~3-5秒)..."):
             try:
-                import torch_model as _tm_gd
-                result = _tm_gd.inverse_design_dual(
+                # numpy finite-difference (no torch needed)
+                result = ml_module._inverse_design_dual_numpy(
                     target_rgb_norm, n_steps=300, n_restarts=20,
                     material=material, substrate=substrate, theta=angle
                 )
-                d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, loss = result
-                rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
-                hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
-                from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
-                de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
-                st.session_state._dual_gd_d1 = float(d1_gd)
-                st.session_state._dual_gd_h1 = float(h1_gd)
-                st.session_state._dual_gd_d2 = float(d2_gd)
-                st.session_state._dual_gd_h2 = float(h2_gd)
-                st.session_state._dual_gd_p = float(p_gd)
-                st.session_state._dual_gd_hex = hex_gd
-                st.session_state._dual_gd_de = float(de_gd)
-                st.session_state._dual_gd_rgb = tuple(rc)
-                st.success(f"🎯 双柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
-                c1gd, c2gd = st.columns([1, 3])
-                with c1gd:
-                    st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
-                with c2gd:
-                    st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD1={d1_gd:.1f}nm H1={h1_gd:.1f}nm D2={d2_gd:.1f}nm H2={h2_gd:.1f}nm P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (双柱梯度优化)")
-                def _apply_dual_gd_cb():
-                    st.session_state.d_val = float(st.session_state._dual_gd_d1)
-                    st.session_state.h_val = float(st.session_state._dual_gd_h1)
-                    st.session_state.d1_val = float(st.session_state._dual_gd_d1)
-                    st.session_state.h1_val = float(st.session_state._dual_gd_h1)
-                    st.session_state.d2_val = float(st.session_state._dual_gd_d2)
-                    st.session_state.h2_val = float(st.session_state._dual_gd_h2)
-                    st.session_state.p_val = float(st.session_state._dual_gd_p)
-                st.button("应用双柱梯度参数", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
-                st.caption("双柱梯度下降同时优化5个参数(D1,H1,D2,H2,P)，搜索空间更大，耗时更长但能找到更优解。")
+                if result is None:
+                    st.warning("双柱梯度不可用: 需要ONNX双柱模型")
+                else:
+                    d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, loss = result
+                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
+                    from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
+                    de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
+                    st.session_state._dual_gd_d1 = float(d1_gd)
+                    st.session_state._dual_gd_h1 = float(h1_gd)
+                    st.session_state._dual_gd_d2 = float(d2_gd)
+                    st.session_state._dual_gd_h2 = float(h2_gd)
+                    st.session_state._dual_gd_p = float(p_gd)
+                    st.session_state._dual_gd_hex = hex_gd
+                    st.session_state._dual_gd_de = float(de_gd)
+                    st.session_state._dual_gd_rgb = tuple(rc)
+                    st.success(f"🎉 双柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
+                    c1gd, c2gd = st.columns([1, 3])
+                    with c1gd:
+                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
+                    with c2gd:
+                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD1={d1_gd:.1f}nm H1={h1_gd:.1f}nm D2={d2_gd:.1f}nm H2={h2_gd:.1f}nm P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (双柱梯度优化)")
+                    def _apply_dual_gd_cb():
+                        st.session_state.d_val = float(st.session_state._dual_gd_d1)
+                        st.session_state.h_val = float(st.session_state._dual_gd_h1)
+                        st.session_state.d1_val = float(st.session_state._dual_gd_d1)
+                        st.session_state.h1_val = float(st.session_state._dual_gd_h1)
+                        st.session_state.d2_val = float(st.session_state._dual_gd_d2)
+                        st.session_state.h2_val = float(st.session_state._dual_gd_h2)
+                        st.session_state.p_val = float(st.session_state._dual_gd_p)
+                    st.button("✔️ 应用双柱结果", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
+                    st.caption("✳️ 梯度优化找到最优解5参数(D1,H1,D2,H2,P)，如果不满意，可手动微调")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
-                st.warning(f"双柱梯度优化不可用: {e}")
-    if ai_btn:
+                st.warning(f"双柱梯度优化失败: {e}")
+if ai_btn:
         with st.spinner("🤖 三方案并行搜索中 (TiO2 / a-Si / FP腔)..."):
             candidates = []
             # TiO2
@@ -1272,7 +1274,7 @@ with tab4:
         rows_html += f'<th style="padding:2px 4px;color:#888;font-size:10px;">{h:.0f}</th>'
     rows_html += '</tr>'
 
-    # Try PyTorch batch acceleration for color map
+    # Try numpy batch acceleration for color map
     try:
         import torch_model as _tm
         # Use batch_color_map_grid which properly meshes D and H

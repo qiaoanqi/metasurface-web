@@ -245,3 +245,172 @@ def _inverse_design_ml_serial(target_rgb, n_steps=300, n_restarts=40, material="
             best_loss = fl
             best_result = (d_f, h_f, p_f, pred, fl)
     return best_result
+
+
+# ---- inverse design (numpy finite-difference, no torch) ----
+def _inverse_design_numpy(target_rgb, n_steps=300, n_restarts=20, material="TiO2 (anatase)", substrate="SiO2 (fused silica)", theta=0.0):
+    """Gradient-based inverse design using numpy finite differences (no PyTorch needed).
+
+    Uses central finite differences to approximate gradients through the ONNX model.
+    Each step: 6 ONNX forward passes (for dD, dH, dP) at ~0.5ms each.
+    Total: ~1s per restart, comparable to PyTorch version.
+    """
+    if not _ORT_AVAILABLE:
+        return None
+    if material not in MATERIAL_CODES:
+        return None
+    if substrate not in SUBSTRATE_CODES:
+        return None
+
+    target = np.array(target_rgb, dtype=np.float32)
+    eps = 1.0  # finite difference step (nm)
+    best_loss = 1e9
+    best_result = None
+    rng = np.random.RandomState(42)
+
+    # Adam optimizer state (numpy)
+    beta1, beta2 = 0.9, 0.999
+    lr = 0.5
+
+    for restart in range(n_restarts):
+        d = np.clip(rng.uniform(50, 350), 50, 350)
+        h = np.clip(rng.uniform(80, 600), 80, 600)
+        p = np.clip(rng.uniform(200, 600), 200, 600)
+        # Adam moments
+        m_d, m_h, m_p = 0.0, 0.0, 0.0
+        v_d, v_h, v_p = 0.0, 0.0, 0.0
+
+        for step in range(n_steps):
+            # Forward at current point
+            rgb_c = predict_rgb(d, h, p, theta, "TE", material, substrate)
+            if rgb_c is None:
+                break
+            loss_c = float(np.mean((target - rgb_c) ** 2))
+
+            # Finite difference: D
+            rgb_dp = predict_rgb(d + eps, h, p, theta, "TE", material, substrate)
+            rgb_dm = predict_rgb(d - eps, h, p, theta, "TE", material, substrate)
+            if rgb_dp is None or rgb_dm is None:
+                break
+            loss_dp = float(np.mean((target - rgb_dp) ** 2))
+            loss_dm = float(np.mean((target - rgb_dm) ** 2))
+            grad_d = (loss_dp - loss_dm) / (2 * eps)
+
+            # Finite difference: H
+            rgb_hp = predict_rgb(d, h + eps, p, theta, "TE", material, substrate)
+            rgb_hm = predict_rgb(d, h - eps, p, theta, "TE", material, substrate)
+            if rgb_hp is None or rgb_hm is None:
+                break
+            loss_hp = float(np.mean((target - rgb_hp) ** 2))
+            loss_hm = float(np.mean((target - rgb_hm) ** 2))
+            grad_h = (loss_hp - loss_hm) / (2 * eps)
+
+            # Finite difference: P
+            rgb_pp = predict_rgb(d, h, p + eps, theta, "TE", material, substrate)
+            rgb_pm = predict_rgb(d, h, p - eps, theta, "TE", material, substrate)
+            if rgb_pp is None or rgb_pm is None:
+                break
+            loss_pp = float(np.mean((target - rgb_pp) ** 2))
+            loss_pm = float(np.mean((target - rgb_pm) ** 2))
+            grad_p = (loss_pp - loss_pm) / (2 * eps)
+
+            # Adam update
+            m_d = beta1 * m_d + (1 - beta1) * grad_d
+            m_h = beta1 * m_h + (1 - beta1) * grad_h
+            m_p = beta1 * m_p + (1 - beta1) * grad_p
+            v_d = beta2 * v_d + (1 - beta2) * grad_d ** 2
+            v_h = beta2 * v_h + (1 - beta2) * grad_h ** 2
+            v_p = beta2 * v_p + (1 - beta2) * grad_p ** 2
+
+            t = step + 1
+            m_d_hat = m_d / (1 - beta1 ** t)
+            m_h_hat = m_h / (1 - beta1 ** t)
+            m_p_hat = m_p / (1 - beta1 ** t)
+            v_d_hat = v_d / (1 - beta2 ** t)
+            v_h_hat = v_h / (1 - beta2 ** t)
+            v_p_hat = v_p / (1 - beta2 ** t)
+
+            d -= lr * m_d_hat / (np.sqrt(v_d_hat) + 1e-8)
+            h -= lr * m_h_hat / (np.sqrt(v_h_hat) + 1e-8)
+            p -= lr * m_p_hat / (np.sqrt(v_p_hat) + 1e-8)
+
+            # Clamp
+            d = np.clip(d, 50, 350)
+            h = np.clip(h, 80, 600)
+            p = np.clip(p, max(d * 1.2, 200), 600)
+
+            if loss_c < best_loss:
+                best_loss = loss_c
+                best_result = (float(d), float(h), float(p), [float(x) for x in rgb_c], float(loss_c))
+
+    if best_result is None:
+        return None
+    return best_result
+
+
+# ---- numpy-based dual pillar inverse design ----
+def _inverse_design_dual_numpy(target_rgb, n_steps=300, n_restarts=30, material="TiO2 (anatase)", substrate="SiO2 (fused silica)", theta=0.0):
+    """Dual-pillar gradient-based inverse design using numpy finite differences."""
+    if not _DUAL_ORT_AVAILABLE:
+        return None
+    if material not in MATERIAL_CODES:
+        return None
+    if substrate not in SUBSTRATE_CODES:
+        # Dual ML only supports SiO2, fall through to physical model in app.py
+        return None
+
+    target = np.array(target_rgb, dtype=np.float32)
+    eps = 1.0
+    best_loss = 1e9
+    best_result = None
+    rng = np.random.RandomState(42)
+    beta1, beta2 = 0.9, 0.999
+    lr = 0.5
+
+    for restart in range(n_restarts):
+        d1 = np.clip(rng.uniform(60, 267), 60, 267)
+        h1 = np.clip(rng.uniform(80, 600), 80, 600)
+        d2 = np.clip(rng.uniform(60, 267), 60, 267)
+        h2 = np.clip(rng.uniform(80, 600), 80, 600)
+        p = np.clip(rng.uniform(200, 600), 200, 600)
+
+        m = np.zeros(5)
+        v = np.zeros(5)
+
+        for step in range(n_steps):
+            params = np.array([d1, h1, d2, h2, p])
+            rgb_c = predict_dual_rgb(d1, h1, d2, h2, p, theta, "TE", material, substrate)
+            if rgb_c is None:
+                break
+            loss_c = float(np.mean((target - rgb_c) ** 2))
+
+            grads = np.zeros(5)
+            for i in range(5):
+                p_plus = params.copy(); p_plus[i] += eps
+                p_minus = params.copy(); p_minus[i] -= eps
+                r_plus = predict_dual_rgb(p_plus[0], p_plus[1], p_plus[2], p_plus[3], p_plus[4], theta, "TE", material, substrate)
+                r_minus = predict_dual_rgb(p_minus[0], p_minus[1], p_minus[2], p_minus[3], p_minus[4], theta, "TE", material, substrate)
+                if r_plus is None or r_minus is None:
+                    grads[i] = 0
+                else:
+                    grads[i] = (float(np.mean((target - r_plus) ** 2)) - float(np.mean((target - r_minus) ** 2))) / (2 * eps)
+
+            m = beta1 * m + (1 - beta1) * grads
+            v = beta2 * v + (1 - beta2) * grads ** 2
+            t = step + 1
+            m_hat = m / (1 - beta1 ** t)
+            v_hat = v / (1 - beta2 ** t)
+            update = lr * m_hat / (np.sqrt(v_hat) + 1e-8)
+
+            d1 -= update[0]; h1 -= update[1]; d2 -= update[2]; h2 -= update[3]; p -= update[4]
+            d1 = np.clip(d1, 60, 267); h1 = np.clip(h1, 80, 600)
+            d2 = np.clip(d2, 60, 267); h2 = np.clip(h2, 80, 600)
+            min_p = max(d1, d2) * 1.2 + 20
+            p = np.clip(p, min_p, 600)
+
+            if loss_c < best_loss:
+                best_loss = loss_c
+                best_result = (float(d1), float(h1), float(d2), float(h2), float(p),
+                               [float(x) for x in rgb_c], float(loss_c))
+
+    return best_result
