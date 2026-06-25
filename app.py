@@ -1345,9 +1345,9 @@ with tab4:
                     material=material, substrate=substrate
                 )
             sp_np = sp.squeeze().detach().numpy()
-            Xv = np.trapezoid(sp_np * _cie_x, _wl)
-            Yv = np.trapezoid(sp_np * _cie_y, _wl)
-            Zv = np.trapezoid(sp_np * _cie_z, _wl)
+            Xv = np.trapz(sp_np * _cie_x, _wl)
+            Yv = np.trapz(sp_np * _cie_y, _wl)
+            Zv = np.trapz(sp_np * _cie_z, _wl)
             total = Xv + Yv + Zv
             if total > 0:
                 px, py = Xv/total, Yv/total

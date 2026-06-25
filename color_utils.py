@@ -46,7 +46,12 @@ CIE_Z = np.array([
     0.000000], dtype=np.float64)
 
 WL = np.linspace(380, 780, 81, dtype=np.float32)
-CIE_NORM = float(np.trapezoid(CIE_Y, WL))
+# NumPy 1.x/2.x compatibility
+try:
+    _trapz = np.trapezoid
+except AttributeError:
+    _trapz = np.trapz
+CIE_NORM = float(_trapz(CIE_Y, WL))
 
 D65 = np.array([0.95047, 1.00000, 1.08883], dtype=np.float64)
 
