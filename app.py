@@ -1282,7 +1282,7 @@ with tab4:
         _rgb_grid = _rgb_grid.reshape(len(d_sample), len(h_sample), 3)
         _use_torch = True
     except Exception as e:
-        logging.warning(f"torch batch color map: {e}")
+        logging.debug(f"torch batch color map: {e}")
         _use_torch = False
 
     for di, d in enumerate(d_sample):
@@ -1381,7 +1381,7 @@ with tab4:
                 ax.annotate(f"({px:.3f},{py:.3f})", (px, py), textcoords="offset points",
                            xytext=(10,10), fontsize=9, color="#333")
         except Exception as e:
-            logging.warning(f"chromaticity annotate: {e}")
+            logging.debug(f"chromaticity annotate: {e}")
         ax.set_xlim(0, 0.8); ax.set_ylim(0, 0.9)
         ax.set_xlabel("x"); ax.set_ylabel("y")
         ax.set_title(f"{material}  |  D={diameter:.0f}nm H={height:.0f}nm P={period:.0f}nm", fontsize=9)
@@ -1871,7 +1871,7 @@ with tab5:
             _ang_t)
         scan_rgbs = _scan_rgb.numpy()
     except Exception as e:
-        logging.warning(f"angle scan batch: {e}")
+        logging.debug(f"angle scan batch: {e}")
         scan_rgbs = []
         for a in angles_scan:
             param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))
