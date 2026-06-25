@@ -2,3 +2,7 @@ streamlit==1.32.0
 numpy==1.26.4
 pillow==10.2.0
 matplotlib==3.8.3
+onnxruntime==1.17.0
+torch==2.2.0
+scipy==1.12.0
+huggingface_hub>=0.20.3
