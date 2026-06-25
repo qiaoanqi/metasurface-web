@@ -1699,7 +1699,18 @@ with tab5:
 
     col_v1, col_v2 = st.columns([3, 2])
     with col_v1:
-        fdtc_img = os.path.join(os.path.dirname(__file__), "data", "fano_vs_fdtd_smallD.png")
+        # Auto-download FDTD image if not present
+        _fdtc_local = os.path.join(os.path.dirname(__file__), "data", "fano_vs_fdtd_smallD.png")
+        if not os.path.exists(_fdtc_local):
+            try:
+                from huggingface_hub import hf_hub_download
+                os.makedirs(os.path.dirname(_fdtc_local), exist_ok=True)
+                hf_hub_download(repo_id="qiaoanqi/metasurface-models", filename="data/fano_vs_fdtd_smallD.png",
+                                cache_dir=os.path.join(os.path.dirname(__file__), ".hf_cache"),
+                                local_dir=os.path.dirname(__file__), local_dir_use_symlinks=False)
+            except Exception:
+                pass
+        fdtc_img = _fdtc_local
         if os.path.exists(fdtc_img):
             st.image(fdtc_img, caption="P=200nm, D=30-76nm | Mie共振主导区")
         else:

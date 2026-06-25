@@ -10,7 +10,23 @@ BINS = 8
 N_STATES = BINS**3
 ACTIONS = [("D+5",5,0,0),("D-5",-5,0,0),("H+5",0,5,0),("H-5",0,-5,0),("P+5",0,0,5),("P-5",0,0,-5)]
 N_ACTIONS = len(ACTIONS)
-CACHE_FILE = "models/rl_qtable.pkl"
+# Auto-download from HF Hub if needed
+_MODEL_REPO = "qiaoanqi/metasurface-models"
+def _ensure_model_file(rel_path):
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    if os.path.exists(local):
+        return local
+    try:
+        from huggingface_hub import hf_hub_download
+        os.makedirs(os.path.dirname(local), exist_ok=True)
+        return hf_hub_download(
+            repo_id=_MODEL_REPO, filename=rel_path,
+            cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf_cache"),
+            local_dir=os.path.dirname(os.path.abspath(__file__)),
+            local_dir_use_symlinks=False)
+    except Exception:
+        return local
+CACHE_FILE = _ensure_model_file("models/rl_qtable.pkl")
 
 def _disc(v, lo, hi):
     return int(np.clip((v - lo) / (hi - lo) * (BINS - 1), 0, BINS - 1))

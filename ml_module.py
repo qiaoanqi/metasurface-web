@@ -1,6 +1,26 @@
 # ml_module.py - ML acceleration for metasurface color engine (ONNX Runtime + optional PyTorch)
 import os
 import numpy as np
+
+# --- Auto-download models from HF Hub if not present ---
+_MODEL_REPO = 'qiaoanqi/metasurface-models'
+
+def _ensure_model_file(rel_path):
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    if os.path.exists(local):
+        return local
+    try:
+        from huggingface_hub import hf_hub_download
+        os.makedirs(os.path.dirname(local), exist_ok=True)
+        downloaded = hf_hub_download(
+            repo_id=_MODEL_REPO, filename=rel_path,
+            cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.hf_cache'),
+            local_dir=os.path.dirname(os.path.abspath(__file__)),
+            local_dir_use_symlinks=False)
+        return downloaded
+    except Exception:
+        return local
+
 from color_utils import CIE_X, CIE_Y, CIE_Z, WL, CIE_NORM, SRGB_M, spectrum_to_srgb
 
 # ---- globals ----
@@ -24,9 +44,8 @@ def init_ml():
     global _ORT_AVAILABLE, _ORT_SESSION, _ORT_IS_V8
     try:
         import onnxruntime as ort
-        _dir = os.path.dirname(os.path.abspath(__file__))
-        path_v8 = os.path.join(_dir, "models", "forward_mlp_v8_sub.onnx")
-        path_v7 = os.path.join(_dir, "models", "forward_mlp_v7_multi.onnx")
+        path_v8 = _ensure_model_file("models/forward_mlp_v8_sub.onnx")
+        path_v7 = _ensure_model_file("models/forward_mlp_v7_multi.onnx")
         if os.path.exists(path_v8):
             _ORT_SESSION = ort.InferenceSession(path_v8, providers=["CPUExecutionProvider"])
             _ORT_IS_V8 = True
@@ -44,8 +63,7 @@ def init_dual_ml():
     global _DUAL_ORT_AVAILABLE, _DUAL_ORT_SESSION, _DUAL_IS_V3
     try:
         import onnxruntime as ort
-        _dir = os.path.dirname(os.path.abspath(__file__))
-        path_v3 = os.path.join(_dir, "models", "dual_mlp_v3_multi.onnx")
+        path_v3 = _ensure_model_file("models/dual_mlp_v3_multi.onnx")
         if not os.path.exists(path_v3):
             return False
         _DUAL_ORT_SESSION = ort.InferenceSession(path_v3, providers=["CPUExecutionProvider"])
@@ -62,9 +80,8 @@ def _init_torch_for_inverse():
         return _TORCH_FWD is not False
     try:
         import torch, torch.nn as nn
-        _dir = os.path.dirname(os.path.abspath(__file__))
-        path_v8 = os.path.join(_dir, "models", "forward_mlp_v8_sub.pt")
-        path_v7 = os.path.join(_dir, "models", "forward_mlp_v7_multi.pt")
+        path_v8 = _ensure_model_file("models/forward_mlp_v8_sub.pt")
+        path_v7 = _ensure_model_file("models/forward_mlp_v7_multi.pt")
         path = path_v8 if os.path.exists(path_v8) else path_v7
         is_v8 = os.path.exists(path_v8)
         if not os.path.exists(path):
