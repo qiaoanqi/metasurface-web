@@ -102,7 +102,7 @@ _dual_ml_tried = False
 
 def _ensure_ml():
     global _ml_ready, _ml_is_v8, _ml_tried
-    if _ml_tried: return
+    if _ml_tried and _ml_ready: return
     _ml_tried = True
     try:
         ok = ml_module.init_ml()
@@ -112,7 +112,7 @@ def _ensure_ml():
 
 def _ensure_dual_ml():
     global _dual_ml_ready, _dual_ml_tried
-    if _dual_ml_tried: return
+    if _dual_ml_tried and _dual_ml_ready: return
     _dual_ml_tried = True
     try:
         _dual_ml_ready = ml_module.init_dual_ml()
