@@ -726,9 +726,9 @@ with tab2:
         with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
             try:
                 # numpy finite-difference (no torch needed)
-                result = ml_module._inverse_design_numpy(
+                result = ml_module._inverse_design_ml_serial(
                     target_rgb_norm, n_steps=300, n_restarts=20,
-                    material=material, substrate=substrate, theta=angle
+                    material=material, substrate=substrate
                 )
                 if result is None:
                     st.warning("单柱梯度不可用: 需要ONNX模型")
