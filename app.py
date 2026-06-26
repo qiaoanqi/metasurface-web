@@ -1835,6 +1835,9 @@ with tab5:
                 with st.spinner("\u8ba1\u7b97 ML \u6a21\u578b\u8bef\u5dee\u5206\u5e03..."):
                     st.session_state[cache_key] = _ml_error_stats(material, substrate)
             de2k_arr, fano_rgb, ml_rgb = st.session_state.get(cache_key, (None, None, None))
+        else:
+            st.info("点击按钮运行 ML 精度分析")
+            de2k_arr = None
 
     if de2k_arr is None:
         st.info("ML 精度分析需要 PyTorch 环境（HF 云端无 GPU，本功能需本地运行）")
