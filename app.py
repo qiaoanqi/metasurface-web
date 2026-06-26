@@ -725,8 +725,8 @@ with tab2:
     if gd_btn:
         with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
             try:
-                # numpy finite-difference (no torch needed)
-                result = ml_module._inverse_design_ml_serial(
+                # numpy finite-difference via ONNX (fast on CPU)
+                result = ml_module._inverse_design_numpy(
                     target_rgb_norm, n_steps=300, n_restarts=20,
                     material=material, substrate=substrate
                 )
@@ -1552,7 +1552,7 @@ with tab5:
                     logging.warning(f"fp ag gamut: {e}")
         return np.array(pts) if pts else np.zeros((0, 2))
 
-    show_gamut = st.checkbox("显示色域对比图", value=True,
+    show_gamut = st.checkbox("显示色域对比图", value=False,
         help="基于 Fano/Lorentzian 物理模型计算的三种材料体系 CIE 色域边界")
     if show_gamut:
         with st.spinner("物理模型计算色域中 (TiO2, a-Si, FP腔)..."):
@@ -1610,137 +1610,146 @@ with tab5:
         st.pyplot(fig_gamut)
         _get_plt().close(fig_gamut)
 
+    @st.cache_data
+    def _benchmark_methods():
+        """Benchmark all 5 inverse design methods with a standard target."""
+        import time
+        try:
+            import torch_model as _tm_bm, ml_module as _ml_bm
+            import torch as _t_bm
+            _HAS_TORCH = True
+        except ModuleNotFoundError:
+            _HAS_TORCH = False
+        from engine import MetaSurfaceColorEngine as _Eng
+        from rl_design import RLDesigner as _RL
+        from fp_cavity import fp_cavity_spectrum
+        from color_utils import spectrum_to_srgb, delta_e2000, rgb_to_lab
+        target_rgb = np.array([0.478, 0.310, 0.133])  # #7a4f22
+        target_lab = rgb_to_lab(target_rgb)
+        mat = "TiO2 (anatase)"
+        sub = "SiO2 (fused silica)"
+        results = {}
+
+        # 1. Grid search
+        t0 = time.perf_counter()
+        try:
+            _eng = _Eng()
+            _eng.rebuild_library(mat, sub, "TE", 0)
+            grid_res = _eng.inverse_design(target_rgb)
+            t1 = time.perf_counter()
+            de_grid = grid_res[0][4] if grid_res else 99
+            results["网格搜索"] = (t1 - t0, de_grid, grid_res[0][1] if grid_res else None)
+        except Exception as e:
+            results["网格搜索"] = (0, 99, f"ERR: {e}")
+
+        # 2. RL Q-learning
+        t0 = time.perf_counter()
+        try:
+            from rl_design import get_trained_rl as _gtrl
+            _rl = _gtrl()
+            target_hex = "#7a4f22"
+            d_rl, h_rl, p_rl, hex_rl, de_rl = _rl.search(target_hex, steps=30)
+            t1 = time.perf_counter()
+            results["RL Q-learning"] = (t1 - t0, float(de_rl), None)
+        except Exception as e:
+            results["RL Q-learning"] = (0, 99, f"ERR: {e}")
+
+        # 3. Single-pillar gradient
+        t0 = time.perf_counter()
+        if _HAS_TORCH:
+            try:
+                _ml_bm.init_ml()
+                gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
+                    target_rgb, n_restarts=20, material=mat, substrate=sub
+                )
+                t1 = time.perf_counter()
+                results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
+            except Exception as e:
+                results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
+        else:
+            results["单柱梯度优化"] = (0, 99, "torch not installed")
+
+        # 4. Dual-pillar gradient
+        t0 = time.perf_counter()
+        if _HAS_TORCH:
+            try:
+                dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
+                    target_rgb, n_restarts=20, material=mat, substrate=sub
+                )
+                t1 = time.perf_counter()
+                results["双柱梯度优化"] = (t1 - t0, float(dde), None)
+            except Exception as e:
+                results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
+        else:
+            results["双柱梯度优化"] = (0, 99, "torch not installed")
+
+        # 5. Three-method comparison (TiO2 + a-Si grid + FP cavity)
+        t0 = time.perf_counter()
+        try:
+            best3_de = 999.0
+            _eng = _Eng()
+            # TiO2 grid
+            _eng.rebuild_library(mat, sub, "TE", 0)
+            res1 = _eng.inverse_design(target_rgb)
+            if res1: best3_de = min(best3_de, res1[0][4])
+            # a-Si grid
+            _eng.rebuild_library("a-Si (amorphous)", sub, "TE", 0)
+            res2 = _eng.inverse_design(target_rgb)
+            if res2: best3_de = min(best3_de, res2[0][4])
+            # FP cavity coarse search
+            for t_nm in range(50, 601, 20):
+                wls, refl = fp_cavity_spectrum(t_nm, 0.0, True)
+                rgb_fp = spectrum_to_srgb(wls, np.clip(refl, 0, None))
+                de_fp = delta_e2000(target_lab, rgb_to_lab(rgb_fp))
+                if de_fp < best3_de: best3_de = de_fp
+            t1 = time.perf_counter()
+            results["三方案对比"] = (t1 - t0, best3_de, None)
+        except Exception as e:
+            results["三方案对比"] = (0, 99, f"ERR: {e}")
+
+        return results
+
     # === Method timing comparison ===
     st.divider()
-    with st.expander("⚡ 方法耗时对比 (5种逆设计方法)", expanded=False):
-        @st.cache_data
-        def _benchmark_methods():
-            """Benchmark all 5 inverse design methods with a standard target."""
-            import time
-            try:
-                import torch_model as _tm_bm, ml_module as _ml_bm
-                import torch as _t_bm
-                _HAS_TORCH = True
-            except ModuleNotFoundError:
-                _HAS_TORCH = False
-            from engine import MetaSurfaceColorEngine as _Eng
-            from rl_design import RLDesigner as _RL
-            from fp_cavity import fp_cavity_spectrum
-            from color_utils import spectrum_to_srgb, delta_e2000, rgb_to_lab
-            target_rgb = np.array([0.478, 0.310, 0.133])  # #7a4f22
-            target_lab = rgb_to_lab(target_rgb)
-            mat = "TiO2 (anatase)"
-            sub = "SiO2 (fused silica)"
-            results = {}
+    with st.expander("\u23f1 \u65b9\u6cd5\u8017\u65f6\u5bf9\u6bd4 (5\u79cd\u9006\u8bbe\u8ba1\u65b9\u6cd5)", expanded=False):
+        run_bench = st.button("\u25b6 \u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4", use_container_width=True,
+            help="\u6d4b\u8bd55\u79cd\u65b9\u6cd5\u7684\u6027\u80fd\uff0c\u9700\u898110-30\u79d2")
+        if run_bench or "_bench_cache" in st.session_state:
+            if run_bench and "_bench_cache" not in st.session_state:
+                with st.spinner("\u6b63\u5728\u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4..."):
+                    st.session_state["_bench_cache"] = _benchmark_methods()
+            bench = st.session_state.get("_bench_cache")
+            if bench is not None:
+                methods = list(bench.keys())
+                times = [bench[m][0] for m in methods]
+                des = [bench[m][1] for m in methods]
 
-            # 1. Grid search
-            t0 = time.perf_counter()
-            try:
-                _eng = _Eng()
-                _eng.rebuild_library(mat, sub, "TE", 0)
-                grid_res = _eng.inverse_design(target_rgb)
-                t1 = time.perf_counter()
-                de_grid = grid_res[0][4] if grid_res else 99
-                results["网格搜索"] = (t1 - t0, de_grid, grid_res[0][1] if grid_res else None)
-            except Exception as e:
-                results["网格搜索"] = (0, 99, f"ERR: {e}")
-
-            # 2. RL Q-learning
-            t0 = time.perf_counter()
-            try:
-                from rl_design import get_trained_rl as _gtrl
-                _rl = _gtrl()
-                target_hex = "#7a4f22"
-                d_rl, h_rl, p_rl, hex_rl, de_rl = _rl.search(target_hex, steps=30)
-                t1 = time.perf_counter()
-                results["RL Q-learning"] = (t1 - t0, float(de_rl), None)
-            except Exception as e:
-                results["RL Q-learning"] = (0, 99, f"ERR: {e}")
-
-            # 3. Single-pillar gradient
-            t0 = time.perf_counter()
-            if _HAS_TORCH:
-                try:
-                    _ml_bm.init_ml()
-                    gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
-                        target_rgb, n_restarts=20, material=mat, substrate=sub
-                    )
-                    t1 = time.perf_counter()
-                    results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
-                except Exception as e:
-                    results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
-            else:
-                results["单柱梯度优化"] = (0, 99, "torch not installed")
-
-            # 4. Dual-pillar gradient
-            t0 = time.perf_counter()
-            if _HAS_TORCH:
-                try:
-                    dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
-                        target_rgb, n_restarts=20, material=mat, substrate=sub
-                    )
-                    t1 = time.perf_counter()
-                    results["双柱梯度优化"] = (t1 - t0, float(dde), None)
-                except Exception as e:
-                    results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
-            else:
-                results["双柱梯度优化"] = (0, 99, "torch not installed")
-
-            # 5. Three-method comparison (TiO2 + a-Si grid + FP cavity)
-            t0 = time.perf_counter()
-            try:
-                best3_de = 999.0
-                _eng = _Eng()
-                # TiO2 grid
-                _eng.rebuild_library(mat, sub, "TE", 0)
-                res1 = _eng.inverse_design(target_rgb)
-                if res1: best3_de = min(best3_de, res1[0][4])
-                # a-Si grid
-                _eng.rebuild_library("a-Si (amorphous)", sub, "TE", 0)
-                res2 = _eng.inverse_design(target_rgb)
-                if res2: best3_de = min(best3_de, res2[0][4])
-                # FP cavity coarse search
-                for t_nm in range(50, 601, 20):
-                    wls, refl = fp_cavity_spectrum(t_nm, 0.0, True)
-                    rgb_fp = spectrum_to_srgb(wls, np.clip(refl, 0, None))
-                    de_fp = delta_e2000(target_lab, rgb_to_lab(rgb_fp))
-                    if de_fp < best3_de: best3_de = de_fp
-                t1 = time.perf_counter()
-                results["三方案对比"] = (t1 - t0, best3_de, None)
-            except Exception as e:
-                results["三方案对比"] = (0, 99, f"ERR: {e}")
-
-            return results
-
-        bench = _benchmark_methods()
-        methods = list(bench.keys())
-        times = [bench[m][0] for m in methods]
-        des = [bench[m][1] for m in methods]
-
-        col_t1, col_t2 = st.columns([1, 1])
-        with col_t1:
-            fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
-            colors_t = ["#ff6b35", "#00aaff", "#44cc44", "#cc44cc", "#ffaa00"]
-            bars = ax_t.barh(methods[::-1], times[::-1], color=colors_t[::-1], edgecolor="white")
-            for bar, t in zip(bars, times[::-1]):
-                ax_t.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2,
-                         f"{t:.1f}s", va="center", fontsize=8, fontweight="bold")
-            ax_t.set_xlabel("耗时 (s)")
-            ax_t.set_title(f"方法耗时对比 (目标: #7a4f22)")
-            ax_t.grid(True, alpha=0.2, axis="x")
-            fig_t.tight_layout()
-            st.pyplot(fig_t)
-            _get_plt().close(fig_t)
-        with col_t2:
-            rows = "| 方法 | 耗时 | ΔE2000 | 定位 |\n|------|------|------|------|\n"
-            labels = ["网格搜索", "RL Q-learning", "单柱梯度优化", "双柱梯度优化", "三方案对比"]
-            roles = ["全空间精确筛选", "离散探索", "连续值精调", "双柱联合优化", "三方案并行"]
-            for m, role in zip(labels, roles):
-                t = bench[m][0]
-                de = bench[m][1]
-                rows += f"| {m} | {t:.1f}s | {de:.1f} | {role} |\n"
-            st.markdown(rows)
-            st.caption("耗时为单次推理，含缓存命中时更快。ΔE2000越低越好，人眼阈值 2.3。")
+                col_t1, col_t2 = st.columns([1, 1])
+                with col_t1:
+                    fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
+                    colors_t = ["#ff6b35", "#00aaff", "#44cc44", "#cc44cc", "#ffaa00"]
+                    bars = ax_t.barh(methods[::-1], times[::-1], color=colors_t[::-1], edgecolor="white")
+                    for bar, t in zip(bars, times[::-1]):
+                        ax_t.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2,
+                                 f"{t:.1f}s", va="center", fontsize=8, fontweight="bold")
+                    ax_t.set_xlabel("\u8017\u65f6 (s)")
+                    ax_t.set_title(f"\u65b9\u6cd5\u8017\u65f6\u5bf9\u6bd4 (\u76ee\u6807: #7a4f22)")
+                    ax_t.grid(True, alpha=0.2, axis="x")
+                    fig_t.tight_layout()
+                    st.pyplot(fig_t)
+                    _get_plt().close(fig_t)
+                with col_t2:
+                    rows = "| \u65b9\u6cd5 | \u8017\u65f6 | \u0394E2000 | \u5b9a\u4f4d |\n|------|------|------|------|\n"
+                    labels = ["\u7f51\u683c\u641c\u7d22", "RL Q-learning", "\u5355\u67f1\u68af\u5ea6\u4f18\u5316", "\u53cc\u67f1\u68af\u5ea6\u4f18\u5316", "\u4e09\u65b9\u6848\u5bf9\u6bd4"]
+                    roles = ["\u5168\u7a7a\u95f4\u7cbe\u786e\u7b5b\u9009", "\u79bb\u6563\u63a2\u7d22", "\u8fde\u7eed\u503c\u7cbe\u8c03", "\u53cc\u67f1\u8054\u5408\u4f18\u5316", "\u4e09\u65b9\u6848\u5e76\u884c"]
+                    for m, role in zip(labels, roles):
+                        t = bench[m][0]
+                        de = bench[m][1]
+                        rows += f"| {m} | {t:.1f}s | {de:.1f} | {role} |\n"
+                    st.markdown(rows)
+                    st.caption("\u8017\u65f6\u4e3a\u5355\u6b21\u63a8\u7406\uff0c\u542b\u7f13\u5b58\u547d\u4e2d\u65f6\u66f4\u5feb\u3002\u0394E2000\u8d8a\u4f4e\u8d8a\u597d\uff0c\u4eba\u773c\u9608\u503c 2.3\u3002")
+        else:
+            st.info("\u70b9\u51fb\u6309\u94ae\u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4")
 
     # === Fano vs FDTD validation (small-D, shape-normalized) ===
     st.divider()
@@ -1819,7 +1828,13 @@ with tab5:
         return de2k_arr, fano_rgb, ml_rgb
 
     with st.spinner("计算 ML 模型误差分布 (400 组随机参数)..."):
-        de2k_arr, fano_rgb, ml_rgb = _ml_error_stats(material, substrate)
+        run_ml_err = st.button("\u25b6 \u8fd0\u884c ML \u7cbe\u5ea6\u5206\u6790", use_container_width=True)
+        cache_key = f"_ml_err_{material}_{substrate}"
+        if run_ml_err or cache_key in st.session_state:
+            if run_ml_err and cache_key not in st.session_state:
+                with st.spinner("\u8ba1\u7b97 ML \u6a21\u578b\u8bef\u5dee\u5206\u5e03..."):
+                    st.session_state[cache_key] = _ml_error_stats(material, substrate)
+            de2k_arr, fano_rgb, ml_rgb = st.session_state.get(cache_key, (None, None, None))
 
     if de2k_arr is None:
         st.info("ML 精度分析需要 PyTorch 环境（HF 云端无 GPU，本功能需本地运行）")
