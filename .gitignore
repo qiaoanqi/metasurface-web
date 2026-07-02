@@ -1,0 +1,76 @@
+﻿__pycache__/
+*.pyc
+training_data/
+_pdf_text.txt
+test_inverse.py
+test_inverse2.py
+inverse_gd.py
+inverse_gd2.py
+inverse_gd3.py
+models/forward_mlp.pt
+models/forward_mlp_v2.pt
+models/forward_mlp_v4.pt
+models/forward_mlp_v5.pt
+models/forward_mlp_v6_fano.pt
+models/ml_design.pt
+models/ml_design_v3.pt
+models/inverse_mlp.pt
+models/dual_mlp_v1.pt
+train_models.py
+train_v2.py
+train_v3.py
+train_v4.py
+train_v5.py
+train_v6.py
+train_v7.py
+*.log
+
+# API keys (DO NOT commit)
+.env
+
+# Grid cache (auto-generated)
+_grid_cache/
+
+# Backups
+*.bak
+
+# Temp/dev files
+*_temp.txt
+LESSONS_LEARNED.md
+README_temp.txt
+app_temp.txt
+ml_module_temp.txt
+rl_design_temp.txt
+torch_model_temp.txt
+
+# PPT generation scripts
+create_ppt.py
+create_ppt_final.py
+create_ppt_v2.py
+run_ppt.py
+
+# Chart exports
+_charts/
+_charts_v3/
+_charts_v4/
+_editppt_run/
+_ppt_images/
+_swiss_deck/
+_v5/
+
+# Large media
+????.mp4
+
+# Binary files - uploaded via huggingface_hub API
+*.pt
+*.onnx
+*.onnx.data
+*.pkl
+*.pickle
+*.mp4
+*.docx
+*.png
+data/
+models/
+演示视频.mp4
+AI超表面结构色设计_项目报告.docx
