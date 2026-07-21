@@ -79,3 +79,9 @@ data/
 models/
 演示视频.mp4
 AI超表面结构色设计_项目报告.docx
+
+*.pptx
+_conclusion.md
+_assemble_paper.py
+_add_conclusion.py
+_bench_speed.py
