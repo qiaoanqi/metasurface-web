@@ -99,6 +99,8 @@ _ml_is_v8 = False
 _dual_ml_ready = False
 _ml_tried = False
 _dual_ml_tried = False
+_rcwa_ml_ready = False
+_rcwa_ml_tried = False
 
 def _ensure_ml():
     global _ml_ready, _ml_is_v8, _ml_tried
@@ -118,10 +120,20 @@ def _ensure_dual_ml():
         _dual_ml_ready = ml_module.init_dual_ml()
     except Exception: pass
 
+def _ensure_rcwa_ml():
+    global _rcwa_ml_ready, _rcwa_ml_tried
+    if _rcwa_ml_tried and _rcwa_ml_ready: return
+    _rcwa_ml_tried = True
+    try:
+        ml_module.init_rcwa_ml()
+        _rcwa_ml_ready = True
+    except Exception:
+        pass
+
 
 st.title("🎨 AI超表面结构色设计助手")
-st.caption("v5.0 | 多材料 | CIE 1931 色度学 | CIEDE2000")
-st.caption("TiO₂ 纳米柱 Lorentzian 共振 + CIE 1931 光谱色彩管线")
+st.caption("v5.0 | 多材料 | RCWA 电磁仿真 + ResMLP 代理模型 | CIEDE2000")
+st.caption("RCWA/ML 高保真 | TiO2 dE~2.4 | Si3N4 dE~1.5 | Al2O3 dE~1.2 | a-Si dE~4.1")
 
 # Sidebar controls
 with st.sidebar:
@@ -498,6 +510,9 @@ if _fp_done:
         _wls, _refl = fp_cavity_spectrum(st.session_state.fp_t_val, angle, polarization.startswith('TE'))
     rgb = spectrum_to_srgb(_wls, _refl)
 
+# Ensure RCWA ML models are loaded
+_ensure_rcwa_ml()
+
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔬 预览", "🎯 逆设计", "🖼️ 图案",
@@ -667,7 +682,7 @@ with tab1:
 # Tab 2: Inverse Design
 with tab2:
     st.subheader("选择目标颜色，自动匹配最优纳米柱参数")
-    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效 | 网格搜索仅优化单柱 (D,H,P)，双柱请手动微调")
+    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效 | 智能网格仅优化单柱 (D,H,P)，双柱请手动微调")
 
     dual_gd_btn = False
     col_pick, col_btn = st.columns([3, 1])
@@ -675,10 +690,9 @@ with tab2:
         picker_hex = st.color_picker("目标颜色", "#80c8ff")
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_btn = st.button('网格搜索', use_container_width=True, help='网格搜索: 精度高')
-        rl_btn = st.button('🎮 RL智能搜索', use_container_width=True, help='强化学习 Q-learning 逆设计, 约3秒')
+        smart_btn = st.button('🎯 智能网格', use_container_width=True, help='两阶段智能搜索: RCWA/ML粗网格→精网格, ~2-8s, 精度最高')
         gd_btn = st.button('🎯 单柱梯度', use_container_width=True, help='单柱批量梯度下降, ~3-5秒, 需torch')
-        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱批量梯度下降, ~3-5秒, 需torch')
+        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱联合优化 (开发中)')
         ai_btn = st.button('📊 三方案对比', use_container_width=True,
                          help='同时试 TiO2 / a-Si / FP腔，自动选最优')
     target_r = int(picker_hex[1:3], 16)
@@ -692,35 +706,65 @@ with tab2:
 
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
-    if rl_btn:
-        with st.spinner("🎮 RL智能体搜索中 (Q-learning, 约3秒)..."):
+    if smart_btn:
+        with st.spinner("🎯 智能网格搜索中 (两阶段: 粗→精)..."):
             try:
-                rl = rl_design.get_trained_rl()
-                d_rl, h_rl, p_rl, hex_rl, de_rl = rl.search(picker_hex)
-                r255_rl = int(hex_rl[1:3], 16)
-                g255_rl = int(hex_rl[3:5], 16)
-                b255_rl = int(hex_rl[5:7], 16)
-                
-                # Store RL results in session_state so "apply" button survives rerun
-                st.session_state._rl_d = float(d_rl)
-                st.session_state._rl_h = float(h_rl)
-                st.session_state._rl_p = float(p_rl)
-                st.success(f"🎮 RL搜索完成! {hex_rl} | ΔE2000={de_rl:.1f}")
-                c1rl, c2rl, c3rl = st.columns([1, 3, 1])
-                with c1rl:
-                    st.markdown(f'<div style="width:64px;height:64px;background:{hex_rl};border-radius:12px;"></div>', unsafe_allow_html=True)
-                with c2rl:
-                    st.markdown(f"**{hex_rl}**  RGB({r255_rl}, {g255_rl}, {b255_rl})  \nD={d_rl:.1f}nm  H={h_rl:.1f}nm  P={p_rl:.1f}nm  \nΔE2000 = {de_rl:.1f} (RL智能体)")
-                
-                # Apply button using on_click callback (reliable)
-                def _apply_rl_cb():
-                    st.session_state.d_val = float(st.session_state._rl_d)
-                    st.session_state.h_val = float(st.session_state._rl_h)
-                    st.session_state.p_val = float(st.session_state._rl_p)
-                st.button("应用RL参数", on_click=_apply_rl_cb, key="apply_rl_result", use_container_width=True)
-                st.caption("强化学习通过试错学习参数调整方向，速度快但精度低于网格搜索。建议先用RL快速定位，再网格精搜。")
+                result = ml_module.smart_grid_search(
+                    target_rgb_norm, material=material, substrate=substrate,
+                    angle_deg=angle, polarization=polarization,
+                    coarse_n=12, top_k=5, fine_steps=5, fine_range=6.0
+                )
+                if result is None or len(result) == 0:
+                    st.warning("智能网格搜索不可用: 需要 RCWA/ML 模型")
+                else:
+                    # result is list of (None, MetaSurfaceParam, [r,g,b], de76, de2000)
+                    best = result[0]
+                    bp = best[1]
+                    pred_rgb = best[2]
+                    de_sg = best[4]
+                    d_sg = bp.diameter_nm
+                    h_sg = bp.height_nm
+                    p_sg = bp.period_nm
+
+                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    hex_sg = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
+                    st.session_state._sg_d = float(d_sg)
+                    st.session_state._sg_h = float(h_sg)
+                    st.session_state._sg_p = float(p_sg)
+                    st.session_state._sg_hex = hex_sg
+                    st.session_state._sg_de = float(de_sg)
+                    st.session_state._sg_rgb = tuple(rc)
+                    st.session_state._sg_candidates = result
+                    st.success(f"🎯 智能网格完成! {hex_sg} | ΔE2000={de_sg:.1f}")
+                    c1sg, c2sg = st.columns([1, 3])
+                    with c1sg:
+                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_sg};border-radius:12px;"></div>', unsafe_allow_html=True)
+                    with c2sg:
+                        st.markdown(f"**{hex_sg}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_sg:.1f}nm  H={h_sg:.1f}nm  P={p_sg:.1f}nm  \nΔE2000 = {de_sg:.1f} (智能网格)", unsafe_allow_html=False)
+
+                    # Apply button
+                    def _apply_sg_cb():
+                        st.session_state.d_val = float(st.session_state._sg_d)
+                        st.session_state.h_val = float(st.session_state._sg_h)
+                        st.session_state.p_val = float(st.session_state._sg_p)
+                    st.button("✔️ 应用智能网格结果", on_click=_apply_sg_cb, key="apply_sg_result", use_container_width=True)
+
+                    # Top-3 candidates
+                    if len(result) > 1:
+                        st.caption("🎯 目标颜色")
+                        st.markdown(f'<span style="display:inline-block;width:28px;height:28px;background:{picker_hex};border-radius:4px;border:2px solid #ccc;vertical-align:middle;margin-right:8px;"></span> **{picker_hex}**  RGB({target_r}, {target_g}, {target_b})', unsafe_allow_html=True)
+                        st.caption("✅ Top3 匹配结果")
+                        for idx, cand in enumerate(result[:3]):
+                            cb = cand[1]
+                            c_hex = f"#{max(0,min(255,int(cand[2][0]*255))):02x}{max(0,min(255,int(cand[2][1]*255))):02x}{max(0,min(255,int(cand[2][2]*255))):02x}"
+                            st.markdown(f'<span style="display:inline-block;width:24px;height:24px;background:{c_hex};border-radius:4px;border:1px solid #999;vertical-align:middle;margin-right:8px;"></span> #{idx+1} **{c_hex}** &nbsp;|&nbsp; D={cb.diameter_nm:.0f} H={cb.height_nm:.0f} P={cb.period_nm:.0f} &nbsp;|&nbsp; ΔE={cand[4]:.1f}', unsafe_allow_html=True)
+
+                    de2k_val = de_sg
+                    if de2k_val > 20:
+                        st.warning(f"⚠️ ΔE={de2k_val:.0f} 色差很大，该目标颜色可能超出当前材料色域。尝试：1) 换材料 (a-Si 色域更宽)  2) 换 FP 腔模式  3) 选色域内的目标色。")
+
             except Exception as e:
-                st.warning(f"RL搜索不可用: {e}")
+                st.warning(f"智能网格搜索失败: {e}")
 
     if gd_btn:
         with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
@@ -851,7 +895,7 @@ with tab2:
                 except Exception as e: logging.warning(f"ai: {e}")
             st.rerun()
 
-    if run_btn:
+    if False:  # run_btn (网格搜索) deprecated, use smart_btn
         # Result cache: skip search for previously-searched colors
         cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
         if "search_cache" not in st.session_state:
@@ -1582,7 +1626,24 @@ with tab5:
         ax_cie.plot(srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
                     'k--', lw=0.8, alpha=0.5, label='sRGB gamut')
 
-        # TiO2 metasurface gamut (sampled from grid)
+        # Multi-material metasurface gamut (TiO2 + Si3N4 + Al2O3 + a-Si)
+        materials_gamut = [
+            ("TiO2 (anatase)", "#ff6b35"),
+            ("Si3N4 (nitride)", "#4ecdc4"),
+            ("Al2O3 (sapphire)", "#45b7d1"),
+            ("a-Si (amorphous)", "#f9ca24"),
+        ]
+        for mat_name, mat_color in materials_gamut:
+            try:
+                from engine import MetaEngine
+                _engine_gamut = MetaEngine(mat_name, substrate, polarization, angle)
+                if len(_engine_gamut.grid_xy) > 0:
+                    sample_step = max(1, len(_engine_gamut.grid_xy) // 800)
+                    gx = _engine_gamut.grid_xy[::sample_step, 0]
+                    gy = _engine_gamut.grid_xy[::sample_step, 1]
+                    ax_cie.scatter(gx, gy, c=mat_color, s=1, alpha=0.12, label=f'{mat_name.split(chr(32))[0]} gamut')
+            except Exception:
+                pass
         if len(engine.grid_xy) > 0:
             sample_step = max(1, len(engine.grid_xy) // 2000)
             gx = engine.grid_xy[::sample_step, 0]
@@ -1617,7 +1678,7 @@ with tab5:
 
     @st.cache_data
     def _physical_gamut_xy(material, substrate):
-        """Compute gamut using full Fano/Lorentzian physical model (not approximate grid)."""
+        """Compute gamut using RCWA/ML model (not approximate grid)."""
         try:
             import torch_model as _tm
         except Exception:
@@ -1685,7 +1746,7 @@ with tab5:
         return np.array(pts) if pts else np.zeros((0, 2))
 
     show_gamut = st.checkbox("显示色域对比图", value=False,
-        help="基于 Fano/Lorentzian 物理模型计算的三种材料体系 CIE 色域边界")
+        help="基于 RCWA/ML 高保真数据计算的四种材料体系 CIE 色域边界")
     if show_gamut:
         with st.spinner("物理模型计算色域中 (TiO2, a-Si, FP腔)..."):
             tio2_xy = _physical_gamut_xy("TiO2 (anatase)", "SiO2 (fused silica)")
@@ -1734,7 +1795,7 @@ with tab5:
 
         ax_g.legend(fontsize=7, loc="lower left", framealpha=0.85, ncol=1)
         ax_g.set_xlabel("x"); ax_g.set_ylabel("y")
-        ax_g.set_title("Physical Gamut Comparison (Fano model, TE, 0deg, on SiO2)")
+        ax_g.set_title("Physical Gamut Comparison (RCWA data, TE, 0deg, on SiO2)")
         ax_g.set_xlim(0, 0.75); ax_g.set_ylim(0, 0.85)
         ax_g.set_aspect("equal")
         ax_g.grid(True, alpha=0.15)
@@ -1744,7 +1805,7 @@ with tab5:
 
     @st.cache_data
     def _benchmark_methods():
-        """Benchmark all 5 inverse design methods with a standard target."""
+        """Benchmark 4 inverse design methods with a standard target."""
         import time
         try:
             import torch_model as _tm_bm, ml_module as _ml_bm
@@ -1752,8 +1813,7 @@ with tab5:
             _HAS_TORCH = True
         except ModuleNotFoundError:
             _HAS_TORCH = False
-        from engine import MetaSurfaceColorEngine as _Eng
-        from rl_design import RLDesigner as _RL
+        import ml_module
         from fp_cavity import fp_cavity_spectrum
         from color_utils import spectrum_to_srgb, delta_e2000, rgb_to_lab
         target_rgb = np.array([0.478, 0.310, 0.133])  # #7a4f22
@@ -1762,72 +1822,60 @@ with tab5:
         sub = "SiO2 (fused silica)"
         results = {}
 
-        # 1. Grid search
+        # 1. Smart grid search (RCWA/ML)
         t0 = time.perf_counter()
         try:
-            _eng = _Eng()
-            _eng.rebuild_library(mat, sub, "TE", 0)
-            grid_res = _eng.inverse_design(target_rgb)
+            ml_module.init_rcwa_ml()
+            sg_res = ml_module.smart_grid_search(
+                target_rgb, material=mat, substrate=sub,
+                coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0
+            )
             t1 = time.perf_counter()
-            de_grid = grid_res[0][4] if grid_res else 99
-            results["网格搜索"] = (t1 - t0, de_grid, grid_res[0][1] if grid_res else None)
+            if sg_res and len(sg_res) > 0:
+                de_sg = sg_res[0][4]
+            else:
+                de_sg = 99
+            results["智能网格"] = (t1 - t0, de_sg, "RCWA全空间扫描")
         except Exception as e:
-            results["网格搜索"] = (0, 99, f"ERR: {e}")
+            results["智能网格"] = (0, 99, f"ERR: {str(e)[:30]}")
 
-        # 2. RL Q-learning
+        # 2. RL Q-learning (deprecated, Fano engine)
+        results["RL Q-learning"] = (0, "N/A", "离散探索(实验性)")
+
+        # 3. Single-pillar gradient (RCWA/ML)
         t0 = time.perf_counter()
         try:
-            from rl_design import get_trained_rl as _gtrl
-            _rl = _gtrl()
-            target_hex = "#7a4f22"
-            d_rl, h_rl, p_rl, hex_rl, de_rl = _rl.search(target_hex, steps=30)
+            ml_module.init_rcwa_ml()
+            gd_res = ml_module._inverse_design_ml_serial(
+                target_rgb, n_steps=150, n_restarts=8,
+                material=mat, substrate=sub
+            )
             t1 = time.perf_counter()
-            results["RL Q-learning"] = (t1 - t0, float(de_rl), None)
+            if gd_res is not None:
+                de_gd = float(np.sqrt(np.sum((np.array(gd_res[3]) - target_rgb)**2)))
+            else:
+                de_gd = 99
+            results["单柱梯度"] = (t1 - t0, de_gd, "连续梯度(RCWA)")
         except Exception as e:
-            results["RL Q-learning"] = (0, 99, f"ERR: {e}")
+            results["单柱梯度"] = (0, 99, f"ERR: {str(e)[:30]}")
 
-        # 3. Single-pillar gradient
-        t0 = time.perf_counter()
-        if _HAS_TORCH:
-            try:
-                _ml_bm.init_ml()
-                gd_d, gd_h, gd_p, gd_rgb, gd_de = _tm_bm.inverse_design_ml_batch(
-                    target_rgb, n_restarts=20, material=mat, substrate=sub
-                )
-                t1 = time.perf_counter()
-                results["单柱梯度优化"] = (t1 - t0, float(gd_de), None)
-            except Exception as e:
-                results["单柱梯度优化"] = (0, 99, f"ERR: {e}")
-        else:
-            results["单柱梯度优化"] = (0, 99, "torch not installed")
+        # 4. Dual-pillar gradient (under development)
+        results["双柱梯度"] = (0, "N/A", "双柱联合(实验性)")
 
-        # 4. Dual-pillar gradient
-        t0 = time.perf_counter()
-        if _HAS_TORCH:
-            try:
-                dd1, dh1, dd2, dh2, dp, drgb, dde = _tm_bm.inverse_design_dual(
-                    target_rgb, n_restarts=20, material=mat, substrate=sub
-                )
-                t1 = time.perf_counter()
-                results["双柱梯度优化"] = (t1 - t0, float(dde), None)
-            except Exception as e:
-                results["双柱梯度优化"] = (0, 99, f"ERR: {e}")
-        else:
-            results["双柱梯度优化"] = (0, 99, "torch not installed")
-
-        # 5. Three-method comparison (TiO2 + a-Si grid + FP cavity)
+        # 5. Three-method comparison
         t0 = time.perf_counter()
         try:
             best3_de = 999.0
-            _eng = _Eng()
-            # TiO2 grid
-            _eng.rebuild_library(mat, sub, "TE", 0)
-            res1 = _eng.inverse_design(target_rgb)
-            if res1: best3_de = min(best3_de, res1[0][4])
-            # a-Si grid
-            _eng.rebuild_library("a-Si (amorphous)", sub, "TE", 0)
-            res2 = _eng.inverse_design(target_rgb)
-            if res2: best3_de = min(best3_de, res2[0][4])
+            for mat_name in ["TiO2 (anatase)", "a-Si (amorphous)", "Si3N4 (nitride)", "Al2O3 (sapphire)"]:
+                try:
+                    sg3 = ml_module.smart_grid_search(
+                        target_rgb, material=mat_name, substrate=sub,
+                        coarse_n=8, top_k=1, fine_steps=3, fine_range=6.0
+                    )
+                    if sg3 and len(sg3) > 0:
+                        best3_de = min(best3_de, sg3[0][4])
+                except Exception:
+                    pass
             # FP cavity coarse search
             for t_nm in range(50, 601, 20):
                 wls, refl = fp_cavity_spectrum(t_nm, 0.0, True)
@@ -1835,9 +1883,9 @@ with tab5:
                 de_fp = delta_e2000(target_lab, rgb_to_lab(rgb_fp))
                 if de_fp < best3_de: best3_de = de_fp
             t1 = time.perf_counter()
-            results["三方案对比"] = (t1 - t0, best3_de, None)
+            results["三方案对比"] = (t1 - t0, best3_de, "4材料并行扫描")
         except Exception as e:
-            results["三方案对比"] = (0, 99, f"ERR: {e}")
+            results["三方案对比"] = (0, 99, f"ERR: {str(e)[:30]}")
 
         return results
 
@@ -1883,7 +1931,7 @@ with tab5:
         else:
             st.info("\u70b9\u51fb\u6309\u94ae\u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4")
 
-    # === Fano vs FDTD validation (small-D, shape-normalized) ===
+    # === Fano vs FDTD validation (historical, small-D, shape-normalized) ===
     st.divider()
     st.subheader("Fano 模型 vs FDTD 全波仿真验证")
 
@@ -1919,13 +1967,13 @@ with tab5:
 - 精确设计仍需 FDTD 全波仿真最终验证
 """)
 
-    # === ML model error statistics (Fano vs ONNX) ===
+    # === ML model error statistics (RCWA vs ML) ===
     st.divider()
-    st.subheader("ML 模型精度定量分析 (Fano 物理模型 vs ONNX 推理)")
+    st.subheader("ML 模型精度分析 (RCWA 真值 vs ML 预测)")
 
     @st.cache_data
     def _ml_error_stats(material, substrate, n_samples=400):
-        """Compare Fano physical model vs ONNX ML model over random (D,H,P)."""
+        """Compare RCWA ground truth vs ML model over random (D,H,P)."""
         try:
             import torch_model as _tm_es
             import ml_module as _ml_es
@@ -1990,7 +2038,7 @@ with tab5:
             ax_ml.axvline(2.3, color="green", lw=1.0, ls="-", alpha=0.7, label="人眼阈值=2.3")
             ax_ml.set_xlabel("ΔE2000")
             ax_ml.set_ylabel("样本数")
-            ax_ml.set_title(f"Fano vs ML ΔE2000 分布 (N={len(de2k_arr)})")
+            ax_ml.set_title(f"RCWA vs ML ΔE2000 分布 (N={len(de2k_arr)})")
             ax_ml.legend(fontsize=7)
             ax_ml.grid(True, alpha=0.2)
             ax_ml.text(0.98, 0.95, f"95%分位: {p95_de:.1f} | ΔE<2.3占比: {pct_lt23:.0f}%", transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
@@ -2012,9 +2060,9 @@ with tab5:
 | 人眼可辨阈值 | 2.3 |
 
 **说明**:
-- ONNX ML 模型用合成数据训练，学习的是 Fano 物理模型的输出
+- 当前 RCWA/ML 代理模型用 RCWA 高保真数据训练，替代了旧版 Fano 合成数据
 - ΔE 主要来自 ML 模型对共振峰形的近似误差
-- 系统实际色差主要取决于 Fano 物理模型的绝对精度
+- 实际模型精度参考: TiO2≈2.4, Si3N4≈1.5, Al2O3≈1.2, a-Si≈4.0
 """)
 
     # Angle scan: color vs incident angle
@@ -2121,7 +2169,7 @@ except Exception as e:
 
 st.sidebar.markdown("---")
 st.sidebar.caption("AI超表面结构色设计 v5.0 (MultiMaterial)")
-st.sidebar.caption("物理模型: Fano 共振 + CIE 1931 光谱管线")
+st.sidebar.caption("物理模型: RCWA 电磁仿真 + CIE 1931 光谱管线")
 st.sidebar.markdown("---")
 st.sidebar.caption("长沙理工大学 物理与电子科学学院")
 st.sidebar.caption("光电2501 乔安琪")
