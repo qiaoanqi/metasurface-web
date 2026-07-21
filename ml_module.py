@@ -68,8 +68,7 @@ _RCWA_MODELS = {
 }
 # Substrate-specific overrides (tuple key: (material, substrate))
 _RCWA_SUBSTRATE_MODELS = {
-    ("a-Si (amorphous)", "Si3N4 (nitride)"): ["forward_mlp_rcwa_aSi_Si3N4_s?.onnx"],  # ΔE=3.44
-    ("a-Si (amorphous)", "Al2O3 (sapphire)"): ["forward_mlp_rcwa_aSi_Al2O3_s?.onnx"],
+    # a-Si now uses multi-substrate ensemble (80/20 retrained 2026-07-21)
 }
 _RCWA_SESSIONS = {}  # material -> list of ort sessions (ensemble)
 
