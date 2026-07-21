@@ -87,12 +87,23 @@ class CouplingCompensationModel:
         self.substrate = substrate
         self.coeff = self._lookup_coeff(material, substrate)
 
+    @staticmethod
+    def _base_name(full_name):
+        return full_name.split(" (")[0].strip()
+
     def _lookup_coeff(self, material, substrate):
         key = (material, substrate)
         if key in CCM_COEFF_TABLE:
             return CCM_COEFF_TABLE[key]
+        # Fuzzy match: compare base names (before first parenthesis)
+        base_mat = self._base_name(material)
+        base_sub = self._base_name(substrate)
         for (mat, sub), coeff in CCM_COEFF_TABLE.items():
-            if mat == material:
+            if self._base_name(mat) == base_mat and self._base_name(sub) == base_sub:
+                return coeff
+        # Fallback: match material base name only
+        for (mat, sub), coeff in CCM_COEFF_TABLE.items():
+            if self._base_name(mat) == base_mat:
                 return coeff
         return DEFAULT_CCM_COEFF
 

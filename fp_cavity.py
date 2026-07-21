@@ -43,12 +43,15 @@ def _ag_nk(wl_nm):
 
 
 
+# Precomputed Ag nk arrays (built once at module load)
+_AG_WLS = np.array(sorted(_AG_NK_TABLE.keys()), dtype=float)
+_AG_NS = np.array([_AG_NK_TABLE[int(w)][0] for w in _AG_WLS])
+_AG_KS = np.array([_AG_NK_TABLE[int(w)][1] for w in _AG_WLS])
+
+
 def _ag_nk_vec(wl_arr):
-    """Vectorized Ag nk lookup for numpy arrays using np.interp."""
-    _wls = np.array(sorted(_AG_NK_TABLE.keys()), dtype=float)
-    _ns = np.array([_AG_NK_TABLE[int(w)][0] for w in _wls])
-    _ks = np.array([_AG_NK_TABLE[int(w)][1] for w in _wls])
-    return np.interp(wl_arr, _wls, _ns), np.interp(wl_arr, _wls, _ks)
+    """Vectorized Ag nk lookup for numpy arrays using precomputed module-level arrays."""
+    return np.interp(wl_arr, _AG_WLS, _AG_NS), np.interp(wl_arr, _AG_WLS, _AG_KS)
 
 def _n_sio2_sellmeier(wl_nm):
     wl_um = wl_nm / 1000.0
@@ -72,7 +75,7 @@ def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
     cos_top = _cos_v(n_top); cos_tio2 = _cos_v(n_tio2); cos_bot = _cos_v(n_bot)
     def _layer_v(n, d, c):
         delta = 2.0 * np.pi * n * d * c / wls
-        p = n * c if pol_TE else c / n
+        p = n * c if pol_TE else n / c
         cd = np.cos(delta); sd = np.sin(delta)
         N = len(wls)
         M = np.zeros((N, 2, 2), dtype=complex)
@@ -80,8 +83,8 @@ def fp_cavity_spectrum(T_nm, angle_deg=0.0, pol_TE=True):
         M[:, 1, 0] = 1j * p * sd; M[:, 1, 1] = cd
         return M
     M = _layer_v(n_top, d_top, cos_top) @ _layer_v(n_tio2, T_nm, cos_tio2)
-    p_inc = n_inc * cos_inc if pol_TE else cos_inc / n_inc
-    p_bot = n_bot * cos_bot if pol_TE else cos_bot / n_bot
+    p_inc = n_inc * cos_inc if pol_TE else n_inc / cos_inc
+    p_bot = n_bot * cos_bot if pol_TE else n_bot / cos_bot
     a = M[:, 0, 0] + M[:, 0, 1] * p_bot
     b = M[:, 1, 0] + M[:, 1, 1] * p_bot
     r = (a * p_inc - b) / (a * p_inc + b)
@@ -105,7 +108,7 @@ def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, 
     cH = _cos_v(nH); cL = _cos_v(nL)
     def _layer_v(n, d, c):
         delta = 2.0 * np.pi * n * d * c / wls
-        p = n * c
+        p = n * c if pol_TE else n / c
         cd = np.cos(delta); sd = np.sin(delta)
         M = np.zeros((N, 2, 2), dtype=complex)
         M[:, 0, 0] = cd; M[:, 0, 1] = 1j * sd / p
@@ -117,8 +120,8 @@ def fp_dielectric_spectrum(T_nm, target_wl=450.0, n_pairs_top=3, n_pairs_bot=5, 
     M = M @ _layer_v(nH, T_nm, cH)
     for _ in range(n_pairs_bot):
         M = M @ _layer_v(nL, dL, cL) @ _layer_v(nH, dH, cH)
-    p_inc = n_inc * cos_inc
-    p_sub = nL * cL
+    p_inc = n_inc * cos_inc if pol_TE else n_inc / cos_inc
+    p_sub = nL * cL if pol_TE else nL / cL
     a = M[:, 0, 0] + M[:, 0, 1] * p_sub
     b = M[:, 1, 0] + M[:, 1, 1] * p_sub
     r = (a * p_inc - b) / (a * p_inc + b)

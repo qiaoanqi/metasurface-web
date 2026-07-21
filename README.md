@@ -6,7 +6,9 @@
 基于物理引擎（Lorentz/Fano共振 + 耦合补偿模型CCM + FP腔TMM）与深度学习（ResMLP代理模型）的超表面纳米柱结构色正向预测与逆设计一体化平台。CCM通过数据驱动对麦克斯韦近似解残差修正，将光谱平均误差降低至2.1%以下。
 
 
-**🟢 在线体验：http://47.97.115.139**
+**🟢 在线体验：http://47.97.115.139（展示页）
+> Streamlit 演示：http://47.97.115.139:8080
+> GitHub 仓库：https://github.com/qiaoanqi/metasurface-web**
 
 ---
 ## 功能概览
@@ -110,7 +112,7 @@ HF_TOKEN=你的HuggingFace令牌（可选）
 
 **http://47.97.115.139**
 
-轻量应用服务器 · 2 vCPU / 4GB · Streamlit port 80
+轻量应用服务器 · 2 vCPU / 4GB · Nginx 展示页 :80 + Streamlit 演示 :8080
 
 ### HuggingFace Spaces（备选）
 
@@ -128,7 +130,7 @@ HF_TOKEN=你的HuggingFace令牌（可选）
 | 色度学 | CIE 1931 · CIEDE2000 · sRGB · ConvexHull 色域 |
 | 前端 | Streamlit · Matplotlib · 纯CSS纳米柱渲染 |
 | LLM | DeepSeek Chat API · 定制 Prompt 工程 |
-| 部署 | ONNX Runtime · Alibaba Cloud · HuggingFace Spaces |
+| 部署 | ONNX Runtime · Alibaba Cloud · Nginx + Streamlit · HuggingFace Spaces |
 
 ---
 

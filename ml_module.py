@@ -62,7 +62,7 @@ def init_ml():
 # RCWA model registry: material -> onnx file
 _RCWA_MODELS = {
     "TiO2 (anatase)": ["forward_mlp_rcwa_TiO2_s?.onnx"],
-    "a-Si (amorphous)": ["forward_mlp_rcwa_aSi_s?.onnx"],  # ensemble (3-seed), ΔE=5.2
+    "a-Si (amorphous)": ["forward_mlp_rcwa_aSi_k_s?.onnx"],  # complex-k (Green&Keevers 1995), ΔE=2.68
     "Si3N4 (nitride)": ["forward_mlp_rcwa_Si3N4_s?.onnx"],
     "Al2O3 (sapphire)": ["forward_mlp_rcwa_Al2O3_s1.onnx"],  # v2 multi-substrate, ΔE=1.67
 }

@@ -36,6 +36,11 @@ _grid_cache/
 
 # Temp/dev files
 *_temp.txt
+_*.py
+_*.txt
+.deps_installed
+run_b*.bat
+run_tio2*.bat
 LESSONS_LEARNED.md
 README_temp.txt
 app_temp.txt

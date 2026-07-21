@@ -17,22 +17,22 @@ All materials modeled with Cauchy dispersion: n(λ) = A + B/λ² + C/λ⁴.
 
 **Solver parameter physical justification:**
 
-Fourier truncation order nG = 65 was selected based on systematic convergence verification. For TiO₂/SiO₂ structures (the primary material system), 90% of hybrid-selected designs exhibit color difference < 1 JND (CIEDE2000 < 2.3) when nG is increased from 65 to 101, with a mean per-structure ΔE spread of only 0.77. This confirms that nG = 65 captures the dominant diffraction orders for moderate-index-contrast systems (Δn ≈ 0.84). However, convergence is material-dependent: for a-Si/SiO₂ (Δn = 2.34), only 40% of structures converge within 1 JND across the same nG range (mean spread 5.02), reflecting the sharper guided-mode resonances supported by high-index-contrast gratings. The nG = 65 choice thus represents a computational budget compromise (RCWA cost scales as O(nG²)); results for high-index materials should be interpreted with this solver sensitivity in mind (see §4.2).
+Fourier truncation order nG = 65 was selected based on systematic convergence verification. For TiO₂/SiO₂ structures (the primary material system), 90% of hybrid-selected designs exhibit color difference < 1 JND (CIEDE2000 < 2.3) when nG is increased from 65 to 101, with a mean per-structure ΔE spread of only 0.77. This confirms that nG = 65 captures the dominant diffraction orders for moderate-index-contrast systems (Δn ≈ 0.84). However, convergence is material-dependent: for lossless a-Si/SiO₂ (k = 0, Δn = 2.34), only 40% of structures converge within 1 JND across the same nG range (mean spread 5.02), reflecting the sharper guided-mode resonances supported by high-index-contrast gratings. Including the experimental complex refractive index (k ≠ 0) improves convergence to 72% (mean spread 1.83), as material absorption damps the sharp resonances that are most sensitive to Fourier truncation. The nG = 65 choice thus represents a computational budget compromise (RCWA cost scales as O(nG²)); results for high-index materials should be interpreted with this solver sensitivity in mind (see §4.2).
 
 The real-space discretization Nxy = 256 provides a grid resolution of P/256 ≈ 0.8–2.3 nm for the period range studied (200–600 nm), sufficient to resolve pillar boundaries with sub-nm accuracy. Convergence with respect to Nxy is monotonic and well-behaved for circular pillar geometries; no Gibbs-type artifacts are expected at this resolution.
 
-All materials are modeled with real-valued Cauchy dispersion n(λ) = A + B/λ² + C/λ⁴, which is physically appropriate for transparent dielectrics (TiO₂ anatase, Si₃N₄, Al₂O₃/sapphire) whose extinction coefficient k is negligible across the visible band. This assumption is also applied to a-Si (k set to 0), which constitutes a known simplification: real amorphous silicon exhibits k ≈ 0.01–0.5 in the visible (Green & Keevers, 1995). The implications of this lossless approximation — including non-physical R+T > 1 in closed-loop verification and systematic overestimation of resonance quality factors — are analyzed in §4.1. For the purpose of establishing the refractive-index-contrast criterion (§3.Y), the k = 0 dataset provides a controlled upper bound on the resonance amplitude achievable at each Δn; real lossy materials can only perform worse.
+TiO₂ (anatase), Si₃N₄, and Al₂O₃ (sapphire) are modeled with real-valued Cauchy dispersion n(λ) = A + B/λ² + C/λ⁴, which is physically appropriate for transparent dielectrics whose extinction coefficient k is negligible across the visible band.
 
-**Material optical constants (Cauchy model, at 550 nm):**
+For a-Si, we employ the full complex refractive index ñ(λ) = n(λ) + ik(λ) using tabulated experimental data from Green & Keevers (1995), interpolated onto the 81-point wavelength grid. In the visible band, a-Si exhibits k ≈ 0.52 at 400 nm decreasing to k ≈ 0.01 at 700 nm; the imaginary part is included in the RCWA dielectric tensor as ε = ñ², yielding complex-valued diffraction efficiencies. A total of 3,000 Latin Hypercube samples were attempted; 2,725 completed successfully (90.8%), with 275 (9.2%) terminated by a 120 s per-sample timeout due to numerical stiffness in the complex RCWA solve. Of the successful samples, 99 (3.6%) exhibited R+T > 1.0 and were removed by the energy-conservation filter, yielding 2,626 clean training samples. The retained dataset has mean R+T = 0.749 (27% absorption), consistent with the expected optical loss of a-Si in the visible. An earlier lossless (k = 0) a-Si dataset was also generated for comparison; it produces non-physical R+T > 1 (mean 1.044) and is superseded by the complex-k dataset for all results reported in this paper unless explicitly noted.
 
-| Material | n | k | n_sub (SiO2) | Δn |
-|----------|---|---|--------------|-----|
-| TiO2 (anatase) | 2.30 | 0 | 1.458 | 0.842 |
-| a-Si (amorphous) | 3.80 | 0* | 1.458 | 2.342 |
-| Si3N4 (nitride) | 1.99 | 0 | 1.458 | 0.532 |
-| Al2O3 (sapphire) | 1.75 | 0 | 1.458 | 0.292 |
+**Material optical constants (at 550 nm):**
 
-*"a-Si modeled as lossless (k=0) in current dataset; implications discussed in §4.1."
+| Material | n | k | n_sub (SiO2) | Δn | Dataset |
+|----------|---|---|--------------|-----|---------|
+| TiO2 (anatase) | 2.30 | 0 | 1.458 | 0.842 | Cauchy, N=4567 |
+| a-Si (amorphous) | 3.80 | 0.01–0.52 | 1.458 | 2.342 | Green & Keevers 1995, N=2626 |
+| Si3N4 (nitride) | 1.99 | 0 | 1.458 | 0.532 | Cauchy, N≈3000 |
+| Al2O3 (sapphire) | 1.75 | 0 | 1.458 | 0.292 | Cauchy, N≈3000 |
 
 **Sampling strategy:**
 - Latin Hypercube Sampling over (D, H, P) ∈ [80–350] × [100–600] × [200–600] nm
@@ -95,9 +95,11 @@ sub_code ∈ {0: SiO2, 1: Si3N4, 2: Al2O3}
 **Stage 2 — High-fidelity re-ranking (RCWA):**
 - Each top-K candidate re-evaluated with independent RCWA (nG=65, Nxy=256)
 - Best candidate selected by measured CIEDE2000
-- ~6 s/candidate × 20 = ~2 min total per inverse design
+- 4.16 s/candidate × 20 = ~83 s total per inverse design
 
 **Theoretical guarantee:** The hybrid best is always ≤ naïve best (candidate[0] ∈ top-K).
+
+**Computational cost:** All timings measured on a single workstation (CPU: Intel Core, 16 GB RAM; ONNX Runtime, intra_op_threads=4). RCWA single-sample solve (nG=65, Nxy=256, 81 wavelengths): 4.16 s. ML ensemble inference (3-seed mean, 7→81): 5.13 ms per sample, an 811× speedup over RCWA. The full inverse design pipeline — 450-candidate ML grid search (2.31 s) plus 20-candidate RCWA re-ranking (~83 s) — completes in ~86 s per target color, versus ~31.2 min for the equivalent 450-call RCWA brute-force search. The ML screening stage thus reduces the candidate evaluation cost by ~800×, while the RCWA re-ranking stage (K=20) adds a fixed ~83 s overhead that is independent of the initial candidate pool size.
 
 ## 2.4 Evaluation Metrics
 
