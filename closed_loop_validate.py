@@ -292,6 +292,62 @@ def summarize_hybrid(records, rcwa_mat):
     print(f"{'='*68}\n")
 
 
+def convergence_verify(input_pkl, nG_list, Nxy=256):
+    """对闭环结果中选出的结构做多 nG 收敛性复验.
+
+    目的: 证明 achieved 颜色随傅里叶阶数 nG 收敛, 而非 nG=65 的求解器噪声.
+    判据: 若每个结构的 achieved ΔE 跨 nG 极差 < 1 JND (2.3), 且 R+T 随 nG
+          趋近 1.0, 则 achieved 颜色可信, 可堵审稿人"求解器噪声"的质疑.
+    """
+    with open(input_pkl, 'rb') as f:
+        recs = pickle.load(f)
+    ok = [r for r in recs if r.get('status') == 'ok' and 'D' in r]
+    if not ok:
+        print("无有效结构可复验"); return
+
+    print(f"\n{'='*72}")
+    print(f"  nG 收敛性复验  (输入: {input_pkl}, n={len(ok)} 结构, nG={nG_list})")
+    print(f"{'='*72}")
+
+    de_by_nG = {g: [] for g in nG_list}
+    rt_by_nG = {g: [] for g in nG_list}
+    spread = []  # 每结构 ΔE 跨 nG 的极差
+    for r in ok:
+        target_lab = rgb_to_lab(np.array(r['target_rgb']))
+        D, H, P = r['D'], r['H'], r['P']
+        mat, sub = r['material'], r['substrate']
+        de_this = []
+        for g in nG_list:
+            ver = rcwa_verify(D, H, P, mat, sub, nG=g, Nxy=Nxy)
+            if ver is None:
+                continue
+            rgb, R_spec, T_spec = ver
+            de = delta_e2000(rgb_to_lab(rgb), target_lab)
+            de_by_nG[g].append(de)
+            rt_by_nG[g].append(float(np.mean(R_spec + T_spec)))
+            de_this.append(de)
+        if len(de_this) >= 2:
+            spread.append(max(de_this) - min(de_this))
+
+    print(f"  {'nG':>5} | {'mean ΔE':>8} | {'median':>7} | {'mean R+T':>9} | {'n':>3}")
+    print(f"  {'-'*5}-+-{'-'*8}-+-{'-'*7}-+-{'-'*9}-+-{'-'*3}")
+    for g in nG_list:
+        if de_by_nG[g]:
+            a = np.array(de_by_nG[g]); rt = np.array(rt_by_nG[g])
+            print(f"  {g:>5} | {a.mean():>8.2f} | {np.median(a):>7.2f} | "
+                  f"{rt.mean():>9.4f} | {len(a):>3}")
+
+    if spread:
+        sp = np.array(spread)
+        print(f"\n  每结构 ΔE 跨 nG 极差: mean={sp.mean():.2f}  max={sp.max():.2f}  "
+              f"<1 JND(2.3) 比例={100*(sp<2.3).mean():.0f}%")
+        if sp.max() < 2.3:
+            print(f"  [OK] 所有结构 achieved ΔE 跨 nG 变化 < 1 JND → 颜色收敛, 非求解器噪声")
+        else:
+            print(f"  [!] 有结构跨 nG 变化 >= 1 JND, 需在论文中如实报告并讨论")
+    print(f"{'='*72}\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--material', default='TiO2')
@@ -305,8 +361,20 @@ def main():
                     help='0=naive(ML首选); >0=混合重排(取该数量ML候选, RCWA逐个验证选实测最优)')
     ap.add_argument('--resume', action='store_true',
                     help='若输出文件已存在, 跳过已完成的目标(按名字匹配), 增量续跑')
+    ap.add_argument('--verify-nG', default='',
+                    help='收敛复验模式: 逗号分隔的 nG 列表(如 "65,101,131"). '
+                         '指定时不跑闭环, 而是读 --input 结果对每个结构多 nG 复验')
+    ap.add_argument('--input', default='', help='收敛复验模式的输入结果 pkl')
     ap.add_argument('--output', default='')
     args = ap.parse_args()
+
+    # --- 收敛复验模式: 不跑闭环, 读已有结果做多 nG 复验 (只需 RCWA, 不加载 ML) ---
+    if args.verify_nG:
+        if not args.input:
+            ap.error("--verify-nG 需要 --input 指定要复验的结果 pkl")
+        nG_list = [int(x) for x in args.verify_nG.split(',') if x.strip()]
+        convergence_verify(args.input, nG_list, Nxy=256)
+        return
 
     ml_module.init_ml()
     ml_module.init_rcwa_ml()

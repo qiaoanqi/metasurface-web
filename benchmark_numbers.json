@@ -1,0 +1,56 @@
+{
+  "forward": {
+    "TiO2": {
+      "mean": 2.99,
+      "median": 2.12,
+      "p95": 8.5,
+      "lt23": 53,
+      "lt1": 21,
+      "seed_range": "2.97-3.00"
+    },
+    "aSi": {
+      "mean": 4.18,
+      "median": 3.65,
+      "p95": 9.4,
+      "lt23": 28,
+      "lt1": 7,
+      "seed_range": "4.15-4.20"
+    },
+    "Si3N4": {
+      "mean": 1.57,
+      "median": 1.03,
+      "p95": 4.8,
+      "lt23": 78,
+      "lt1": 49,
+      "note": "mean-predictor, data nearly flat"
+    },
+    "Al2O3": {
+      "note": "R range 0.009, no trainable structure"
+    }
+  },
+  "closed_loop": {
+    "TiO2": {
+      "naive_mean": 5.83,
+      "naive_med": 4.71,
+      "hybrid_mean": 2.33,
+      "hybrid_med": 1.84,
+      "hybrid_lt23": 63,
+      "ml_claim": 0.66,
+      "ng_conv": 90
+    },
+    "aSi": {
+      "naive_mean": 26.42,
+      "naive_med": 26.86,
+      "hybrid_mean": 12.17,
+      "hybrid_med": 11.8,
+      "hybrid_lt23": 0,
+      "ml_claim": 20.2,
+      "ng_conv": 40
+    }
+  },
+  "cutoff": {
+    "threshold_dn": 0.53,
+    "active_example": "TiO2/Al2O3 0.545\u2192R=0.309",
+    "quenched_example": "Si3N4/SiO2 0.532\u2192R=0.043"
+  }
+}
