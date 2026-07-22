@@ -4,7 +4,7 @@
 
 我们训练了基于残差 MLP 的 3-seed 集成代理模型（553K 参数，ONNX 部署），对四材料体系（TiO₂, a-Si, Si₃N₄, Al₂O₃）在三衬底上的 11 组 RCWA 数据集进行正向预测和闭环逆设计验证。结果表明：(1) 正向预测精度是逆设计成功的必要非充分条件——a-Si 复折射率模型的 holdout 精度（ΔE₀₀ = 2.38）优于 TiO₂（2.99），但逆设计成功率仅为 0–18% vs 63%（随机目标色 0%，色域内 roundtrip 目标 18%），色域覆盖度而非预测精度才是逆设计成功的充要条件；(2) 优化器诅咒产生约 +4–5 ΔE₀₀ 的过度乐观偏差（中位数，材料无关），提出的混合重排策略（ML 筛选 top-K → RCWA 逐一验证取最优）在数学上保证不劣于纯 ML 策略，实验上将 TiO₂ 逆设计成功率（ΔE₀₀ < 2.3 JND）从 23% 提升至 63%；(3) 通过数据驱动验证确认了折射率对比度阈值：Δn ≈ 0.5 处存在共振截止（resonance cutoff），Δn 变化 0.013 即导致反射谱动态范围 7 倍崩塌，高 Δn 材料（如 a-Si, n = 3.8）因阻抗失配和材料吸收（可见光均值吸收 ~27%，蓝光波段高达 ~55%）而色域受限。
 
-该判据成功解释了 TiO₂（正例，hybrid 63% 成功）、Si₃N₄/Al₂O₃（负对照，平谱无共振）和 a-Si（高 Δn 但损耗受限，0–18% 成功）的实验表现。本研究为 ML 辅助光子学逆设计划定了明确的能力边界：混合验证消除统计偏差但不消除系统误差，材料选择与验证策略是两个正交的改进维度。最具实践意义的发现是：正向精度相差无几的两个代理模型（a-Si ΔE₀₀ = 2.38 vs TiO₂ 2.99），逆设计成功率却差 3.5 倍以上——精度指标本身无法预测逆设计的成败。
+该判据成功解释了 TiO₂（正例，hybrid 63% 成功）、Si₃N₄/Al₂O₃（负对照，平谱无共振）和 a-Si（高 Δn 但损耗受限，0–18% 成功）的实验表现。本研究为 ML 辅助光子学逆设计划定了明确的能力边界：端到端逆设计管线加速约 22×（2.3 s ML 筛选 + 83 s RCWA 重排 vs 31.2 min 穷举），混合验证消除统计偏差但不消除系统误差，材料选择与验证策略是两个正交的改进维度。最具实践意义的发现是：正向精度相差无几的两个代理模型（a-Si ΔE₀₀ = 2.38 vs TiO₂ 2.99），逆设计成功率却差 3.5 倍以上——精度指标本身无法预测逆设计的成败。
 
 **关键词**：超表面；结构色；机器学习代理模型；逆设计；优化器诅咒；严格耦合波分析；折射率对比度
 
@@ -14,7 +14,7 @@
 
 机器学习代理模型在超表面逆设计中被广泛使用，但其有效性从未被严格验证。我们发现一个反直觉现象：正向预测精度更高的材料体系（a-Si，holdout ΔE₀₀ = 2.38），逆设计成功率仅为 0–18%；而精度较低的材料（TiO₂，ΔE₀₀ = 2.99），成功率却达 63%。精度指标本身无法预测逆设计的成败——这一发现迫使重新审视 ML 辅助光子学设计的基本假设。
 
-结构色源于亚波长尺度光与微纳结构的相互作用，介电超表面（周期性高折射率纳米柱阵列）因支持导模共振（GMR）和米氏共振，能在极薄层内实现高饱和度色彩，在显示、防伪、传感等领域前景广阔[1-5]。逆设计（给定目标颜色求解几何参数）面临高度非线性的多对一映射和高昂仿真代价（单次 RCWA 约 4 s），传统穷举搜索不可行[6-8]。ML 代理模型将单次推理压缩至毫秒级（本研究 5.13 ms，加速比 811×），但现有文献存在三个被普遍忽视的关键问题[9-12]：
+结构色源于亚波长尺度光与微纳结构的相互作用，介电超表面（周期性高折射率纳米柱阵列）因支持导模共振（GMR）和米氏共振，能在极薄层内实现高饱和度色彩，在显示、防伪、传感等领域前景广阔[1-5]。逆设计（给定目标颜色求解几何参数）面临高度非线性的多对一映射和高昂仿真代价（单次 RCWA 约 4 s），传统穷举搜索不可行[6-8]。ML 代理模型将单次推理压缩至毫秒级（本研究 5.13 ms vs RCWA 4.16 s，单次推理 811×），但现有文献存在三个被普遍忽视的关键问题[9-12]：
 
 **第一，正向精度与逆设计成功之间的脱节未被认识。** 现有工作普遍以正向 holdout 精度（代理模型在测试集上的误差）作为模型质量的最终指标，隐含假设"预测得准就能设计得出"。然而，逆设计是在候选池中寻找最优解的优化问题，其成功取决于材料的可实现色域是否覆盖目标色，而非代理模型在测试集上的平均误差。这一根本区别从未被系统验证。
 
@@ -328,20 +328,6 @@ nG 收敛性复验（nG = 65 → 101）暴露了另一个材料依赖效应：Ti
 
 ---
 
-## 写作备注（非正文）
-
-- [Table X] 占位处等 Codex 的四材料基准表填入
-- Fig. X（Δn 判据曲线）数据在 data/index_contrast_criterion.pkl，11 个数据点
-- 优化器诅咒的引用需补：Jones et al. 1998 (Efficient Global Optimization), Gonzalez et al. 2016 (Batch Bayesian Optimization)
-- 导模共振引用：Magnusson & Wang 1992 (New principle for optical filters)
-- a-Si 光学常数引用：Palik Handbook / refractiveindex.info (Green & Keevers 1995)
-- CIEDE2000 引用：Sharma et al. 2005
-- 全文数字以 N=30 闭环结果为准（非 smoke test）
-
-
-
----
-
 ## 5. Conclusion
 
 We have presented a systematic ML-assisted inverse design framework for dielectric metasurface structural colors with three distinguishing features: rigorous closed-loop validation, a physics-grounded material selection criterion, and explicit quantification of the optimizer's curse.
@@ -352,7 +338,7 @@ We have presented a systematic ML-assisted inverse design framework for dielectr
 
 **Forward accuracy is necessary but insufficient** for inverse design: a-Si achieves forward holdout Delta-E2000 = 2.38 (better than TiO2's 2.99) yet only 0–18% inverse design success (0% for random sRGB targets outside gamut, 18% for roundtrip targets within gamut) due to gamut collapse (cross-sample RGB std = [0.21, 0.10, 0.09]).
 
-**Speed**: ML inference (5.13 ms) is 811x faster than RCWA (4.16 s); full inverse design completes in ~2.3 s vs 31.2 min for brute-force RCWA.
+**Speed**: ML inference (5.13 ms) is 811x faster than RCWA (4.16 s); end-to-end inverse design completes in ~86 s vs 31.2 min for brute-force RCWA (22x acceleration) for brute-force RCWA.
 
 Future extensions include dual-pillar geometries, FDTD cross-validation, and experimental fabrication. The framework provides a practical protocol for navigating the boundary between ML acceleration and physical realizability in photonic inverse design.
 
