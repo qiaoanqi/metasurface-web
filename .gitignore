@@ -85,3 +85,17 @@ _conclusion.md
 _assemble_paper.py
 _add_conclusion.py
 _bench_speed.py
+
+# LaTeX intermediates
+*.aux
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Tex stage backups (named .bak-<stage>)
+*.bak-*
+
+# Docx unpack dir + one-off draft
+_docx_unpack/
+_evt_paragraph.tex
