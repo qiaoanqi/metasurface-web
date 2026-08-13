@@ -75,7 +75,7 @@ _v5/
 *.mp4
 *.docx
 *.png
-data/
+data/*
 models/
 演示视频.mp4
 AI超表面结构色设计_项目报告.docx
@@ -101,7 +101,6 @@ _docx_unpack/
 _evt_paragraph.tex
 
 # Gate artifacts (bloodline discipline: gate pkl must be committed)
-!data/
 !data/ellipse_gate1_invariants.pkl
 !data/ellipse_gate2_result.pkl
 !data/ng_probe_elliptical_*.pkl
