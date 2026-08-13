@@ -1,62 +1,48 @@
+# 正向精度无法预测逆设计成功：ML 辅助超表面结构色中的优化器诅咒与色域极限
+
+*Forward Accuracy Does Not Predict Inverse Design Success: Optimizer's Curse and Gamut Limits in ML-Assisted Metasurface Structural Color*
+
+*草稿版本 2026-07-22，供导师审阅（作者、单位、基金信息待补）*
+
 # Abstract
 
-机器学习代理模型驱动的超表面逆设计面临一个被普遍忽视的统计陷阱：当代理模型本身成为优化目标时，其预测误差被选择过程系统性放大，导致"代理最优"设计在全波验证中表现远逊于预期。本文以介电超表面结构色为研究对象，建立了从目标色到 ML 逆设计再到独立 RCWA 全波验证的严格闭环协议，系统量化了这一"优化器诅咒"效应并提出了有效的修复策略。
+机器学习代理模型驱动的超表面逆设计面临一个被普遍忽视的统计陷阱：当代理模型本身成为优化目标时，其预测误差被选择过程系统性放大，导致"代理最优"设计在全波验证中表现远逊于预期。本文以介电超表面结构色为研究对象，建立了从目标色到 ML 逆设计再到独立 RCWA 验证的严格闭环协议，系统量化了这一"优化器诅咒"效应并提出了有效的修复策略。
 
-我们训练了基于残差 MLP 的 3-seed 集成代理模型（553K 参数，ONNX 部署），对四材料体系（TiO₂, a-Si, Si₃N₄, Al₂O₃）在三衬底上的 11 组 RCWA 数据集进行正向预测和闭环逆设计验证。结果表明：(1) 正向预测精度是逆设计成功的必要非充分条件——a-Si 复折射率模型的 holdout 精度（ΔE₀₀ = 2.38）优于 TiO₂（2.99），但逆设计成功率仅为 0–18% vs 63%（随机目标色 0%，色域内 roundtrip 目标 18%），色域覆盖度而非预测精度才是逆设计成功的充要条件；(2) 优化器诅咒产生约 +4–5 ΔE₀₀ 的过度乐观偏差（中位数，材料无关），提出的混合重排策略（ML 筛选 top-K → RCWA 逐一验证取最优）在数学上保证不劣于纯 ML 策略，实验上将 TiO₂ 逆设计成功率（ΔE₀₀ < 2.3 JND）从 23% 提升至 63%；(3) 通过数据驱动验证确认了折射率对比度阈值：Δn ≈ 0.5 处存在共振截止（resonance cutoff），Δn 变化 0.013 即导致反射谱动态范围 7 倍崩塌，高 Δn 材料（如 a-Si, n = 3.8）因阻抗失配和材料吸收（可见光均值吸收 ~27%，蓝光波段高达 ~55%）而色域受限。
+我们训练了基于残差 MLP 的 3-seed 集成代理模型（553K 参数），对四材料体系（TiO₂, a-Si, Si₃N₄, Al₂O₃）在三衬底上的 12 组 RCWA 数据集进行验证。三项发现：(1) 正向精度是逆设计成功的必要非充分条件——a-Si holdout 精度（ΔE₀₀ = 2.38）优于 TiO₂（2.99），逆设计成功率却仅 0–18% vs 62%，候选池密度才是充要条件；(2) 优化器诅咒产生材料无关的 +3–4 ΔE₀₀ 中位过度乐观偏差，混合重排（ML top-K → RCWA 逐一验证）数学上保证不劣于纯 ML，将 TiO₂ roundtrip 成功率从 19% 提升至 62%（Wilson 95% CI：52–71%）；(3) Δn ≈ 0.5 处存在共振截止，Δn 变化 0.013 即致反射动态范围 7 倍崩塌，提供先验材料筛选判据。
 
-该判据成功解释了 TiO₂（正例，hybrid 63% 成功）、Si₃N₄/Al₂O₃（负对照，平谱无共振）和 a-Si（高 Δn 但损耗受限，0–18% 成功）的实验表现。本研究为 ML 辅助光子学逆设计划定了明确的能力边界：端到端逆设计管线加速约 22×（2.3 s ML 筛选 + 83 s RCWA 重排 vs 31.2 min 穷举），混合验证消除统计偏差但不消除系统误差，材料选择与验证策略是两个正交的改进维度。最具实践意义的发现是：正向精度相差无几的两个代理模型（a-Si ΔE₀₀ = 2.38 vs TiO₂ 2.99），逆设计成功率却差 3.5 倍以上——精度指标本身无法预测逆设计的成败。
+本研究划定 ML 辅助光子学逆设计的能力边界：混合验证消除统计偏差但不消除系统误差，材料选择与验证策略是两个正交改进维度。
 
 **关键词**：超表面；结构色；机器学习代理模型；逆设计；优化器诅咒；严格耦合波分析；折射率对比度
 
 ---
 
-# Introduction
+# 1. Introduction
 
-机器学习代理模型在超表面逆设计中被广泛使用，但其有效性从未被严格验证。我们发现一个反直觉现象：正向预测精度更高的材料体系（a-Si，holdout ΔE₀₀ = 2.38），逆设计成功率仅为 0–18%；而精度较低的材料（TiO₂，ΔE₀₀ = 2.99），成功率却达 63%。精度指标本身无法预测逆设计的成败——这一发现迫使重新审视 ML 辅助光子学设计的基本假设。
+机器学习代理模型在超表面逆设计中被广泛使用，但其有效性从未被严格验证。我们发现一个反直觉现象：正向预测精度更高的材料体系（a-Si，holdout ΔE₀₀ = 2.38），逆设计成功率仅为 0–18%；而精度较低的材料（TiO₂，ΔE₀₀ = 2.99），成功率却达 62%。精度指标本身无法预测逆设计的成败——这一发现迫使重新审视 ML 辅助光子学设计的基本假设。
 
-结构色源于亚波长尺度光与微纳结构的相互作用，介电超表面（周期性高折射率纳米柱阵列）因支持导模共振（GMR）和米氏共振，能在极薄层内实现高饱和度色彩，在显示、防伪、传感等领域前景广阔[1-5]。逆设计（给定目标颜色求解几何参数）面临高度非线性的多对一映射和高昂仿真代价（单次 RCWA 约 4 s），传统穷举搜索不可行[6-8]。ML 代理模型将单次推理压缩至毫秒级（本研究 5.13 ms vs RCWA 4.16 s，单次推理 811×），但现有文献存在三个被普遍忽视的关键问题[9-12]：
+结构色源于亚波长尺度光与微纳结构的相互作用，介电超表面（周期性高折射率纳米柱阵列）因支持导模共振（GMR）和米氏共振，能在极薄层内实现高饱和度色彩，在显示、防伪、传感等领域前景广阔[1-5]。逆设计（给定目标颜色求解几何参数）面临高度非线性的多对一映射和高昂仿真代价（单次 RCWA 约 1.6 s），传统穷举搜索不可行[6-8]。ML 代理模型将单次推理压缩至毫秒级（本研究 5.13 ms vs RCWA ~1.6 s，单次推理 >300×），但现有文献存在三个被普遍忽视的关键问题[9-12]：
 
-**第一，正向精度与逆设计成功之间的脱节未被认识。** 现有工作普遍以正向 holdout 精度（代理模型在测试集上的误差）作为模型质量的最终指标，隐含假设"预测得准就能设计得出"。然而，逆设计是在候选池中寻找最优解的优化问题，其成功取决于材料的可实现色域是否覆盖目标色，而非代理模型在测试集上的平均误差。这一根本区别从未被系统验证。
+**第一，正向精度与逆设计成功之间的脱节未被认识。** 现有工作普遍以正向 holdout 精度作为代理模型质量的最终指标，隐含假设"预测得准就能设计得出"。然而，逆设计是在有限候选池上的优化问题：成功取决于候选池中是否存在匹配目标色的结构，而非代理模型在测试集上的平均误差。这一预测与优化之间的根本区别，从未在超表面文献中被系统验证。
 
-**第二，缺乏严格的闭环验证，优化器诅咒效应未被量化。** 绝大多数 ML 辅助超表面设计工作仅报告正向精度，而未验证逆设计结果在全波仿真中的实际表现[9-11]。当代理模型被用作优化目标时，其预测误差会被选择过程系统性放大（"优化器诅咒"，optimizer's curse）[13,14]，使得"代理最优"结构在真实物理验证中表现远逊于预期。这一效应在超表面领域从未被量化。
+**第二，优化器诅咒在本领域从未被量化。** 这一统计现象已有充分的理论基础：当含噪声的预测器被用作目标函数时，选择过程会放大预测误差（Goodhart 定律；拍卖理论中的赢者诅咒[13,14]）。在超表面 ML 中，这表现为"代理最优"结构在全波验证中的表现远逊于代理预测。尽管其相关性显而易见，此前没有工作测量过这一过度乐观偏差的幅度，也未提出系统性的修正方案。
 
-**第三，缺乏材料筛选的定量判据。** 并非所有介电材料都适合产生结构色。低折射率对比度（Δn）体系中导模共振被抑制，光谱几乎无变化，ML 模型无论多精确都无法逆设计出有意义的颜色。然而，现有文献中材料选择多基于经验或直觉，缺乏基于物理的定量筛选准则[15]。
+**第三，不存在定量的材料筛选判据。** 实践者凭直觉选择纳米柱材料（高 n、低损耗），但没有数据驱动的阈值能先验地判断给定的材料-衬底组合能否产生有用的结构色。
 
-本文的核心论点是：**ML 代理模型的逆设计天花板不由模型精度决定，而由材料的物理可实现色域决定。** 围绕这一论点，我们做出以下贡献：
+本文的核心论点是：**ML 代理模型的逆设计天花板不由模型精度决定，而由材料物理上可实现的候选池密度决定。**
 
-（1）**正向精度≠逆设计成功的实证**：通过 TiO₂（成功，63%）与 a-Si（受限，0–18%）的严格对比，首次证明正向 holdout ΔE 是逆设计成功的必要非充分条件，色域覆盖度才是充要条件。
+本文做出三项贡献：
 
-（2）**优化器诅咒量化与混合重排修复**：首次量化超表面逆设计中的优化器诅咒（~+4–5 ΔE₀₀ 中位数，材料无关），提出混合重排策略（ML top-K → RCWA 逐一验证），数学保证 hybrid ≤ naïve，TiO₂ 成功率 23%→63%。
+（1）**优化器诅咒的闭环量化。** 通过严格协议（ML 逆设计 → 独立 RCWA 验证），我们测量了材料无关的过度乐观偏差 +3–4 ΔE₀₀（中位数），并证明正向 holdout 精度无法预测逆设计成功：a-Si 的正向精度优于 TiO₂（2.38 vs 2.99 ΔE₀₀），逆设计成功率却远低于 TiO₂（0–18% vs 62%）。
 
-（3）**折射率对比度阈值的数据驱动验证**：基于 11 组材料/衬底数据，建立"Δn > ~0.5 共振截止 + k ≈ 0 色域最大化"的阈值验证，Δn 变化 0.013 导致 7× 共振崩塌，成功解释四材料体系的实验表现。
+（2）**通过混合重排诊断失败机制。** ML top-K 的 RCWA 重排（一种标准的代理辅助优化策略，而非新算法）充当*诊断工具*：它消除统计偏差，并将残余失败暴露为候选池耗尽——对 a-Si，网格中物理上不存在匹配高饱和度目标的结构；而 TiO₂ 的候选池中每个目标约有 ~5% 的可行候选。优化器诅咒可治；材料极限不可治。
 
-综上所述，本文的核心实践贡献可概括为一个诊断协议：在投入 ML 逆设计之前，先用两个指标判断材料是否值得做——(1) 训练数据的色域覆盖度（跨样本 RGB 标准差），(2) Δn 是否超过共振截止阈值（~0.5）。如果色域不覆盖目标色，再精确的代理模型也无法逆设计成功。
+（3）**数据驱动的材料筛选判据。** 12 组材料-衬底组合揭示了 Δn ≈ 0.5 处的共振截止：低于此阈值，反射谱平坦化，结构色消失。结合色域密度分析，这为 ML 训练开始之前的材料选择提供了先验筛选。
 
 本文结构如下：§2 描述 RCWA 数据生成、ResMLP 代理模型架构和混合逆设计流程；§3 报告正向预测精度、闭环逆设计验证和材料筛选判据的实验结果；§4 讨论代理保真度的材料依赖性、求解器收敛性和方法局限；§5 总结全文。
 
 ---
 
-## 引用占位
-
-[1] Kinoshita et al., Rep. Prog. Phys. 2008 — structural color in nature
-[2] Tan et al., Adv. Mater. 2014 — structural color review
-[3] Yu et al., Nat. Rev. Mater. 2023 — metasurface structural color
-[4] Kuznetsov et al., Science 2016 — dielectric metasurfaces
-[5] Tseng et al., ACS Nano 2017 — TiO2 metasurface color
-[6] Moharam & Gaylord, JOSA 1981 — RCWA
-[7] Taflove & Hagness, Computational Electrodynamics 2005 — FDTD
-[8] Molesky et al., Nat. Photonics 2018 — inverse design in photonics
-[9] Tahersima et al., Sci. Rep. 2019 — NN for metasurface design
-[10] Liu et al., ACS Photonics 2021 — deep learning metasurface
-[11] So et al., Adv. Photonics 2022 — ML-assisted nanophotonics
-[12] 本领域最新综述 — 2024/2025
-[13] Jones et al., J. Global Optim. 1998 — Efficient Global Optimization
-[14] Gonzalez et al., AISTATS 2016 — Batch Bayesian Optimization
-[15] Magnusson & Wang, Appl. Phys. Lett. 1992 — GMR principle
-
----
-
-# Methods
+# 2. Methods
 
 ## 2.1 RCWA Data Generation
 
@@ -65,7 +51,7 @@ Training data generated with grcwa (guided-mode resonance coupled-wave analysis)
 **Scope.** This study restricts to the minimal configuration — single cylindrical nanopillar, normal incidence (0°), TE polarization — to establish a controlled benchmark. Extensions to dual-pillar geometries, oblique incidence, and TM polarization are deferred to future work (§4.4).
 All materials modeled with Cauchy dispersion: n(λ) = A + B/λ² + C/λ⁴.
 
-**Solver parameters (fixed across all materials):**
+**Table 1. Solver parameters (fixed across all materials):**
 
 | Parameter | Value | Justification |
 |-----------|-------|---------------|
@@ -83,9 +69,9 @@ The real-space discretization Nxy = 256 provides a grid resolution of P/256 ≈ 
 
 TiO₂ (anatase), Si₃N₄, and Al₂O₃ (sapphire) are modeled with real-valued Cauchy dispersion n(λ) = A + B/λ² + C/λ⁴, which is physically appropriate for transparent dielectrics whose extinction coefficient k is negligible across the visible band.
 
-For a-Si, we employ the full complex refractive index ñ(λ) = n(λ) + ik(λ) using tabulated experimental data from Green & Keevers (1995), interpolated onto the 81-point wavelength grid. In the visible band, a-Si exhibits k ≈ 0.52 at 400 nm decreasing to k ≈ 0.01 at 700 nm; the imaginary part is included in the RCWA dielectric tensor as ε = ñ², yielding complex-valued diffraction efficiencies. A total of 3,000 Latin Hypercube samples were attempted; 2,725 completed successfully (90.8%), with 275 (9.2%) terminated by a 120 s per-sample timeout due to numerical stiffness in the complex RCWA solve. Of the successful samples, 99 (3.6%) exhibited R+T > 1.0 and were removed by the energy-conservation filter, yielding 2,626 clean training samples. The retained dataset has mean R+T = 0.749 (27% absorption), consistent with the expected optical loss of a-Si in the visible. An earlier lossless (k = 0) a-Si dataset was also generated for comparison; it produces non-physical R+T > 1 (mean 1.044) and is superseded by the complex-k dataset for all results reported in this paper unless explicitly noted.
+For a-Si, we employ the full complex refractive index ñ(λ) = n(λ) + ik(λ) using tabulated experimental data from Green & Keevers (1995), interpolated onto the 81-point wavelength grid. In the visible band, a-Si exhibits k ≈ 0.52 at 400 nm decreasing to k ≈ 0.01 at 700 nm; the imaginary part is included in the RCWA dielectric tensor as ε = ñ², yielding complex-valued diffraction efficiencies. A total of 3,000 Latin Hypercube samples were attempted; 2,725 completed successfully (90.8%), with 275 (9.2%) terminated by a 120 s per-sample timeout due to numerical stiffness in the complex RCWA solve. Of the successful samples, 99 (3.6%) exhibited R+T > 1.0 and were removed by the energy-conservation filter, yielding 2,626 clean training samples. The retained dataset has mean R+T = 0.731 (27% absorption), consistent with the expected optical loss of a-Si in the visible. An earlier lossless (k = 0) a-Si dataset was also generated for comparison; it produces non-physical R+T > 1 (mean 1.044) and is superseded by the complex-k dataset for all results reported in this paper unless explicitly noted.
 
-**Material optical constants (at 550 nm):**
+**Table 2. Material optical constants (at 550 nm):**
 
 | Material | n | k | n_sub (SiO2) | Δn | Dataset |
 |----------|---|---|--------------|-----|---------|
@@ -104,7 +90,7 @@ For a-Si, we employ the full complex refractive index ñ(λ) = n(λ) + ik(λ) us
 
 ## 2.2 ResMLP Surrogate Model
 
-**Architecture:**
+**Table 3. ResMLP surrogate architecture:**
 
 | Component | Specification |
 |-----------|--------------|
@@ -149,17 +135,19 @@ sub_code ∈ {0: SiO2, 1: Si3N4, 2: Al2O3}
 
 **Stage 1 — Surrogate screening (ML):**
 - Coarse grid: 12³ = 1,728 candidates (D/H/P uniformly spaced)
-- Ensemble batch inference on GPU: ~2 ms/1,728 candidates
+- PyTorch batch inference (GPU): ~2 ms for all 1,728 candidates
 - Top-K = 20 candidates selected by predicted CIEDE2000
 
 **Stage 2 — High-fidelity re-ranking (RCWA):**
 - Each top-K candidate re-evaluated with independent RCWA (nG=65, Nxy=256)
 - Best candidate selected by measured CIEDE2000
-- 4.16 s/candidate × 20 = ~83 s total per inverse design
+- 1.6 s/candidate × 20 = ~33 s total per inverse design
 
 **Theoretical guarantee:** The hybrid best is always ≤ naïve best (candidate[0] ∈ top-K).
 
-**Computational cost:** All timings measured on a single workstation (CPU: Intel Core, 16 GB RAM; ONNX Runtime, intra_op_threads=4). RCWA single-sample solve (nG=65, Nxy=256, 81 wavelengths): 4.16 s. ML ensemble inference (3-seed mean, 7→81): 5.13 ms per sample, an 811× speedup over RCWA. The full inverse design pipeline — 450-candidate ML grid search (2.31 s) plus 20-candidate RCWA re-ranking (~83 s) — completes in ~86 s per target color, versus ~31.2 min for the equivalent 450-call RCWA brute-force search. The ML screening stage thus reduces the candidate evaluation cost by ~800×, while the RCWA re-ranking stage (K=20) adds a fixed ~83 s overhead that is independent of the initial candidate pool size.
+**Computational cost:** All timings measured on a single workstation (Intel Core i7-14650HX, 16 cores, 32 GB RAM; NVIDIA GeForce RTX 5060 Laptop GPU for PyTorch batch inference). Two inference paths: (i) ONNX Runtime (CPU, intra_op_threads=4) single-sample deployment: 5.13 ms per sample, >300× speedup over RCWA; (ii) PyTorch batch mode (GPU) grid screening: ~2 ms for all 1,728 candidates. Full inverse design pipeline — ~1400-candidate ML batch search (~4 s including data transfer and CIEDE2000 evaluation) plus 20-candidate RCWA re-ranking (~33 s) — completes in ~37 s per target color, versus ~38 min for 1392-call RCWA brute-force search.
+
+![闭环逆设计协议。目标色（sRGB）→ ML 代理筛选（1392 候选，~4 s）→ top-K = 20 选择 → RCWA 逐一验证（20 结构，~33 s）→ 最优设计（RCWA 验证 ΔE₀₀ 最小）。ML 自称 ΔE = 0.66 vs RCWA 实测 ΔE = 5.83（诅咒 gap +3–4 ΔE 中位数）。端到端加速 ~60×（vs 1392 次 RCWA 穷举 ~38 min）。](figures/fig1_protocol.png){width="6.2in"}
 
 ## 2.4 Evaluation Metrics
 
@@ -176,79 +164,84 @@ Thresholds: ΔE₀₀ < 1.0 (imperceptible), < 2.3 (just noticeable difference, 
 
 ---
 
-# 论文草稿：Results & Discussion（物理洞察部分）
+# 3. Results
 
-> 作者分工：本节由 Qwen 撰写，涵盖逆设计结果、材料筛选判据、讨论。
-> 数据表格由 Codex 提供，此处以 [Table X] 占位。
+## 3.1 逆设计验证：优化器诅咒与混合重排修复
 
----
+### 3.1.1 问题提出
 
-## 3.X 逆设计验证：优化器诅咒与混合重排修复
-
-### 3.X.1 问题提出
-
-代理模型（surrogate model）驱动的逆设计面临一个被超表面领域普遍忽视的统计陷阱：当 ML 模型被用作目标函数进行优化时，模型预测误差会系统性地偏向高估设计性能。这一现象在贝叶斯优化文献中被称为"优化器诅咒"（optimizer's curse）[Jones et al., 1998; Gonzalez et al., 2016]，其本质是 Goodhart 定律在代理优化中的体现——当代理指标（ML 预测 ΔE）本身成为优化目标时，它就不再是真实指标（RCWA 验证 ΔE）的良好度量。
+代理模型（surrogate model）驱动的逆设计面临一个被超表面领域普遍忽视的统计陷阱：当 ML 模型被用作目标函数进行优化时，模型预测误差会系统性地偏向高估设计性能。这一现象在贝叶斯优化文献中被称为"优化器诅咒"（optimizer's curse）[13,14]，其本质是 Goodhart 定律在代理优化中的体现——当代理指标（ML 预测 ΔE）本身成为优化目标时，它就不再是真实指标（RCWA 验证 ΔE）的良好度量。
 
 本研究通过严格的闭环验证（closed-loop validation）量化了这一效应：对每个目标色，ML 模型从候选池中选出其预测 ΔE 最小的结构（naïve 策略），随后用 RCWA 全波仿真重新计算该结构的真实反射谱并评估实际 ΔE。ML 自称的预测精度与 RCWA 实测精度之间的系统性偏差即为优化器诅咒的量化表征。
 
-### 3.X.2 TiO₂/SiO₂：从过度自信到修复
+极端值理论可以*先验地*预测诅咒量级。设代理模型对每个候选的预测误差标准差为 σ，候选池大小为 N，则 rank-1 选择的期望过乐观偏差满足 E[gap] ≈ σ√(2 ln N)（N 个独立高斯变量的期望最大值）。代入 TiO₂ 数据：σ ≈ 3 ΔE₀₀（holdout 散布），N = 1392（过滤后网格），得 √(2 ln 1392) ≈ 3.8，预测 gap ~ 3–5 ΔE₀₀——与下文实测中位数 +3.59 高度吻合。这一吻合确认诅咒并非特定模型或数据集的偶然产物，而是在 O(10³) 个含噪预测上执行优化的通用统计后果。
 
-TiO₂（锐钛矿，n ≈ 2.30）在 SiO₂ 衬底上的 3-seed 集成模型 holdout 测试精度为 ΔE = 2.99（mean，三 seed 范围 2.97–3.00，极差 0.03）/ 2.12（median），53% 样本低于 2.3 JND 阈值 [Table 1]。这一正向精度本身已属可用，但逆设计场景下的表现揭示了更深层的问题：
+### 3.1.2 TiO₂/SiO₂：从过度自信到修复
 
-在 N = 30 个随机目标色的闭环测试中，naïve 策略（直接取 ML 预测最优候选）的 ML 自称 ΔE 仅为 0.66——远优于正向 holdout 的 3.0。然而 RCWA 验证后的实际 ΔE 为 5.83，过度乐观偏差（over-optimism gap）达 +5.17。这一 7 倍的自称-实测落差正是优化器诅咒的直接体现：ML 在候选池中"挑选"了那些恰好处于其预测误差有利方向的样本，而非真正最优的结构。
+TiO₂（锐钛矿，n ≈ 2.30）在 SiO₂ 衬底上的 3-seed 集成模型 holdout 测试精度为 ΔE = 2.99（mean，三 seed 范围 2.97–3.00，极差 0.03）/ 2.12（median），53% 样本低于 2.3 JND 阈值（Table 4）。这一正向精度本身已属可用，但逆设计场景下的表现揭示了更深层的问题：
+
+在 N = 100 个 roundtrip 目标（从 TiO₂ 训练集中抽取真实结构，以其 RCWA 仿真色为逆设计目标——物理上保证位于 TiO₂ 可实现色域内）的闭环测试中，naïve 策略仅在 19% 的目标上成功（ΔE < 2.3 JND），过度乐观偏差（实测 − ML 自称）中位数为 +3.59 ΔE₀₀。ML 系统性地"挑选"了那些恰好处于其预测误差有利方向的样本，而非真正最优的结构。
+
+我们强调此协议并非循环论证：(i) 目标是*颜色*（RCWA 验证的 sRGB），不是结构标签——逆设计需要找到*任何*能重现该颜色的几何结构；(ii) 解来自均匀 12³ 网格（1,728 候选），与 Latin Hypercube 训练集是完全不同的离散化，ML 模型必须泛化到未见过的几何；(iii) 最终选择使用独立 RCWA 验证，与 ML 预测完全解耦。Roundtrip 设计测试的是：管线能否从粗网格中恢复一个已知可达的颜色——这是最小可行的逆设计任务。
 
 混合重排策略（hybrid re-ranking）通过引入物理验证层修复了这一缺陷：ML 筛选 top-K（K=20）候选后，逐一执行 RCWA 全波仿真，取 RCWA 验证 ΔE 最小者作为最终设计。结果显示：
 
-- 混合策略实测 ΔE 从 5.83 降至 2.33（改善 +3.51）
-- 成功率（ΔE < 2.3 JND）从 23% 提升至 63%
-- 混合 ≤ naïve 在全部 30/30 个目标上成立（理论保证：top-K 包含 naïve 首选）
-- 过度乐观偏差从 +5.17 压缩至 +1.67（ML 自称 0.66 vs hybrid 实测 2.33）
+- 混合策略实测 ΔE：mean 2.18，median 1.83
+- 成功率（ΔE < 2.3 JND）从 19% 提升至 62%（Wilson 95% CI：52–71%）
+- 混合 ≤ naïve 在全部 100/100 个目标上成立（理论保证：top-K 包含 naïve 首选）
 
 nG 收敛性复验（nG = 65 → 101）确认 90% 结构的颜色跨阶数变化 < 1 JND（mean 极差 0.77），排除了"求解器噪声导致虚假颜色"的替代解释。
 
-### 3.X.3 a-Si/SiO₂（复折射率）：正向精度好 ≠ 逆设计成功
+作为对比，互补的色域探测测试（N = 100，目标从 sRGB 色域边界采样）仅获 6% hybrid 成功率——多数 sRGB 边界色超出 TiO₂ 可实现色域。关键的是，这些色域外目标的诅咒 gap 中位数仅 +0.81，而色域内 roundtrip 目标为 +3.59。这一目标依赖性揭示了诅咒机制：当所有候选距目标 ΔE ~ 10–15 时，ML 排序不携带有效信号，选择偏差无法放大；诅咒恰在目标可达、候选紧密排列时最大。
 
-非晶硅（a-Si，n ≈ 3.80，k ≈ 0.01–0.52）在 SiO₂ 衬底上的 3-seed 集成模型采用真实复折射率数据（Green & Keevers 1995）训练，holdout 精度为 ΔE = 2.38（3-seed 集成部署，N=263），64% 样本低于 JND 阈值 [Table 1]。这一正向精度甚至优于 TiO₂（2.99）——吸收主导的光谱形态简单（暗红/棕色调），模型容易预测。
+### 3.1.3 a-Si/SiO₂（复折射率）：正向精度好 ≠ 逆设计成功
 
-为严格检验正向精度能否转化为逆设计能力，我们设计了两组互补的闭环测试。**第一组（随机目标，N = 29）**：从 sRGB 色空间均匀采样目标色。ML 自称 ΔE = 13.39，naïve 实测 = 18.04，诅咒 gap = +4.65；hybrid 实测 = 14.13，改善 +3.91，成功率 0%（29/29 个目标均超出 a-Si 可实现色域）。**第二组（roundtrip 目标，N = 98）**：从 a-Si 训练集中抽取真实结构，以其 RCWA 仿真色为逆设计目标——这些目标在物理上保证位于 a-Si 可实现色域内。结果：ML 自称 ΔE = 2.95（median 2.58），naïve 实测 = 10.06（median 7.49），hybrid 实测 = 4.70（median 3.95，min = 0.50），成功率 18%（18/98 低于 JND 阈值）。hybrid ≤ naïve 在全部 98/98 个目标上成立。
+非晶硅（a-Si，n ≈ 3.80，k ≈ 0.01–0.52）在 SiO₂ 衬底上的 3-seed 集成模型采用真实复折射率数据（Green & Keevers 1995）训练，holdout 精度为 ΔE = 2.38（3-seed 集成部署，N=263），64% 样本低于 JND 阈值（Table 4）。这一正向精度甚至优于 TiO₂（2.99）——吸收主导的光谱形态简单（暗红/棕色调），模型容易预测。
 
-两组结果的对比精确定位了 a-Si 逆设计的失败边界：随机 sRGB 目标（0% 成功）落在 a-Si 色域之外，无论代理模型多精确都无法到达；roundtrip 目标（18% 成功）位于色域之内，混合重排可以恢复部分设计。18% 而非 100% 的成功率反映了 a-Si 色域虽非零但极度受限——跨样本 sRGB 标准差仅为 R=0.21、G=0.10、B=0.09，绿色和蓝色通道被 k(λ) 的强波长依赖性锁死，仅红色通道有有限调制空间。ML 模型"预测得准"（ΔE=2.38）是因为吸收主导的光谱形态简单；逆设计"大部分做不到"（82% 失败）是因为即使目标在色域内，高 n（3.80）导致的阻抗失配和蓝光波段 ~55% 的吸收使有效设计空间极度压缩。
+为严格检验正向精度能否转化为逆设计能力，我们设计了两组互补的闭环测试。**第一组（色域探测目标，N = 29）**：从 sRGB 色空间均匀采样目标色（12 个饱和色相、12 个中饱和度、5 个中性灰）。ML 自称 ΔE = 13.39，naïve 实测 = 18.04，诅咒 gap = +4.65；hybrid 实测 = 14.13，改善 +3.91，成功率 0%（29/29 个目标均超出 a-Si 可实现色域；二项式 95% 上界：10%，rule of three）。**第二组（roundtrip 目标，N = 98）**：从 a-Si 训练集中抽取真实结构，以其 RCWA 仿真色为逆设计目标——这些目标在物理上保证位于 a-Si 可实现色域内。结果：ML 自称 ΔE = 2.95（median 2.58），naïve 实测 = 10.06（median 7.49），hybrid 实测 = 4.70（median 3.95，min = 0.50），成功率 18%（18/98 低于 JND 阈值）。hybrid ≤ naïve 在全部 98/98 个目标上成立。
 
-诅咒 gap 的中位数对比确认了优化器诅咒的材料无关性：TiO₂（N=30）中位数 +4.23，a-Si roundtrip（N=98）中位数 +3.68——两个独立材料体系、不同样本量，过度乐观偏差均稳定在 ~+4–5 ΔE。a-Si N=29 随机目标的均值 gap（+4.65）落在同一范围，但该小样本的中位数（+1.87）因高方差而不稳定，不宜作为定量参考；材料无关性结论主要基于两个样本量充足的 median 估计。
+两组结果的对比精确定位了 a-Si 逆设计的失败边界：色域探测 sRGB 目标（0% 成功）落在 a-Si 色域之外，无论代理模型多精确都无法到达；roundtrip 目标（18% 成功）位于色域之内，混合重排可以恢复部分设计。18% 而非 100% 的成功率反映了 a-Si 色域虽非零但极度受限——跨样本 sRGB 标准差仅为 R=0.21、G=0.10、B=0.09，绿色和蓝色通道被 k(λ) 的强波长依赖性锁死，仅红色通道有有限调制空间。ML 模型"预测得准"（ΔE=2.38）是因为吸收主导的光谱形态简单；逆设计"大部分做不到"（82% 失败）是因为即使目标在色域内，高 n（3.80）导致的阻抗失配和蓝光波段 ~55% 的吸收使有效设计空间极度压缩。
 
-**核心结论：混合重排消除了材料无关的 ~+4–5 ΔE（中位数）过度乐观偏差，但逆设计的最终精度天花板由材料的可实现色域决定——a-Si 的正向精度（ΔE=2.38）优于 TiO₂（2.99），逆设计成功率却仅 0–18% vs 63%。正向预测精度是必要非充分条件，色域覆盖才是逆设计成功的充要条件。**
+![三个训练集的 sRGB 色域分布。TiO₂/SiO₂（宽覆盖）、a-Si(k≠0)/SiO₂（吸收受限）、Si₃N₄/SiO₂（单点簇，无色域）。标注为跨样本 sRGB 标准差。](figures/fig3_color_gamut.png){width="6.2in"}
 
-### 3.X.4 小结
+诅咒 gap 的中位数对比确认了优化器诅咒的材料无关性：TiO₂ roundtrip（N=100）中位数 +3.59，a-Si roundtrip（N=98）中位数 +3.68——两个独立材料体系，过度乐观偏差均稳定在 ~+3–4 ΔE。值得注意的是，诅咒量级具有目标依赖性：TiO₂ 色域探测目标（N=100，全部位于材料色域之外）的中位 gap 仅为 +0.81，因为当所有候选距目标 ΔE~10–15 时，ML 排序不携带有效信号，选择偏差无从放大。诅咒在目标位于可实现色域内、候选间距最小时最为显著——恰恰是逆设计最有意义的区间。
 
-**Table X. 两材料体系逆设计基准对比（闭环验证，RCWA nG=65, Nxy=256）**
+**核心结论：混合重排消除了材料无关的 ~+3–4 ΔE（中位数）过度乐观偏差，但逆设计的最终精度天花板由材料的可实现色域决定——a-Si 的正向精度（ΔE=2.38）优于 TiO₂（2.99），逆设计成功率却仅 0–18% vs 62%。正向预测精度是必要非充分条件，候选池密度才是逆设计成功的充要条件。**
 
-| 指标 | TiO₂/SiO₂ | a-Si(k≠0) 随机目标 | a-Si(k≠0) roundtrip |
-|------|-----------|-------------------|---------------------|
-| 正向 holdout ΔE（mean） | 2.99 | 2.38 | 2.38 |
-| 目标色来源 | 随机 sRGB | 随机 sRGB | 训练集 roundtrip |
-| 测试样本数 N | 30 | 29 | 98 |
-| ML 自称 ΔE（mean） | 0.66 | 13.39 | 2.95 |
-| naïve 实测 ΔE（mean） | 5.83 | 18.04 | 10.06 |
-| 诅咒 gap（median） | +4.23 | +4.65† | +3.68 |
-| hybrid 实测 ΔE（mean） | 2.33 | 14.13 | 4.70 |
-| 改善量（naïve − hybrid, mean） | +3.51 | +3.91 | +5.36 |
-| 成功率（hybrid ΔE < 2.3 JND） | 63% | 0% | 18% |
-| hybrid ≤ naïve 成立比例 | 30/30 | 29/29 | 98/98 |
-| nG 收敛率（ΔE₆₅→₁₀₁ < 1 JND） | 90% | 72% | 72% |
+### 3.1.4 小结
 
-*†a-Si 随机目标 N=29 的诅咒 gap 为均值（median = +1.87，小样本高方差，不宜作为定量参考）；TiO₂ 和 a-Si roundtrip 为逐目标中位数。*
+**Table 4. 两材料体系逆设计基准对比（闭环验证，RCWA nG=65, Nxy=256）**
 
-三组对比建立了代理驱动逆设计的完整图景：(1) 优化器诅咒是普适的统计效应（中位数 ~+4–5 ΔE），不依赖于材料体系或目标色是否在色域内；(2) 混合重排是消除诅咒的必要且充分手段（hybrid ≤ naïve 在全部 157/157 个目标上成立）；(3) 但重排不能扩展材料的可实现色域——a-Si 的正向精度（2.38）优于 TiO₂（2.99），逆设计成功率却仅 0–18% vs 63%。材料选择（决定色域天花板）和验证策略（消除统计偏差）是两个正交的改进维度。
+| 指标 | TiO₂ roundtrip | TiO₂ 色域探测 | a-Si(k≠0) 色域探测 | a-Si(k≠0) roundtrip |
+|------|---------------|-------------|-------------------|---------------------|
+| 正向 holdout ΔE（mean） | 2.99 | 2.99 | 2.38 | 2.38 |
+| 目标色来源 | 训练集 RT | HSV 色域边界 | HSV 色域边界 | 训练集 RT |
+| 测试样本数 N | 100 | 100 | 29 | 98 |
+| ML 自称 ΔE（mean） | 0.79 | 11.33 | 13.39 | 2.95 |
+| naïve 实测 ΔE（mean） | 5.42 | 13.02 | 18.04 | 10.06 |
+| 诅咒 gap（median） | +3.59 | +0.81 | +4.65† | +3.68 |
+| hybrid 实测 ΔE（mean/median） | 2.18/1.83 | 11.60/10.52 | 14.13/14.18 | 4.70/3.95 |
+| 成功率（hybrid ΔE < 2.3 JND） | 62%* | 6% | 0% | 18% |
+| hybrid ≤ naïve 成立比例 | 100/100 | 100/100 | 29/29 | 98/98 |
+| nG 收敛率（ΔE₆₅→₁₀₁ < 1 JND） | 90% | — | 72% | 72% |
+
+*\*Wilson 95% CI：52–71%。†a-Si 色域探测 N=29 的诅咒 gap 为均值（median = +1.87，小样本高方差）；TiO₂ 和 a-Si roundtrip 为逐目标中位数。*
+
+四组对比建立了代理驱动逆设计的完整图景：(1) 优化器诅咒是普适的统计效应（色域内目标中位数 ~+3–4 ΔE），不依赖于材料体系；(2) 混合重排是消除诅咒的必要且充分手段（hybrid ≤ naïve 在全部 227/227 个目标上成立）；(3) 但重排不能扩展材料的可实现色域——a-Si 的正向精度（2.38）优于 TiO₂（2.99），roundtrip 成功率却仅 18% vs 62%。2×2 设计矩阵（材料 × 目标类型）进一步揭示：TiO₂ 色域探测成功率（6%，N=100）与 a-Si（0%）相当，确认瓶颈是候选池密度而非代理精度。材料选择（决定色域天花板）和验证策略（消除统计偏差）是两个正交的改进维度。
+
+![四个测试集的优化器诅咒与混合重排修复。(a) 诅咒 gap 分布（实测 − ML 自称 ΔE₀₀），中线为各组中位数；(b) hybrid 实测 ΔE₀₀ 箱线图。虚线：JND 阈值 2.3。成功率：TiO₂ roundtrip 62%，TiO₂ 色域探测 6%，a-Si 色域探测 0%，a-Si roundtrip 18%。](figures/fig4_curse_gap.png){width="6.2in"}
 
 ---
 
-## 3.Y 材料筛选判据：共振截止与损耗修正
+## 3.2 材料筛选判据：共振截止与损耗修正
 
-### 3.Y.1 折射率对比度阈值
+### 3.2.1 折射率对比度阈值
 
 结构色的物理基础是亚波长光栅中的导模共振（guided-mode resonance, GMR）：当入射光与光栅的泄漏模式耦合时，特定波长被强烈反射，产生饱和结构色。GMR 的激发效率直接取决于光栅层与周围介质之间的折射率对比度 Δn = n_pillar − n_substrate。
 
-本研究通过四材料体系（TiO₂, a-Si, Si₃N₄, Al₂O₃）在三衬底（SiO₂, Si₃N₄, Al₂O₃）上的 11 组 RCWA 数据集，系统量化了 Δn 与反射谱动态范围（单样本 R_max − R_min 的系综平均）之间的关系 [Table X / Fig. X]。
+本研究通过四材料体系（TiO₂, a-Si, Si₃N₄, Al₂O₃）在三衬底（SiO₂, Si₃N₄, Al₂O₃）上的 12 组 RCWA 数据集，系统量化了 Δn 与反射谱动态范围（单样本 R_max − R_min 的系综平均）之间的关系（Fig. 4）。
+
+![12 组材料/衬底组合的反射谱动态范围 vs Δn。虚线：Δn ≈ 0.53 共振截止阈值。箭头：Δn 变化 0.013 导致 R 范围 7 倍崩塌。](figures/fig2_delta_n_criterion.png){width="4.5in"}
 
 结果显示一个清晰的共振截止阈值：当 Δn 降至 ~0.5 以下时，反射谱动态范围发生断崖式崩塌。最直接的证据来自 Δn 仅相差 0.013 的两组数据：TiO₂/Al₂O₃（Δn = 0.545）的 R 范围为 0.309，而 Si₃N₄/SiO₂（Δn = 0.532）仅为 0.043——7 倍的崩塌发生在 Δn 变化不足 3% 的区间内。这不是连续过渡，而是共振截止（resonance cutoff）：当 Δn 不足以将光场约束在光栅层内时，导模退化为辐射模，共振消失，结构退化为等效均匀薄膜。
 
@@ -260,19 +253,19 @@ nG 收敛性复验（nG = 65 → 101）确认 90% 结构的颜色跨阶数变化
 
 Si₃N₄ 与 a-Si 共同填充了"正向精度好但逆设计无意义"的象限，但机制不同：a-Si 的色域被材料吸收（k ≠ 0）压缩至暗红/棕色区域（RGB std: R=0.21, G=0.10, B=0.09），仍有有限但极度受限的设计空间（roundtrip 成功率 18%）；Si₃N₄ 的色域则因共振截止而完全消失（R range 0.043），不存在任何可逆设计的颜色变化——即使目标色就是 Si₃N₄ 自身的均值色，"逆设计"也退化为"返回任意结构"，因为所有结构等价。
 
-这一对比确立了材料筛选的定量门槛：**只有 R 动态范围 ≥ ~0.10（对应 Δn ≥ ~0.5）的材料体系，ML 代理模型的训练和逆设计才具有实际意义。** 低于此门槛，正向 ΔE 指标退化为对数据集色域宽度的间接度量，而非对模型预测能力的评估。四材料体系由此形成完整的诊断矩阵：TiO₂（Δn=0.84, R=0.58, 逆设计 63%）为正例；a-Si（Δn=2.34, R=0.635†, 逆设计 0–18%）为高 Δn 但损耗受限的警示；Si₃N₄（Δn=0.53, R=0.043）为共振截止的负对照；Al₂O₃（Δn=0.29, R=0.009）为完全无共振的极端负例。
+这一对比确立了材料筛选的定量门槛：**只有 R 动态范围 ≥ ~0.10（对应 Δn ≥ ~0.5）的材料体系，ML 代理模型的训练和逆设计才具有实际意义。** 低于此门槛，正向 ΔE 指标退化为对数据集色域宽度的间接度量，而非对模型预测能力的评估。四材料体系由此形成完整的诊断矩阵：TiO₂（Δn=0.84, R=0.58, roundtrip 逆设计 62%）为正例；a-Si（Δn=2.34, R=0.635†, 逆设计 0–18%）为高 Δn 但损耗受限的警示；Si₃N₄（Δn=0.53, R=0.043）为共振截止的负对照；Al₂O₃（Δn=0.29, R=0.090）为低于门槛的弱共振案例，确认 R≥0.10 边界。
 
-### 3.Y.2 损耗修正：高 Δn 的代价
+### 3.2.2 损耗修正：高 Δn 的代价
 
 简单的"Δn 越高越好"叙事被 a-Si 的数据否定。a-Si 拥有最高的 Δn（2.342 on SiO₂），但其颜色空间极度受限——复折射率（k ≠ 0）RCWA 数据集（N = 2626）的跨样本 sRGB 标准差仅为 R = 0.21、G = 0.10、B = 0.09，绿色和蓝色通道几乎不随几何参数变化。这一反直觉结果源于两个损耗机制：
 
 **阻抗失配**：当 n_pillar >> n_substrate 时，光栅界面处的 Fresnel 反射系数过大，大部分入射光在界面即被反射（非共振背景反射），只有窄波长窗口内的光能耦合进光栅层参与共振。这压缩了可用的共振调制深度。无损（k = 0）a-Si 数据集的 R 动态范围仅为 0.186（TiO₂ 的 32%），即源于此机制。
 
-**材料吸收**（复折射率 a-Si）：采用 Green & Keevers (1995) 实验 k 数据（400 nm 处 k ≈ 0.52，700 nm 处 k ≈ 0.01）后，a-Si 的 R 动态范围表面上升至 0.635，但这一调制主要来自 k(λ) 的强波长依赖性（蓝光被强烈吸收、红光透过），而非几何参数对共振的调控。R+T = 0.749（27% 吸收）确认了能量守恒，同时表明吸收已将可用光谱调制空间压缩至不足 25%。闭环验证中 0–18% 的逆设计成功率（§3.X.3）是这一色域坍缩的直接后果。
+**材料吸收**（复折射率 a-Si）：采用 Green & Keevers (1995) 实验 k 数据（400 nm 处 k ≈ 0.52，700 nm 处 k ≈ 0.01）后，a-Si 的 R 动态范围表面上升至 0.635，但这一调制主要来自 k(λ) 的强波长依赖性（蓝光被强烈吸收、红光透过），而非几何参数对共振的调控。R+T = 0.731（27% 吸收）确认了能量守恒，同时表明吸收已将可用光谱调制空间压缩至不足 25%。闭环验证中 0–18% 的逆设计成功率（§3.1.3）是这一候选池耗尽的直接后果。
 
-### 3.Y.3 材料筛选阈值的数据驱动验证
+### 3.2.3 材料筛选阈值的数据驱动验证
 
-综合 11 组数据，我们报告介电超表面结构色材料筛选阈值的数据驱动验证：
+综合 12 组数据，我们报告介电超表面结构色材料筛选阈值的数据驱动验证：
 
 **必要条件（共振存在性）**：Δn = n_pillar − n_substrate > ~0.5。低于此阈值，光栅无法支撑导模共振，几何参数优化无法产生有效结构色。Si₃N₄（Δn = 0.53 on SiO₂）和 Al₂O₃（Δn ≤ 0.30）被明确排除。
 
@@ -282,39 +275,49 @@ Si₃N₄ 与 a-Si 共同填充了"正向精度好但逆设计无意义"的象�
 
 ---
 
-## 4. Discussion
+# 4. Discussion
 
-### 4.1 正向精度与逆设计成功的脱节
+## 4.1 为何混合重排修复了 TiO₂ 却修复不了 a-Si：三阶段因果链
 
-本研究的闭环验证揭示了一个对 ML 辅助超表面设计具有普遍意义的发现：正向预测精度是逆设计成功的必要非充分条件。
+两个材料的 ML 预测网格天花板相同（3.4%，1/29 目标），但成功率之比无穷大（62% vs 0%），这揭示瓶颈不在于 ML 精度本身，而在于 ML 排序保真度与候选池质量之间的交互作用。
 
-a-Si（复折射率，Green & Keevers 1995）的 3-seed 集成模型 holdout ΔE = 2.38，优于 TiO₂ 的 2.99——这一反直觉结果源于吸收对光谱的简化效应：a-Si 在可见光波段 k 从 0.52（400 nm）急剧下降至 ~0（700 nm），所有结构的反射谱都呈现"蓝光吸收、红光反射"的固定轮廓，几何参数仅在此轮廓上施加有限调制。模型预测这种低信息量光谱自然容易，但"预测得准"不等于"设计得出"。双目标闭环验证精确定位了失败边界：随机 sRGB 目标（N=29，色域外）成功率 0%，而 roundtrip 目标（N=98，色域内）成功率仅 18%——即使目标物理上可达，高 n（3.80）导致的阻抗失配和蓝光 ~55% 吸收仍将有效设计空间压缩到极小体积。
+**阶段一——网格上的 ML 排序崩塌。** 对两种材料，全部 1392 个网格候选距典型目标的 ΔE₀₀ 均在 ~10–15 范围，而 ML 预测误差（TiO₂ ~3 ΔE₀₀，a-Si ~2.4）与这一散布相当。排序的信噪比因此 <1：ML 排序的 top-20 与从 1392 中随机抽取 20 个在统计上不可区分。这解释了为何 naïve 策略（取 ML 排序第 1 名）在两种材料上均灾难性失败——随机排序下的 rank-1 不携带任何信息。
 
-这一发现的方法论意义在于：ML 代理模型的评估不能仅看正向 holdout ΔE，还必须考察训练数据的色域覆盖度。一个在窄色域上 ΔE=2 的模型，逆设计能力可能远逊于一个在宽色域上 ΔE=3 的模型。色域覆盖度（而非预测精度）才是逆设计成功的决定性指标——a-Si 的 0–18% vs TiO₂ 的 63% 即为直接证据。
+**阶段二——混合修复受限于候选池质量。** 对 top-20 进行 RCWA 重排，等价于抽取 20 个随机候选并取验证最优。对 TiO₂，从 62% 成功率反推，约 4.8% 的网格候选（每个目标约 67 个）在 RCWA 验证下位于 ΔE₀₀ < 2.3 之内——候选池中有答案，混合重排能找到它们。对 a-Si，0% 成功率意味着候选池中没有任何候选在 29 个色域探测目标的 JND 之内——无物可寻。混合重排消除了优化器诅咒（统计偏差），但无法制造网格中不存在的候选。
 
-此外，本研究通过对比 a-Si 的无损（k=0）和复折射率（k≠0）两套训练数据，验证了材料光学常数物理真实性的重要性：k=0 版本产生非物理的 R+T > 1（mean 1.044），而复折射率版本 R+T = 0.749（能量守恒，27% 吸收）。对于有损耗材料，RCWA 仿真必须采用复折射率 n + ik 的完整色散模型，否则代理模型从训练阶段即继承系统性偏差。
+**阶段三——候选池耗尽，而非色域坍缩。** a-Si 的 Lab 色彩范围（L ∈ [15, 71]，a ∈ [−62, 64]，b ∈ [−62, 69]）与 TiO₂ 相当，其凸包体积（sRGB 的 24%）甚至略超 TiO₂（20%）。失败不在于 a-Si *不能产生颜色*，而在于其可实现颜色集中在一个由去饱和暗红和棕色组成的稀疏簇中（sRGB 标准差 = [0.21, 0.10, 0.09]），而测试目标——12 个饱和色相和 5 个中性灰，代表典型结构色应用——要求 a-Si 的宽带吸收（均值 ~27%，蓝光波段 ~55%）物理上禁止的高饱和度。因此正确的描述是**候选池耗尽**：网格覆盖了 a-Si 的可实现色彩范围，但该范围在目标所在的高饱和度区域密度近乎为零。
 
-### 4.2 求解器收敛性的材料依赖性
+**优化器诅咒可治；材料极限不可治。** 混合重排消除了 +3–4 ΔE₀₀ 的过度乐观偏差（材料无关，统计性），将成功率恢复至候选池的物理天花板。但当候选池本身为空——当搜索空间中没有任何几何产生目标色时——任何验证策略都无能为力。这区分了两个正交的改进维度：更好的验证（混合重排、RCWA-in-the-loop 贝叶斯优化）将成功率推向候选池天花板；更好的材料选择（高 Δn、低 k）抬高天花板本身。
+
+## 4.2 求解器收敛性的材料依赖性
 
 nG 收敛性复验（nG = 65 → 101）暴露了另一个材料依赖效应：TiO₂ 结构 90% 跨阶数颜色变化 < 1 JND（mean 极差 0.77），a-Si 复折射率版本 72%（mean 极差 1.83），而 a-Si 无损版本仅 40%（mean 极差 5.02，max 18.39）。
 
-物理解释与折射率对比度和吸收的竞争效应相关：高 Δn 体系的导模共振具有更高的品质因子 Q，表现为光谱中更尖锐的特征，对傅里叶截断更敏感。然而，材料吸收（复折射率 k > 0）阻尼了这些尖锐共振，压低了 Q 值，使光谱平滑化——因此复折射率 a-Si（72%）比无损 a-Si（40%）收敛性显著改善。这是色域坍缩的另一面：吸收既限制了可用色彩，也降低了求解器敏感度。
+![nG 收敛性复验（65 → 101）。(a) 跨阶数颜色偏差；(b) 1 JND 内结构比例。TiO₂/SiO₂：0.77 / 90%；a-Si(k≠0)：1.83 / 72%；a-Si(k=0)：5.02 / 40%（max 18.39）。](figures/fig5_nG_convergence.png){width="6.2in"}
+
+物理解释与折射率对比度和吸收的竞争效应相关：高 Δn 体系的导模共振具有更高的品质因子 Q，表现为光谱中更尖锐的特征，对傅里叶截断更敏感。然而，材料吸收（复折射率 k > 0）阻尼了这些尖锐共振，压低了 Q 值，使光谱平滑化——因此复折射率 a-Si（72%）比无损 a-Si（40%）收敛性显著改善。这是候选池耗尽的另一面：吸收既限制了可用色彩，也降低了求解器敏感度。
 
 这一结果对计算超表面领域具有实践指导意义：(1) 对于 n ≈ 2.0–2.5 的中等折射率材料（如 TiO₂），nG = 65 已足够产生收敛的颜色预测；(2) 对于 n > 3 的高折射率材料（如 a-Si、c-Si），需要 nG ≥ 101 甚至更高才能保证光谱收敛，计算成本增加约 2.4 倍（∝ nG²）；(3) 论文中报告的结构色数值结果必须附带 nG 收敛性验证，否则审稿人有理由质疑结果的可重复性。
 
-### 4.3 混合重排的能力边界
+## 4.3 混合重排的能力边界
 
-混合重排（hybrid re-ranking）在本研究中展现了消除优化器诅咒的确定性能力：hybrid ≤ naïve 在全部 157 个有效测试案例上成立（TiO₂ 30/30, a-Si 随机目标 29/29, a-Si roundtrip 98/98），这是 top-K 包含 naïve 首选的数学保证。
+混合重排（hybrid re-ranking）在本研究中展现了消除优化器诅咒的确定性能力：hybrid ≤ naïve 在全部 227 个有效测试案例上成立（TiO₂ roundtrip 100/100, TiO₂ 色域探测 100/100, a-Si 色域探测 29/29, a-Si roundtrip 98/98），这是 top-K 包含 naïve 首选的数学保证。
 
 然而，混合重排的能力存在明确边界：
 
-**它消除统计偏差，不消除系统误差。** 优化器诅咒（~+4–5 ΔE 中位数的过度乐观偏差）是统计性的——源于在有限候选池中对预测误差的极端值选择。RCWA 重排通过引入无偏估计消除了这一选择偏差。但代理模型的基线精度（TiO₂ ~3 ΔE, a-Si ~2.4 ΔE）是系统性的，由模型架构、训练数据质量和材料物理共同决定，重排无法改善。
+**它消除统计偏差，不消除系统误差。** 优化器诅咒（~+3–4 ΔE 中位数的过度乐观偏差）是统计性的——源于在有限候选池中对预测误差的极端值选择。RCWA 重排通过引入无偏估计消除了这一选择偏差。但代理模型的基线精度（TiO₂ ~3 ΔE, a-Si ~2.4 ΔE）是系统性的，由模型架构、训练数据质量和材料物理共同决定，重排无法改善。
 
 **它受限于候选池覆盖度。** 当前 hybrid 在 ML 生成的候选池中搜索（网格搜索 + 随机扰动），如果全局最优结构不在候选池内，重排只能给出池内最优。未来工作可将 RCWA 验证嵌入贝叶斯优化循环（每轮用 RCWA 更新 Kriging 后验），在保持验证严格性的同时扩展搜索空间。
 
-**计算成本权衡。** 当前 K=20 的 RCWA 验证使每个目标色的计算时间从 ~0.1 s（纯 ML）增加到 ~20 s（20 次 RCWA）。对于 TiO₂（nG=65, Nxy=256），这是可接受的；对于 a-Si（需 nG≥101），成本进一步增加 ~2.4 倍。实际部署中 K 的选择应在验证严格性和计算预算之间权衡。
+**计算成本权衡。** 当前 K=20 的 RCWA 验证使每个目标色的计算时间从 ~0.1 s（纯 ML）增加到 ~37 s（ML 筛选 ~4 s + 20 次 RCWA 重排 ~33 s）。对于 TiO₂（nG=65, Nxy=256），这是可接受的；对于 a-Si（需 nG≥101），成本进一步增加 ~2.4 倍。实际部署中 K 的选择应在验证严格性和计算预算之间权衡。
 
-### 4.4 局限性与未来方向
+**K 敏感性（TiO₂ roundtrip, N=100）。** 成功率从 K=5（47%, mean ΔE=2.96）经 K=10（57%, 2.33） steeply 上升至 K=20（62%, 2.14），随后饱和：K=50 仅达 64%（2.03）——2.5 倍 RCWA 成本换来 2 个百分点。每次额外 RCWA 调用的边际收益从 +0.5%/call（K: 5→20）降至 +0.07%/call（K: 20→50）。K=20 位于成本-精度曲线的"膝点"：捕获了 hybrid 收益的主体，同时将每目标时间控制在 40 s 以内。本文所有结果均采用 K=20。
+
+**与其他逆设计范式的关系。** 本研究刻意聚焦于 ML 代理+物理验证这一超表面领域最广泛部署的工作流。替代方法——拓扑优化（全波求解器在环迭代，无代理偏差但成本高）、伴随方法（通过 Maxwell 方程计算梯度，精确但几何受限）、生成模型（GAN/VAE 直接学习逆映射，快速但训练需求大）——以不同方式处理逆问题。我们的发现具体适用于代理筛选工作流，但核心洞见——在噪声目标函数上优化会放大误差——是普适的，在任何近似模型引导选择的范式中都会显现。
+
+**实操指南。** 基于上述结果，我们为 ML 辅助超表面逆设计的实践者提炼四条可操作规则：(1) 训练前先计算 Δn = n_pillar − n_substrate；若 Δn < 0.5，体系无法支撑导模共振，任何代理模型都不可能产生有用的结构色——直接放弃该材料对。(2) 永远不要仅凭正向 holdout ΔE 判断逆设计能力；必须执行闭环验证（ML 设计 → 独立全波检验）后才能报告成功率。(3) 采用混合重排，K ≥ 20；每目标 ~37 s 的成本即可消除 +3–4 ΔE₀₀ 的统计偏差，相对暴力搜索可忽略。(4) 若 roundtrip 成功率低于 ~30%，瓶颈是候选池密度而非模型精度——应扩大几何空间或更换材料，而非调网络。
+
+## 4.4 局限性与未来方向
 
 本研究的主要局限包括：
 
@@ -328,23 +331,25 @@ nG 收敛性复验（nG = 65 → 101）暴露了另一个材料依赖效应：Ti
 
 ---
 
-## 5. Conclusion
+# 5. Conclusion
 
 We have presented a systematic ML-assisted inverse design framework for dielectric metasurface structural colors with three distinguishing features: rigorous closed-loop validation, a physics-grounded material selection criterion, and explicit quantification of the optimizer's curse.
 
-**Closed-loop validation** reveals a universal ~+4–5 Delta-E2000 gap (median) between the agent model's self-reported optimum and RCWA-verified reality. This gap is approximately material-independent (TiO2: +4.23, a-Si: +3.68, medians). The hybrid re-ranking strategy raises TiO2 inverse design success rate from 23% to 63%, with hybrid <= naive guaranteed on all 157/157 tested targets.
+**Closed-loop validation** reveals a universal ~+3–4 ΔE₀₀ gap (median) between the agent model's self-reported optimum and RCWA-verified reality. This gap is approximately material-independent (TiO2 roundtrip: +3.59, a-Si roundtrip: +3.68, medians). The hybrid re-ranking strategy raises TiO2 roundtrip inverse design success rate from 19% to 62% (Wilson 95% CI: 52–71%), with hybrid ≤ naïve guaranteed on all 227/227 tested targets.
 
-**The Delta-n criterion** from 11 material/substrate combinations reveals a resonance cutoff at Delta-n ~0.5, with low optical loss (k ~0) as a sufficient condition for maximum gamut. This explains TiO2 (positive), Si3N4/Al2O3 (negative controls), and a-Si (high Delta-n but absorption-limited, 0–18% success).
+**The Δn criterion** from 12 material/substrate combinations reveals a resonance cutoff at Δn ~0.5, with low optical loss (k ~0) as a sufficient condition for maximum gamut. This explains TiO2 (positive), Si3N4/Al2O3 (negative controls), and a-Si (high Δn but absorption-limited, 0–18% success).
 
-**Forward accuracy is necessary but insufficient** for inverse design: a-Si achieves forward holdout Delta-E2000 = 2.38 (better than TiO2's 2.99) yet only 0–18% inverse design success (0% for random sRGB targets outside gamut, 18% for roundtrip targets within gamut) due to gamut collapse (cross-sample RGB std = [0.21, 0.10, 0.09]).
+**Forward accuracy is necessary but insufficient** for inverse design: a-Si achieves forward holdout ΔE₀₀ = 2.38 (better than TiO2's 2.99) yet only 0–18% inverse design success (0% for gamut-probing sRGB targets outside gamut, 18% for roundtrip targets within gamut) versus 62% for TiO₂ roundtrip, due to candidate pool depletion (cross-sample RGB std = [0.21, 0.10, 0.09]).
 
-**Speed**: ML inference (5.13 ms) is 811x faster than RCWA (4.16 s); end-to-end inverse design completes in ~86 s vs 31.2 min for brute-force RCWA (22x acceleration) for brute-force RCWA.
+**Speed**: ML inference (5.13 ms) is >300× faster than RCWA (~1.6 s); end-to-end inverse design completes in ~37 s vs ~38 min for brute-force RCWA (~60× acceleration).
 
 Future extensions include dual-pillar geometries, FDTD cross-validation, and experimental fabrication. The framework provides a practical protocol for navigating the boundary between ML acceleration and physical realizability in photonic inverse design.
 
+本框架给出一个可检验的预测：对于任何无损介质（k ≈ 0）且 Δn > 0.6 的材料-衬底组合，在候选网格覆盖 ≥ 1000 个几何有效结构的前提下，混合重排（K = 20）的 roundtrip 成功率预计超过 50%。我们邀请独立验证这一边界。更广泛地，本文提出的闭环验证协议和极端值估计 σ√(2 ln N) 可推广至光子学以外的代理辅助优化——任何从含噪预测器中选择最优候选的工作流都受益于同样的诊断与修复。
+
 ---
 
-## References
+# References
 
 [1] Kinoshita, S., et al. (2008). Physics of structural colors. Rep. Prog. Phys., 71(7), 076401.
 [2] Tan, H., et al. (2014). Structural colors. Adv. Mater., 26(29), 4889-4905.

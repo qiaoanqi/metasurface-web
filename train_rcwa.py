@@ -43,7 +43,9 @@ class DeepResMLP_Multi(nn.Module):
 # 材料/衬底编码映射 (和 ml_module.py 一致)
 # ============================================================
 _MAT_MAP = {'TiO2': 0, 'TiO2 (anatase)': 0, 'a-Si': 1, 'a-Si (amorphous)': 1,
-             'Si3N4': 2, 'Si3N4 (nitride)': 2, 'Al2O3': 3, 'Al2O3 (sapphire)': 3}
+             'Si3N4': 2, 'Si3N4 (nitride)': 2, 'Al2O3': 3, 'Al2O3 (sapphire)': 3,
+             'GaN': 4, 'GaN (wurtzite)': 4, 'HfO2': 5, 'HfO2 (hafnia)': 5,
+             'Ta2O5': 6, 'Ta2O5 (tantala)': 6}
 _SUB_MAP = {'SiO2': 0, 'SiO2 (fused silica)': 0, 'Si3N4': 1, 'Si3N4 (nitride)': 1,
              'Al2O3': 2, 'Al2O3 (sapphire)': 2}
 
@@ -75,13 +77,22 @@ def load_rcwa_data(pkl_paths, augment=True, quality=0.05):
         print(f"  R+T means by substrate: { {k: round(v,4) for k,v in sub_means.items()} }")
 
     for s in all_samples:
-        # 质量过滤: R+T 偏离衬底均值 > quality 的跳过
+        # 质量过滤: lossless 用原相对判据 (|R+T - 衬底均值| > quality 跳过);
+        # lossy (a-Si) 用物理判据: 仅滤能量异常 (R+T<=0 或 >1.05),
+        # 因为强吸收下 R+T 分布宽 (0.1-1.0), 相对均值过滤会错误截断 (A1 审计 2026-08-07)
         if quality > 0:
             sub = s.get('substrate', 'SiO2')
             rt_mean_ref = sub_means.get(sub, 1.0)
-            if abs(s['R_plus_T_mean'] - rt_mean_ref) > quality:
-                skipped += 1
-                continue
+            rt = s['R_plus_T_mean']
+            mat_name0 = s.get('material', 'TiO2')
+            if mat_name0 in ('a-Si', 'a-Si (amorphous)'):
+                if rt <= 0.0 or rt > 1.05:
+                    skipped += 1
+                    continue
+            else:
+                if abs(rt - rt_mean_ref) > quality:
+                    skipped += 1
+                    continue
 
         D, H, P = float(s['D']), float(s['H']), float(s['P'])
         R = s['R']
@@ -318,7 +329,7 @@ def main():
     print(f"训练集: {len(train_X)}, 验证集: {len(val_X)}")
 
     train_dataset = TensorDataset(train_X, train_Y)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
 
     # 训练
     model = DeepResMLP_Multi(in_dim=7, hidden=args.hidden, out_dim=81, n_blocks=args.blocks)

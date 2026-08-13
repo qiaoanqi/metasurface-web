@@ -125,7 +125,7 @@ HF_TOKEN=你的HuggingFace令牌（可选）
 | 层次 | 技术 |
 |------|------|
 | 物理引擎 | Lorentz/Fano共振 · CCM耦合补偿 · 米氏散射 · FP腔TMM · 角谱远场传播 |
-| ML 加速 | ResMLP (256×4) · ONNX Runtime · 推理 < 5ms |
+| ML 加速 | ResMLP (256×4) · ONNX Runtime · 推理 5.13 ms |
 | 逆设计 | 网格搜索 · Q-Learning RL · PyTorch 梯度优化 |
 | 色度学 | CIE 1931 · CIEDE2000 · sRGB · ConvexHull 色域 |
 | 前端 | Streamlit · Matplotlib · 纯CSS纳米柱渲染 |

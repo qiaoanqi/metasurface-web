@@ -140,6 +140,24 @@ with st.sidebar:
     st.header('⚙️ 参数控制')
     material = st.selectbox('材料 (Pillar)', MaterialLibrary.pillar_materials(), index=1)
     substrate = st.selectbox('衬底 (Substrate)', MaterialLibrary.substrate_materials(), index=0)
+    
+    # --- Delta-n indicator (paper Fig.2 criterion) ---
+    n_pillar = MaterialLibrary.n_at_wavelength(material, 550)
+    n_sub = MaterialLibrary.n_at_wavelength(substrate, 550)
+    delta_n = n_pillar - n_sub
+    if delta_n > 0.6:
+        dn_color, dn_label = "#27ae60", f"Delta-n = {delta_n:.2f} | Good gamut expected"
+    elif delta_n > 0.4:
+        dn_color, dn_label = "#f39c12", f"Delta-n = {delta_n:.2f} | Near cutoff, limited gamut"
+    else:
+        dn_color, dn_label = "#e74c3c", f"Delta-n = {delta_n:.2f} | Below cutoff, no structural color"
+    st.markdown(
+        f"""<div style="background:{dn_color}18; border-left:3px solid {dn_color};
+        padding:6px 10px; border-radius:4px; margin:4px 0; font-size:0.82rem;">
+        {dn_label}</div>""",
+        unsafe_allow_html=True
+    )
+    
     polarization = st.selectbox('偏振', ['TE (s-pol)', 'TM (p-pol)'], index=0)
     if 'a_val' not in st.session_state:
         st.session_state.a_val = 0.0

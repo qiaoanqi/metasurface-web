@@ -28,28 +28,54 @@ CAUCHY = {
     "Si3N4": (1.9900, 0.01200, 0.0),
     "a-Si":  (3.8000, 0.08000, 0.0),
     "Al2O3": (1.7546, 0.00500, 0.0),
+    # --- New materials for Δn criterion validation (2026-07-30) ---
+    "GaN":   (2.2700, 0.03800, 0.0),   # wurtzite ordinary ray, Barker&Ilegems 1973; n(550)≈2.40, Δn_A=0.81
+    "HfO2":  (1.9700, 0.01000, 0.0),   # Khoshman et al., Surf. Coat. Technol. 202, 2500 (2008); n(550)≈2.00, Δn_A=0.51
+    "Ta2O5": (2.0600, 0.01500, 0.0),   # Palik, Handbook of Optical Constants (1998); n(550)≈2.11, Δn_A=0.60
 }
 CAUCHY_TiO2 = CAUCHY["TiO2"]
 CAUCHY_SiO2 = CAUCHY["SiO2"]
-# a-Si (amorphous) extinction coefficient k — Green & Keevers 1995, Prog. Photovoltaics
-# Tabulated at 10 nm intervals, 380-780 nm
-_A_SI_K_TABLE = {
-    380: 0.520, 390: 0.480, 400: 0.445, 410: 0.415, 420: 0.390,
-    430: 0.365, 440: 0.345, 450: 0.325, 460: 0.305, 470: 0.285,
-    480: 0.265, 490: 0.245, 500: 0.225, 510: 0.205, 520: 0.185,
-    530: 0.165, 540: 0.145, 550: 0.125, 560: 0.105, 570: 0.090,
-    580: 0.075, 590: 0.062, 600: 0.050, 610: 0.040, 620: 0.032,
-    630: 0.025, 640: 0.020, 650: 0.016, 660: 0.013, 670: 0.010,
-    680: 0.008, 690: 0.006, 700: 0.005, 710: 0.004, 720: 0.003,
-    730: 0.002, 740: 0.002, 750: 0.001, 760: 0.001, 770: 0.001,
-    780: 0.001,
-}
+# a-Si complex refractive index n + ik — Pierce & Spicer 1972, Phys. Rev. B 5, 3017
+# (60-nm evaporated film; values as reproduced in Palik, Handbook of Optical Constants of Solids).
+# Table LOADED PROGRAMMATICALLY from data/externals/aSi_PierceSpicer1972.csv (refractiveindex.info,
+# retrieved 2026-08-06; the only a-Si entry on that site) so no transcription error is possible
+# (audit 2026-08-06: a hand-typed copy lost precision, k=0.0812 -> 0.081).
+# NOTE: the previous citation "Green & Keevers 1995" is crystalline-Si data and the old table
+# matched NO public dataset (see aSi_optical_constants_audit.md). n and k are now same-source.
+import os as _os
+import csv as _csv
+_A_SI_PS_CSV = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                             'data', 'externals', 'aSi_PierceSpicer1972.csv')
+if not _os.path.exists(_A_SI_PS_CSV):
+    raise FileNotFoundError('a-Si 光学常数源文件缺失 (Pierce & Spicer 1972): %s' % _A_SI_PS_CSV)
+_A_SI_PS_TABLE = {}
+with open(_A_SI_PS_CSV, encoding='utf-8') as _f:
+    for _row in _csv.DictReader(_f):
+        _A_SI_PS_TABLE[float(_row['wavelength_nm'])] = (float(_row['n']), float(_row['k']))
+
+def _aSi_ps_nk(wl_nm):
+    """Linear-interpolated (n, k) from Pierce & Spicer 1972.
+
+    np.interp on the tabulated points (310-2066 nm bracket the RCWA band 380-780 nm,
+    so no extrapolation is ever needed; outside the table np.interp clamps to endpoints).
+    Linear interpolation avoids the step discontinuities of nearest-neighbor lookup
+    (audit 2026-08-06: smooth k, e.g. k(400)=2.21 between the 387.5/413.3 anchors).
+    """
+    wl_arr = np.array(sorted(_A_SI_PS_TABLE.keys()))
+    n_arr = np.array([_A_SI_PS_TABLE[w][0] for w in wl_arr])
+    k_arr = np.array([_A_SI_PS_TABLE[w][1] for w in wl_arr])
+    w = np.asarray(wl_nm, dtype=float)
+    n_i = np.interp(w, wl_arr, n_arr)
+    k_i = np.interp(w, wl_arr, k_arr)
+    if w.ndim == 0:
+        return float(n_i), float(k_i)
+    return n_i, k_i
+
+def _get_aSi_n(wl_nm):
+    return _aSi_ps_nk(wl_nm)[0]
 
 def _get_aSi_k(wl_nm):
-    """Interpolate a-Si k from tabulated data (nearest-neighbor)."""
-    wl_arr = sorted(_A_SI_K_TABLE.keys())
-    idx = min(range(len(wl_arr)), key=lambda i: abs(wl_arr[i] - wl_nm))
-    return _A_SI_K_TABLE[wl_arr[idx]]
+    return _aSi_ps_nk(wl_nm)[1]
 
 LOSSY_MATERIALS = {"a-Si", "a-Si (amorphous)"}
 
@@ -61,17 +87,23 @@ def n_cauchy(wl_nm, material_name):
     return A + B / (wl_um ** 2) + C / (wl_um ** 4)
 
 def n_complex(wl_nm, material_name):
-    """Complex refractive index n+ik for lossy materials."""
-    n_real = n_cauchy(wl_nm, material_name)
+    """Complex refractive index n+ik for lossy materials.
+
+    a-Si: n and k BOTH from the Pierce & Spicer 1972 table (same source),
+    replacing the previous Cauchy-n + tabulated-k hybrid (audited 2026-08-06).
+    k=0 对照模式: 设置环境变量 A_SI_K0=1 时虚部置零 (fig5 无吸收对照线数据源,
+    2026-08-07 级联前置).
+    """
     if material_name in LOSSY_MATERIALS:
+        k0_mode = _os.environ.get('A_SI_K0', '') == '1'
         wl_arr = np.asarray(wl_nm, dtype=float)
         if wl_arr.ndim == 0:
-            k_val = _get_aSi_k(float(wl_arr))
-            return n_real + 1j * k_val
-        else:
-            k_vals = np.array([_get_aSi_k(float(w)) for w in wl_arr])
-            return n_real + 1j * k_vals
-    return n_real
+            nn, kk = _aSi_ps_nk(float(wl_arr))
+            return nn + 0j if k0_mode else nn + 1j * kk
+        if k0_mode:
+            return np.array([_aSi_ps_nk(float(w))[0] + 0j for w in wl_arr])
+        return np.array([_aSi_ps_nk(float(w))[0] + 1j * _aSi_ps_nk(float(w))[1] for w in wl_arr])
+    return n_cauchy(wl_nm, material_name)
 
 def n_TiO2(wl_nm):
     return n_cauchy(wl_nm, "TiO2")
@@ -204,7 +236,8 @@ def main():
     parser.add_argument('--samples', type=int, default=100, help='number of samples')
     parser.add_argument('--output', type=str, default='data/rcwa_out.pkl', help='output file')
     parser.add_argument('--material', type=str, default='TiO2',
-                        choices=['TiO2', 'a-Si', 'Si3N4', 'Al2O3'], help='pillar material')
+                        choices=['TiO2', 'a-Si', 'Si3N4', 'Al2O3', 'GaN', 'HfO2', 'Ta2O5'],
+                        help='pillar material')
     parser.add_argument('--substrate', type=str, default='SiO2',
                         choices=['SiO2', 'Si3N4', 'Al2O3'], help='substrate material')
     parser.add_argument('--nG', type=int, default=65, help='Fourier truncation order')

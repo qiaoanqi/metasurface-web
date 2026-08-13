@@ -1,0 +1,204 @@
+\documentclass{optica-article}
+
+\journal{opticajournal} % for journals or Optica Open
+
+\articletype{Research Article}
+
+\usepackage{lineno}
+\usepackage{cleveref}
+\crefname{figure}{Fig}{Figs}
+\usepackage{hyperref}
+\usepackage{mathtools}
+\linenumbers % Turn off line numbering for Optica Open preprint submissions.
+
+\makeatletter
+\renewcommand{\eqref}[1]{\textup{\hyperlink{#1}{Eq.~\tagform@{\ref*{#1}}}}}
+\makeatother\makeatletter
+\renewcommand{\eqref}[1]{\textup{\hyperlink{#1}{Eq.~\tagform@{\ref*{#1}}}}}
+\makeatother
+
+\begin{document}
+
+\title{Joint Single-Distance Holotomography with Probe-Retrieval using Implicit Neural Representations}
+
+\author{Sebastian Eberle\authormark{1,2}, Johannes Hagemann\authormark{1}, Martin Burger\authormark{2,3}, Christian G. Schroer\authormark{1,2,4}, and Johannes Gruen\authormark{1,*}}
+
+\address{\authormark{1}Center for X-Ray and Nano Science CXNS, Deutsches Elektronen Synchroton DESY, Hamburg, Germany\\
+\authormark{2}Helmholtz Imaging, Deutsches Elektronen Synchroton DESY, Hamburg, Germany \\
+\authormark{3}Department Mathematik, Universität Hamburg, Hamburg, Germany \\
+\authormark{4}Department Physik, Universität Hamburg, Hamburg, Germany \\
+}
+
+\email{\authormark{*}johannes.gruen@desy.de} %% email address is required; see note below about the corresponding author designation
+
+% use {asbstract*} to suppress the copyright line. Copyright information will be added in production
+
+\begin{abstract*} 
+Abstract
+\end{abstract*}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%  body  %%%%%%%%%%%%%%%%%%%%%%%%%%
+\input{chapters/01_introduction}
+\input{chapters/02_methods}
+\input{chapters/03_results_synthetic}
+\input{chapters/04_results_real}
+\input{chapters/05_discussion}
+\input{chapters/06_conclusions}
+
+
+
+
+\subsection{Figures and tables}
+Figures and tables should be placed in the body of the manuscript. Standard \LaTeX{} environments should be used to place tables and figures:
+\begin{verbatim}
+\begin{figure}[htbp]
+\centering\includegraphics[width=7cm]{opticafig1}
+\caption{Sample caption (Fig. 2).}
+\end{figure}
+\end{verbatim}
+
+\noindent For figures that are being reprinted by permission of the publisher, include the permission line required by that publisher in the caption. Please refer to the information on \href{https://opg.optica.org/content/author/portal/item/review-permissions-reprints/}{permissions and reprints} for guidance on figure permissions and image use.
+
+To meet accessibility requirements, do not rely solely on color to identify elements in figures (such as blue and red curves). Instead, use shapes or other features along with color. For example, you can use dashed and dotted lines, different shapes for data points, text labels pointing to the color features, numbering, etc. 
+
+Table \ref{tab:shape-functions}, below, provides a formatting example. Note that tables should have titles and not captions. To include additional information, use footnotes as shown in this example:
+
+\smallskip
+
+\begin{table}[htbp]
+\caption{Shape Functions for Quadratic Line Elements}
+  \label{tab:shape-functions}
+  \centering
+\begin{tabular}{ccc}
+\hline
+Local Node & $\{N\}_m$ & $\{\Phi_i\}_m$ $(i=x,y,z)$ \\
+\hline
+$m = 1$ & $L_1(2L_1-1)$ & $\Phi_{i1}$ \\
+$m = 2$ & $L_2(2L_2-1)$ & $\Phi_{i2}$ \\
+$m = 3$ & $L_3=4L_1L_2$ & $\Phi_{i3}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent See Table \ref{tab:example2} for examples of how to format different types of table cells.
+
+\clearpage
+
+
+
+\section{Back matter}
+
+Back matter sections should be listed in the order Funding/Acknowledgment/Disclosures/Data Availability Statement/Supplemental Document section. An example of back matter with each of these sections included is shown below. The section titles should not follow the numbering scheme of the body of the paper. 
+
+\begin{backmatter}
+\bmsection{Funding}
+Content in the funding section will be generated entirely from details submitted to Prism. Authors may add placeholder text in this section to assess length, but any text added to this section will be replaced during production and will display official funder names along with any grant numbers provided. If additional details about a funder are required, they may be added to the Acknowledgment, even if this duplicates some information in the funding section. For preprint submissions, please include funder names and grant numbers in the manuscript.
+
+\bmsection{Acknowledgment}
+SE - DASHH \\
+Additional information crediting individuals who contributed to the work being reported, clarifying who received funding from a particular source, or other information that does not fit the criteria for the funding block may also be included; for example, ``K. Flockhart thanks the National Science Foundation for help identifying collaborators for this work.'' 
+
+\bmsection{Disclosures}
+The authors declare no conflicts of interest.
+
+
+\bmsection{Data Availability Statement}
+A Data Availability Statement (DAS) is required for all submissions (except JOCN papers). The DAS should be an unnumbered separate section titled ``Data availability'' that
+immediately follows the Disclosures section. See the \href{https://opg.optica.org/submit/review/data-availability-policy.cfm}{Data Availability Statement policy page} for more information.
+
+Optica has identified four common (sometimes overlapping) situations that authors should use as guidance. These are provided as minimal models. You may paste the appropriate statement into your submission and include any additional details that may be relevant.
+
+\begin{enumerate}
+\item When datasets are included as integral supplementary material in the paper, they must be declared (e.g., as "Dataset 1" following our current supplementary materials policy) and cited in the DAS, and should appear in the references.
+
+\bmsection{Data availability} Data underlying the results presented in this paper are available in Dataset 1, Ref. [8].
+
+\bigskip
+
+\item When datasets are cited but not submitted as integral supplementary material, they must be cited in the DAS and should appear in the references.
+
+\bmsection{Data availability} Data underlying the results presented in this paper are available in Ref. [8].
+
+\bigskip
+
+\item If the data generated or analyzed as part of the research are not publicly available, that should be stated. Authors are encouraged to explain why (e.g.~the data may be restricted for privacy reasons), and how the data might be obtained or accessed in the future.
+
+\bmsection{Data availability} Data underlying the results presented in this paper are not publicly available at this time but may be obtained from the authors upon reasonable request.
+
+\bigskip
+
+\item If no data were generated or analyzed in the presented research, that should be stated.
+
+\bmsection{Data availability} No data were generated or analyzed in the presented research.
+\end{enumerate}
+
+\bigskip
+
+\noindent Data availability statements are not required for preprint submissions.
+
+\bmsection{Supplemental document}
+A supplemental document must be called out in the back matter so that a link can be included. For example, “See Supplement 1 for supporting content.” Note that the Supplemental Document must also have a callout in the body of the paper.
+
+\end{backmatter}
+
+\section{References}
+\label{sec:refs}
+Proper formatting of references is important, not only for consistent appearance but also for accurate electronic tagging. Please follow the guidelines provided below on formatting, callouts, and use of Bib\TeX.
+
+\subsection{Formatting reference items}
+Each source must have its own reference number. Footnotes (notes at the bottom of text pages) are not used in our journals. List up to three authors, and if there are more than three use \emph{et al.} after that. Examples of common reference types can be found in the  \href{https://opg.optica.org/jot/submit/style/oestyleguide.cfm} {Author Style Guide}.
+
+
+The commands \verb+\begin{thebibliography}{}+ and \verb+\end{thebibliography}+ format the section according to standard style, showing the title\\
+{\bfseries References}.  Use the \verb+\bibitem{label}+ command to start each reference.
+
+\subsection{Formatting reference citations}
+References should be numbered consecutively in the order in which they are referenced in the body of the paper. Set reference callouts with standard \verb+\cite{}+ command or set manually inside square brackets [1].
+
+To reference multiple articles at once, simply use a comma to separate the reference labels, e.g, produces.
+%Using the \texttt{cite.sty} package will make these citations appear like so: [2--4].
+
+\subsection{Bib\TeX}
+\label{sec:bibtex}
+Bib\TeX{} may be used to create a file containing the references, whose contents (i.e., contents of \texttt{.bbl} file) can then be pasted into the bibliography section of the \texttt{.tex} file. A Bib\TeX{} style file, \texttt{opticajnl.bst}, is provided.
+
+If your manuscript already contains a manually formatted \verb|\begin{thebibliography}|... \verb|\end{thebibliography}| list, then delete the \texttt{latexmkrc} file (if present) from your submission files. 
+
+\section{Conclusion}
+After proofreading the manuscript, compress your .tex manuscript file and all figures (which should be in EPS or PDF format) in a ZIP, TAR, or TAR-GZIP package. All files must be referenced at the root level (e.g., file \texttt{figure-1.eps}, not \texttt{/myfigs/figure-1.eps}). If there are supplementary materials, the associated files should not be included in your manuscript archive but be uploaded separately through the Prism interface.
+
+%%%%%%%%%%%%%%%%%%%%%%% References %%%%%%%%%%%%%%%%%%%%%%%%%
+
+Add references with BibTeX or manually 
+\cite{gruenXRayNearFieldHolotomography2026}.
+
+%%%%%%%%%% If using BibTeX:
+\bibliography{references}
+
+%%%%%%%%%% If preparing manually:
+% \begin{thebibliography}{1}
+% \newcommand{\enquote}[1]{``#1''}
+
+% \bibitem{Zhang:14}
+% Y.~Zhang, S.~Qiao, L.~Sun, Q.~W. Shi, W.~Huang, L.~Li, and Z.~Yang,
+%   \enquote{Photoinduced active terahertz metamaterials with nanostructured
+%   vanadium dioxide film deposited by sol-gel method,}
+%   {\protect\JournalTitle{Optics Express}} \textbf{22}, 11070--11078 (2014).
+
+% \bibitem{Optica}
+% {Optica}, \enquote{{Optica Publishing Group},}
+%   \url{http://www.opg.optica.org}.
+
+% \bibitem{FORSTER2007}
+% P.~Forster, V.~Ramaswamy, P.~Artaxo, T.~Bernsten, R.~Betts, D.~Fahey,
+%   J.~Haywood, J.~Lean, D.~Lowe, G.~Myhre, J.~Nganga, R.~Prinn, G.~Raga,
+%   M.~Schulz, and R.~V. Dorland, \enquote{Changes in atmospheric consituents and
+%   in radiative forcing,} in \enquote{Climate Change 2007: The Physical Science
+%   Basis. Contribution of Working Group 1 to the Fourth Assesment Report of
+%   Intergovernmental Panel on Climate Change,}  S.~Solomon, D.~Qin, M.~Manning,
+%   Z.~Chen, M.~Marquis, K.~B. Averyt, M.~Tignor, and H.~L. Miler, eds.
+%   (Cambridge University Press, 2007).
+
+% \end{thebibliography}
+
+\end{document}

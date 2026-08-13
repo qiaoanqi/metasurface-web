@@ -37,7 +37,8 @@ _TORCH_IS_V8 = False
 # _RCWA_SESSION replaced by _RCWA_SESSIONS dict (ensemble)
 _RCWA_AVAILABLE = False
 
-MATERIAL_CODES = {"TiO2 (anatase)": 0, "a-Si (amorphous)": 1, "Si3N4 (nitride)": 2, "Al2O3 (sapphire)": 3}
+MATERIAL_CODES = {"TiO2 (anatase)": 0, "a-Si (amorphous)": 1, "Si3N4 (nitride)": 2, "Al2O3 (sapphire)": 3,
+                  "GaN (wurtzite)": 4, "HfO2 (hafnia)": 5, "Ta2O5 (tantala)": 6}
 SUBSTRATE_CODES = {"SiO2 (fused silica)": 0, "Si3N4 (nitride)": 1, "Al2O3 (sapphire)": 2}
 
 def _spectrum_to_rgb(spec: np.ndarray) -> np.ndarray:
@@ -62,9 +63,12 @@ def init_ml():
 # RCWA model registry: material -> onnx file
 _RCWA_MODELS = {
     "TiO2 (anatase)": ["forward_mlp_rcwa_TiO2_s?.onnx"],
-    "a-Si (amorphous)": ["forward_mlp_rcwa_aSi_k_s?.onnx"],  # complex-k (Green&Keevers 1995), ΔE=2.68
+    "a-Si (amorphous)": ["forward_mlp_rcwa_aSi_PS_s*.onnx"],  # Pierce&Spicer 1972 complex index (A1 rerun 2026-08-07, ΔE~1.8)
     "Si3N4 (nitride)": ["forward_mlp_rcwa_Si3N4_s?.onnx"],
     "Al2O3 (sapphire)": ["forward_mlp_rcwa_Al2O3_s1.onnx"],  # v2 multi-substrate, ΔE=1.67
+    "GaN (wurtzite)": ["forward_mlp_rcwa_GaN_s?.onnx"],
+    "HfO2 (hafnia)": ["forward_mlp_rcwa_HfO2_s?.onnx"],
+    "Ta2O5 (tantala)": ["forward_mlp_rcwa_Ta2O5_s?.onnx"],
 }
 # Substrate-specific overrides (tuple key: (material, substrate))
 _RCWA_SUBSTRATE_MODELS = {

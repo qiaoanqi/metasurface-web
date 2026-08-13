@@ -31,6 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ml_module
 from color_utils import spectrum_to_srgb, rgb_to_lab, delta_e2000
 from rcwa_batch import rcwa_spectrum
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 
 # ML 内部材料名 -> rcwa_batch 材料名
 ML_TO_RCWA_MAT = {
@@ -38,6 +40,9 @@ ML_TO_RCWA_MAT = {
     "a-Si (amorphous)": "a-Si",
     "Si3N4 (nitride)": "Si3N4",
     "Al2O3 (sapphire)": "Al2O3",
+    "GaN (wurtzite)": "GaN",
+    "HfO2 (hafnia)": "HfO2",
+    "Ta2O5 (tantala)": "Ta2O5",
 }
 ML_TO_RCWA_SUB = {
     "SiO2 (fused silica)": "SiO2",
@@ -46,7 +51,9 @@ ML_TO_RCWA_SUB = {
 }
 # 短名 -> ML 内部名
 SHORT_MAT = {"TiO2": "TiO2 (anatase)", "a-Si": "a-Si (amorphous)",
-             "Si3N4": "Si3N4 (nitride)", "Al2O3": "Al2O3 (sapphire)"}
+             "Si3N4": "Si3N4 (nitride)", "Al2O3": "Al2O3 (sapphire)",
+             "GaN": "GaN (wurtzite)", "HfO2": "HfO2 (hafnia)",
+             "Ta2O5": "Ta2O5 (tantala)"}
 SHORT_SUB = {"SiO2": "SiO2 (fused silica)", "Si3N4": "Si3N4 (nitride)",
              "Al2O3": "Al2O3 (sapphire)"}
 
@@ -54,28 +61,45 @@ WL = np.linspace(380, 780, 81)
 JND = 2.3  # just-noticeable-difference threshold
 
 
-def build_target_colors():
+def build_target_colors(n=100):
     """生成覆盖色域内部 + 边界 + 中性轴的目标色集合.
 
-    - 12 高饱和色相 (色域边界探测)
-    - 12 中饱和色相 (色域内部)
-    - 5 中性灰 (低反射率/消色差能力)
+    - 高饱和色相 (色域边界探测, S=0.95, V=0.95)
+    - 中饱和色相 (色域内部, S=0.50, V=0.85)
+    - 低饱和色相 (近中性轴, S=0.20, V=0.70)
+    - 中性灰阶 (消色差能力)
+    n: 目标总数, 默认 100. 在各层间均匀分配.
     返回: list of (name, rgb[0..1])
     """
     targets = []
+    n_high = max(4, int(n * 0.35))
+    n_mid = max(4, int(n * 0.30))
+    n_low = max(2, int(n * 0.15))
+    n_neutral = n - n_high - n_mid - n_low
+
     # 高饱和色相环 (S=0.95, V=0.95)
-    for i in range(12):
-        h = i / 12.0
+    for i in range(n_high):
+        h = i / n_high
         r, g, b = colorsys.hsv_to_rgb(h, 0.95, 0.95)
         targets.append((f"sat_hue{int(h*360):03d}", np.array([r, g, b])))
+
     # 中饱和色相环 (S=0.50, V=0.85)
-    for i in range(12):
-        h = i / 12.0
+    for i in range(n_mid):
+        h = i / n_mid
         r, g, b = colorsys.hsv_to_rgb(h, 0.50, 0.85)
         targets.append((f"mid_hue{int(h*360):03d}", np.array([r, g, b])))
+
+    # 低饱和色相环 (S=0.20, V=0.70)
+    for i in range(n_low):
+        h = i / n_low
+        r, g, b = colorsys.hsv_to_rgb(h, 0.20, 0.70)
+        targets.append((f"low_hue{int(h*360):03d}", np.array([r, g, b])))
+
     # 中性灰阶
-    for v in [0.95, 0.75, 0.50, 0.30, 0.12]:
-        targets.append((f"neutral_{int(v*100):02d}", np.array([v, v, v])))
+    for i in range(n_neutral):
+        v = 0.95 - i * 0.90 / max(1, n_neutral - 1)
+        targets.append((f"neutral_{i:02d}", np.array([v, v, v])))
+
     return targets
 
 
@@ -104,22 +128,44 @@ def build_roundtrip_targets(material_short, substrate_short, n=30, seed=2024, nG
         if ver is None:
             continue
         rgb, R_spec, T_spec = ver
-        # 只保留能量守恒良好的样本 (与训练质量过滤一致)
-        if abs(np.mean(R_spec + T_spec) - 1.0) > 0.05:
-            continue
+        # 只保留能量守恒良好的样本 (与训练质量过滤一致);
+        # lossy (a-Si): 物理判据 0 < R+T <= 1.05 — 强吸收下 R+T 远小于 1 是正常物理
+        # (旧判据 |R+T-1|<0.05 会把全部 a-Si 目标滤掉, A1 审计 2026-08-07)
+        rt = float(np.mean(R_spec + T_spec))
+        if material_short in ('a-Si', 'a-Si (amorphous)'):
+            if rt <= 0.0 or rt > 1.05:
+                continue
+        else:
+            if abs(rt - 1.0) > 0.05:
+                continue
         targets.append((f"rt_{len(targets):02d}_D{D:.0f}H{H:.0f}P{P:.0f}", np.array(rgb)))
         print(f"  [roundtrip target {len(targets):2d}/{n}] D={D:.0f} H={H:.0f} P={P:.0f} "
               f"-> RGB=({rgb[0]:.2f},{rgb[1]:.2f},{rgb[2]:.2f})")
     return targets
 
 
-def rcwa_verify(D, H, P, material_short, substrate_short, nG=65, Nxy=256):
-    """独立 RCWA 验证: 对给定结构从头算反射光谱 -> RGB. 返回 (rgb, R_spec, T_spec) 或 None."""
+def _rcwa_compute(D, H, P, material_short, substrate_short, nG, Nxy):
+    """Internal: single RCWA computation without timeout protection."""
+    R, T = rcwa_spectrum(D, H, P, WL, nG_req=nG, Nxy=Nxy,
+                         material=material_short, substrate=substrate_short, angle_deg=0.0)
+    rgb = spectrum_to_srgb(WL, np.clip(R, 0, None))
+    return np.array(rgb), R, T
+
+
+def rcwa_verify(D, H, P, material_short, substrate_short, nG=65, Nxy=256, timeout_s=120):
+    """独立 RCWA 验证: 对给定结构从头算反射光谱 -> RGB.
+
+    包含 per-sample 超时保护 (默认 120 s), 超时返回 None.
+    返回 (rgb, R_spec, T_spec) 或 None.
+    """
     try:
-        R, T = rcwa_spectrum(D, H, P, WL, nG_req=nG, Nxy=Nxy,
-                             material=material_short, substrate=substrate_short, angle_deg=0.0)
-        rgb = spectrum_to_srgb(WL, np.clip(R, 0, None))
-        return np.array(rgb), R, T
+        with ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context('spawn')) as executor:
+            future = executor.submit(_rcwa_compute, D, H, P, material_short,
+                                     substrate_short, nG, Nxy)
+            return future.result(timeout=timeout_s)
+    except FuturesTimeoutError:
+        print(f"    [RCWA timeout {timeout_s}s] D={D:.0f} H={H:.0f} P={P:.0f}")
+        return None
     except Exception as e:
         print(f"    [RCWA fail] D={D:.0f} H={H:.0f} P={P:.0f}: {e}")
         return None
@@ -192,6 +238,7 @@ def run_one_target_hybrid(name, target_rgb, ml_mat, ml_sub, rcwa_mat, rcwa_sub, 
     best = None  # (ach_de, D, H, P, ach_rgb, pred_de, R_plus_T)
     naive = None  # candidate[0] 的实测
     n_verified = 0
+    all_verified = []  # stores (ach_de, pred_de) for each verified candidate in ML rank order
     for idx, (_, bp, pred_rgb, de76, pred_de) in enumerate(res):
         D, H, P = bp.diameter_nm, bp.height_nm, bp.period_nm
         t0 = time.perf_counter()
@@ -202,6 +249,7 @@ def run_one_target_hybrid(name, target_rgb, ml_mat, ml_sub, rcwa_mat, rcwa_sub, 
         ach_rgb, R_spec, T_spec = ver
         ach_de = delta_e2000(rgb_to_lab(ach_rgb), target_lab)
         n_verified += 1
+        all_verified.append((float(ach_de), float(pred_de)))
         rt = float(np.mean(R_spec + T_spec))
         if idx == 0:
             naive = (float(ach_de), D, H, P, list(ach_rgb), float(pred_de))
@@ -210,6 +258,7 @@ def run_one_target_hybrid(name, target_rgb, ml_mat, ml_sub, rcwa_mat, rcwa_sub, 
 
     rec['rcwa_time_s'] = t_rcwa_total
     rec['n_verified'] = n_verified
+    rec['all_verified'] = all_verified
     if best is None:
         rec['status'] = 'rcwa_fail'
         return rec
@@ -292,12 +341,14 @@ def summarize_hybrid(records, rcwa_mat):
     print(f"{'='*68}\n")
 
 
-def convergence_verify(input_pkl, nG_list, Nxy=256):
+def convergence_verify(input_pkl, nG_list, Nxy=256, out_path=None):
     """对闭环结果中选出的结构做多 nG 收敛性复验.
 
     目的: 证明 achieved 颜色随傅里叶阶数 nG 收敛, 而非 nG=65 的求解器噪声.
     判据: 若每个结构的 achieved ΔE 跨 nG 极差 < 1 JND (2.3), 且 R+T 随 nG
           趋近 1.0, 则 achieved 颜色可信, 可堵审稿人"求解器噪声"的质疑.
+    out_path: 若给出, 把 per-structure 数据 (D,H,P,mat,sub,de_by_nG,rt_by_nG,spread)
+              存成 pkl 归档 (fig5 重生成 / Table 3 数字溯源用).
     """
     with open(input_pkl, 'rb') as f:
         recs = pickle.load(f)
@@ -312,11 +363,14 @@ def convergence_verify(input_pkl, nG_list, Nxy=256):
     de_by_nG = {g: [] for g in nG_list}
     rt_by_nG = {g: [] for g in nG_list}
     spread = []  # 每结构 ΔE 跨 nG 的极差
+    records = []  # per-structure archive (out_path)
     for r in ok:
         target_lab = rgb_to_lab(np.array(r['target_rgb']))
         D, H, P = r['D'], r['H'], r['P']
         mat, sub = r['material'], r['substrate']
         de_this = []
+        rec = {'D': D, 'H': H, 'P': P, 'material': mat, 'substrate': sub,
+               'de': {}, 'rt': {}}
         for g in nG_list:
             ver = rcwa_verify(D, H, P, mat, sub, nG=g, Nxy=Nxy)
             if ver is None:
@@ -326,8 +380,12 @@ def convergence_verify(input_pkl, nG_list, Nxy=256):
             de_by_nG[g].append(de)
             rt_by_nG[g].append(float(np.mean(R_spec + T_spec)))
             de_this.append(de)
+            rec['de'][g] = float(de)
+            rec['rt'][g] = float(np.mean(R_spec + T_spec))
         if len(de_this) >= 2:
             spread.append(max(de_this) - min(de_this))
+            rec['spread'] = float(max(de_this) - min(de_this))
+        records.append(rec)
 
     print(f"  {'nG':>5} | {'mean ΔE':>8} | {'median':>7} | {'mean R+T':>9} | {'n':>3}")
     print(f"  {'-'*5}-+-{'-'*8}-+-{'-'*7}-+-{'-'*9}-+-{'-'*3}")
@@ -346,6 +404,11 @@ def convergence_verify(input_pkl, nG_list, Nxy=256):
         else:
             print(f"  [!] 有结构跨 nG 变化 >= 1 JND, 需在论文中如实报告并讨论")
     print(f"{'='*72}\n")
+
+    if out_path:
+        with open(out_path, 'wb') as f:
+            pickle.dump(records, f)
+        print(f"  [归档] {len(records)} 条 per-structure 记录 -> {out_path}\n")
 
 
 def main():
@@ -373,7 +436,7 @@ def main():
         if not args.input:
             ap.error("--verify-nG 需要 --input 指定要复验的结果 pkl")
         nG_list = [int(x) for x in args.verify_nG.split(',') if x.strip()]
-        convergence_verify(args.input, nG_list, Nxy=256)
+        convergence_verify(args.input, nG_list, Nxy=256, out_path=args.output or None)
         return
 
     ml_module.init_ml()
@@ -386,7 +449,7 @@ def main():
     # fixed 模式目标与衬底无关, 循环外构建一次
     fixed_targets = None
     if args.mode == 'fixed':
-        fixed_targets = build_target_colors()
+        fixed_targets = build_target_colors(n=100)
         if args.limit > 0:
             fixed_targets = fixed_targets[:args.limit]
     out = args.output or f"data/closed_loop_{rcwa_mat}_{'-'.join(substrates)}.pkl"
