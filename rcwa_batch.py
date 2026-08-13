@@ -113,7 +113,7 @@ def n_SiO2(wl_nm):
 
 # === Single-wavelength RCWA ===
 def _rcwa_single_wl(args):
-    D_um, H_um, P_um, wl_um, n_pillar_val, n_sub_val, nG_req, Nxy, angle_deg = args
+    D_um, H_um, P_um, W_um, wl_um, n_pillar_val, n_sub_val, nG_req, Nxy, angle_deg, pol = args
     freq = 1.0 / wl_um
     kx = np.sin(np.deg2rad(angle_deg)) / wl_um
     blk = obj(nG_req, [P_um, 0], [0, P_um], freq, kx, 0, verbose=0)
@@ -124,7 +124,10 @@ def _rcwa_single_wl(args):
     x = np.linspace(-P_um/2, P_um/2, Nxy)
     y = np.linspace(-P_um/2, P_um/2, Nxy)
     X, Y = np.meshgrid(x, y)
-    mask = (X**2 + Y**2) <= (D_um/2)**2
+    if W_um is None or abs(W_um - D_um) < 1e-12:
+        mask = (X**2 + Y**2) <= (D_um/2)**2          # circular (L=W degenerate path, bit-identical to legacy)
+    else:
+        mask = ((X**2)/(D_um/2)**2 + (Y**2)/(W_um/2)**2) <= 1.0   # elliptical (semi-axes D_um/2, W_um/2)
     eps2_pillar = n_pillar_val**2
     eps2_sub = n_sub_val**2
     use_complex = isinstance(eps2_pillar, complex) or (hasattr(eps2_pillar, 'dtype') and np.iscomplexobj(eps2_pillar))
@@ -150,7 +153,14 @@ def _rcwa_single_wl(args):
             kp = MakeKPMatrix(blk.omega, 1, epsinv_nG, blk.kx, blk.ky)
             blk.kp_list[i] = kp
     try:
-        blk.MakeExcitationPlanewave(1, 0, 0, 0)
+        # pol: 'p' = pure p (legacy default, (1,0,0,0)); 's' = pure s (0,0,1,0).
+        # grcwa MakeExcitationPlanewave(p_amp,p_phase,s_amp,s_phase); phi=0 => p excites
+        # the second half-block, s the first. TE/TM physical mapping established by the
+        # three invariants (gate 1b), not assumed.
+        if pol == 's':
+            blk.MakeExcitationPlanewave(0, 0, 1, 0)
+        else:
+            blk.MakeExcitationPlanewave(1, 0, 0, 0)
         a0, bN = blk.a0, blk.bN
         aN, b0 = SolveExterior(a0, bN, blk.q_list, blk.phi_list, blk.kp_list, blk.thickness_list)
     except Exception:
@@ -164,12 +174,20 @@ def _rcwa_single_wl(args):
     return max(0.0, min(1.0, float(R.real))), max(0.0, min(1.0, float(T_val.real)))
 
 def rcwa_spectrum(D_nm, H_nm, P_nm, wl_nm_list, nG_req=101, Nxy=256, n_jobs=1,
-                   material="TiO2", substrate="SiO2", angle_deg=0.0):
-    """Compute full RCWA spectrum for one parameter set."""
+                   material="TiO2", substrate="SiO2", angle_deg=0.0, W_nm=None, pol='p'):
+    """Compute full RCWA spectrum for one parameter set.
+
+    W_nm=None: circular pillar of diameter D_nm (legacy path, unchanged).
+    W_nm given: elliptical pillar, semi-axis D_nm/2 along x, W_nm/2 along y;
+    W_nm == D_nm degrades to the circular path bit-identically.
+    pol: 'p' (default, legacy (1,0,0,0)) or 's' (pure s). TE/TM labels are assigned
+    after the gate-1b invariants; see second_paper_elliptical_plan.md.
+    """
     D_um, H_um, P_um = D_nm/1000, H_nm/1000, P_nm/1000
+    W_um = None if W_nm is None else W_nm/1000
     n_pillar = n_complex(wl_nm_list, material)
     n_sub = n_cauchy(wl_nm_list, substrate)
-    args_list = [(D_um, H_um, P_um, wl_nm_list[i]/1000, n_pillar[i], n_sub[i], nG_req, Nxy, angle_deg)
+    args_list = [(D_um, H_um, P_um, W_um, wl_nm_list[i]/1000, n_pillar[i], n_sub[i], nG_req, Nxy, angle_deg, pol)
                  for i in range(len(wl_nm_list))]
     results = [_rcwa_single_wl(a) for a in args_list]
     R = np.array([r[0] for r in results])
@@ -206,6 +224,40 @@ def convergence_check(D, H, P, wls, material, substrate):
         R, T_val = rcwa_spectrum(D, H, P, wls, nG_req=nG, material=material, substrate=substrate, angle_deg=0.0)
         dt = time.time() - t0
         print(f"  nG={nG:3d}: R+T={np.mean(R+T_val):.4f}, time={dt:.1f}s")
+
+
+def generate_params_elliptical(n_samples, seed, r_max=3.0):
+    """Uniform random + rejection sampling over (L, W, H, P) — same protocol family as
+    generate_params (paper 1: uniform, NOT Latin Hypercube; see second_paper_elliptical_plan.md).
+
+    Constraints (gate 3, hard assertions):
+      L, W ~ U[80, 350] nm; H ~ U[100, 600] nm; P ~ U[200, 600] nm
+      max(L, W) < P
+      fill fraction f = pi*(L/2)*(W/2)/P^2 in [0.03, 0.70]
+      aspect ratio r = max(L,W)/min(L,W) in [1, r_max]  (L<W swapped so r>=1)
+    """
+    rng = np.random.RandomState(seed)
+    out = []
+    guard = 0
+    while len(out) < n_samples and guard < 50 * n_samples:
+        guard += 1
+        L = rng.uniform(80, 350)
+        W = rng.uniform(80, 350)
+        H = rng.uniform(100, 600)
+        P = rng.uniform(200, 600)
+        if max(L, W) >= P:
+            continue
+        f = np.pi * (L / 2) * (W / 2) / (P ** 2)
+        if not (0.03 <= f <= 0.70):
+            continue
+        r = max(L, W) / min(L, W)
+        if not (1.0 <= r <= r_max):
+            continue
+        out.append((float(L), float(W), float(H), float(P)))
+    if len(out) < n_samples:
+        raise RuntimeError('elliptical sampler exhausted after %d draws (got %d/%d)'
+                           % (guard, len(out), n_samples))
+    return out
 
 
 # === Pool worker: compute one sample (module-level for pickling) ===

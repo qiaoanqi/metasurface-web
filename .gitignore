@@ -99,3 +99,9 @@ _bench_speed.py
 # Docx unpack dir + one-off draft
 _docx_unpack/
 _evt_paragraph.tex
+
+# Gate artifacts (bloodline discipline: gate pkl must be committed)
+!data/
+!data/ellipse_gate1_invariants.pkl
+!data/ellipse_gate2_result.pkl
+!data/ng_probe_elliptical_*.pkl
