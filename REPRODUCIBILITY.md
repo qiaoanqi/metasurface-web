@@ -23,6 +23,21 @@ manuscript compilation.
 
 Script: `rcwa_batch.py` (and `rcwa_batch_fast.py` for the fast path).
 
+- SOLVER FIX (2026-08-14): rcwa_spectrum now uses grcwa's official solve path
+  (GridLayer_geteps + RT_Solve(normalize=1)) with a periodic grid (endpoint=False).
+  The previous manual path (Epsilon_fft + MakeKPMatrix with the incident-air kp0) produced
+  inconsistent modes and R+T > 1 for P > ~450 nm — a systematic bug present since the
+  earliest pools (2026-07-07). After the fix, R+T = 1.000000 (energy conservation).
+- BACKGROUND MEDIUM (explicit, 2026-08-14): patterned-layer inter-pillar medium is a
+  parameter: 'air' (default, eps = 1.0, nanopillars on substrate in air — paper 2
+  standard) or 'substrate' (eps = n_sub^2 — legacy paper 1 convention).
+- PAPER 1 DATA FROZEN AS-IS (2026-08-14): all paper 1 pools were generated with
+  background = substrate AND the old broken solver path. They are archived unmodified;
+  they are NOT physically valid data. Whether the relative (statistical) conclusions
+  survive re-verification is under assessment; do not cite paper 1 absolute physics
+  (R range, gamut, Δn criterion magnitudes) as verified until re-run under the fixed
+  solver. Paper 1 re-run is a separate decision, NOT auto-executed.
+
 - Materials: TiO2 (anatase), GaN (wurtzite, ordinary ray), Ta2O5, HfO2, Si3N4, a-Si, Al2O3,
   each on SiO2 (primary); TiO2 also on Al2O3 and Si3N4 substrates (controls).
 - Cauchy coefficients: refs [29] (GaN), [30] (Ta2O5), [31] (HfO2); a-Si uses the full complex
