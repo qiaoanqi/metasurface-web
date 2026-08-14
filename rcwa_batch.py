@@ -13,10 +13,7 @@ from multiprocessing import Pool, cpu_count, TimeoutError
 
 from grcwa import set_backend
 set_backend('numpy')
-from grcwa.rcwa import (obj, MakeKPMatrix, SolveLayerEigensystem_uniform,
-                         SolveLayerEigensystem, SolveExterior, GetZPoyntingFlux)
-from grcwa.fft_funs import Epsilon_fft
-from grcwa import backend as bd
+from grcwa.rcwa import obj
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from color_utils import spectrum_to_xyz, xyz_to_srgb
@@ -121,8 +118,9 @@ def _rcwa_single_wl(args):
     blk.Add_LayerGrid(H_um, Nxy, Nxy)
     blk.Add_LayerUniform(0, n_sub_val**2)
     blk.Init_Setup(Gmethod=1)
-    x = np.linspace(-P_um/2, P_um/2, Nxy)
-    y = np.linspace(-P_um/2, P_um/2, Nxy)
+    # A periodic grid contains one copy of each unit-cell boundary.
+    x = np.linspace(-P_um/2, P_um/2, Nxy, endpoint=False)
+    y = np.linspace(-P_um/2, P_um/2, Nxy, endpoint=False)
     X, Y = np.meshgrid(x, y)
     if W_um is None or abs(W_um - D_um) < 1e-12:
         mask = (X**2 + Y**2) <= (D_um/2)**2          # circular (L=W degenerate path, bit-identical to legacy)
@@ -133,25 +131,10 @@ def _rcwa_single_wl(args):
     use_complex = isinstance(eps2_pillar, complex) or (hasattr(eps2_pillar, 'dtype') and np.iscomplexobj(eps2_pillar))
     eps_grid = np.where(mask, eps2_pillar, eps2_sub)
     eps_grid = eps_grid.astype(np.complex128 if use_complex else np.float64)
-    dN = 1.0 / (Nxy * Nxy)
-    epsinv_nG, eps2 = Epsilon_fft(dN, eps_grid, blk.G)
-    blk.Patterned_epinv_list[0] = epsinv_nG
-    blk.Patterned_ep2_list[0] = eps2
-    kp0 = MakeKPMatrix(blk.omega, 0, 1.0/blk.Uniform_ep_list[0], blk.kx, blk.ky)
-    for i in range(blk.Layer_N):
-        if blk.id_list[i][0] == 0:
-            ep = blk.Uniform_ep_list[blk.id_list[i][2]]
-            kp = MakeKPMatrix(blk.omega, 0, 1.0/ep, blk.kx, blk.ky)
-            blk.kp_list[i] = kp
-            q, phi = SolveLayerEigensystem_uniform(blk.omega, blk.kx, blk.ky, ep)
-            blk.q_list[i] = q
-            blk.phi_list[i] = phi
-        else:
-            q, phi = SolveLayerEigensystem(blk.omega, blk.kx, blk.ky, kp0, eps2)
-            blk.q_list[i] = q
-            blk.phi_list[i] = phi
-            kp = MakeKPMatrix(blk.omega, 1, epsinv_nG, blk.kx, blk.ky)
-            blk.kp_list[i] = kp
+    # Let grcwa construct the patterned-layer kp matrix before solving its
+    # eigensystem. The previous manual path solved with the incident-air kp0,
+    # then stored the patterned kp, producing inconsistent modes and R+T > 1.
+    blk.GridLayer_geteps(eps_grid.ravel())
     try:
         # pol: 'p' = pure p (legacy default, (1,0,0,0)); 's' = pure s (0,0,1,0).
         # grcwa MakeExcitationPlanewave(p_amp,p_phase,s_amp,s_phase); phi=0 => p excites
@@ -161,17 +144,10 @@ def _rcwa_single_wl(args):
             blk.MakeExcitationPlanewave(0, 0, 1, 0)
         else:
             blk.MakeExcitationPlanewave(1, 0, 0, 0)
-        a0, bN = blk.a0, blk.bN
-        aN, b0 = SolveExterior(a0, bN, blk.q_list, blk.phi_list, blk.kp_list, blk.thickness_list)
     except Exception:
         raise RuntimeError('Singular matrix')
-    zero_vec = bd.zeros(2*blk.nG, dtype=complex)
-    inc_for, _ = GetZPoyntingFlux(a0, zero_vec, blk.omega, blk.kp_list[0], blk.phi_list[0], blk.q_list[0])
-    _, ref_back = GetZPoyntingFlux(zero_vec, b0, blk.omega, blk.kp_list[0], blk.phi_list[0], blk.q_list[0])
-    tr_for, _ = GetZPoyntingFlux(aN, zero_vec, blk.omega, blk.kp_list[2], blk.phi_list[2], blk.q_list[2])
-    R = float((-ref_back / inc_for).real)
-    T_val = float((tr_for / inc_for).real)
-    return max(0.0, min(1.0, float(R.real))), max(0.0, min(1.0, float(T_val.real)))
+    R, T_val = blk.RT_Solve(normalize=1)
+    return float(np.real(R)), float(np.real(T_val))
 
 def rcwa_spectrum(D_nm, H_nm, P_nm, wl_nm_list, nG_req=101, Nxy=256, n_jobs=1,
                    material="TiO2", substrate="SiO2", angle_deg=0.0, W_nm=None, pol='p'):
