@@ -110,7 +110,7 @@ def n_SiO2(wl_nm):
 
 # === Single-wavelength RCWA ===
 def _rcwa_single_wl(args):
-    D_um, H_um, P_um, W_um, wl_um, n_pillar_val, n_sub_val, nG_req, Nxy, angle_deg, pol = args
+    D_um, H_um, P_um, W_um, wl_um, n_pillar_val, n_sub_val, nG_req, Nxy, angle_deg, pol, bg_eps = args
     freq = 1.0 / wl_um
     kx = np.sin(np.deg2rad(angle_deg)) / wl_um
     blk = obj(nG_req, [P_um, 0], [0, P_um], freq, kx, 0, verbose=0)
@@ -129,7 +129,10 @@ def _rcwa_single_wl(args):
     eps2_pillar = n_pillar_val**2
     eps2_sub = n_sub_val**2
     use_complex = isinstance(eps2_pillar, complex) or (hasattr(eps2_pillar, 'dtype') and np.iscomplexobj(eps2_pillar))
-    eps_grid = np.where(mask, eps2_pillar, eps2_sub)
+    # Background medium of the patterned layer, EXPLICIT (audit ruling 2026-08-14):
+    # paper 2 = air (bg_eps=1.0, nanopillars on substrate in air); paper 1 legacy data
+    # were generated with substrate background (bg_eps=eps2_sub) — frozen as-is.
+    eps_grid = np.where(mask, eps2_pillar, bg_eps)
     eps_grid = eps_grid.astype(np.complex128 if use_complex else np.float64)
     # Let grcwa construct the patterned-layer kp matrix before solving its
     # eigensystem. The previous manual path solved with the incident-air kp0,
@@ -150,20 +153,25 @@ def _rcwa_single_wl(args):
     return float(np.real(R)), float(np.real(T_val))
 
 def rcwa_spectrum(D_nm, H_nm, P_nm, wl_nm_list, nG_req=101, Nxy=256, n_jobs=1,
-                   material="TiO2", substrate="SiO2", angle_deg=0.0, W_nm=None, pol='p'):
+                   material="TiO2", substrate="SiO2", angle_deg=0.0, W_nm=None, pol='p',
+                   background='air'):
     """Compute full RCWA spectrum for one parameter set.
 
-    W_nm=None: circular pillar of diameter D_nm (legacy path, unchanged).
+    W_nm=None: circular pillar of diameter D_nm.
     W_nm given: elliptical pillar, semi-axis D_nm/2 along x, W_nm/2 along y;
     W_nm == D_nm degrades to the circular path bit-identically.
-    pol: 'p' (default, legacy (1,0,0,0)) or 's' (pure s). TE/TM labels are assigned
-    after the gate-1b invariants; see second_paper_elliptical_plan.md.
+    pol: 'p' (default) or 's'.
+    background: patterned-layer inter-pillar medium — 'air' (default, eps=1.0,
+    nanopillars on substrate in air, paper 2 standard) or 'substrate' (legacy paper 1
+    convention, frozen historical data only).
     """
     D_um, H_um, P_um = D_nm/1000, H_nm/1000, P_nm/1000
     W_um = None if W_nm is None else W_nm/1000
     n_pillar = n_complex(wl_nm_list, material)
     n_sub = n_cauchy(wl_nm_list, substrate)
-    args_list = [(D_um, H_um, P_um, W_um, wl_nm_list[i]/1000, n_pillar[i], n_sub[i], nG_req, Nxy, angle_deg, pol)
+    bg_eps_list = [1.0 if background == 'air' else n_sub[i] ** 2 for i in range(len(wl_nm_list))]
+    args_list = [(D_um, H_um, P_um, W_um, wl_nm_list[i]/1000, n_pillar[i], n_sub[i],
+                  nG_req, Nxy, angle_deg, pol, bg_eps_list[i])
                  for i in range(len(wl_nm_list))]
     results = [_rcwa_single_wl(a) for a in args_list]
     R = np.array([r[0] for r in results])
