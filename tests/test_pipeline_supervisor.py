@@ -136,6 +136,8 @@ class ControllerTests(unittest.TestCase):
 
         self.policy = make_policy("pool.pkl", 2)
         self.policy["protected_files"] = []
+        self.policy["immutable_assets"] = []
+        self.policy["integrity"]["enforce"] = False
         with (self.root / "pool.pkl").open("wb") as handle:
             pickle.dump(
                 {
@@ -190,6 +192,81 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["request_id"], request["request_id"])
         self.assertEqual(second["dispatch"]["status"], "pending")
         self.assertEqual(second["dispatch"]["attempt"], 2)
+
+    def test_completed_ack_rejects_immutable_output_path(self):
+        legacy = self.root / "legacy.pkl"
+        legacy.write_bytes(b"immutable")
+        evidence = self.root / "evidence.json"
+        evidence.write_text("{}\n", encoding="ascii")
+        self.policy["immutable_assets"] = [
+            {"path": "legacy.pkl", "md5": supervisor.file_digest(legacy, "md5")}
+        ]
+        ack = {
+            "checks": {"pool_sha256": "ABC"},
+            "outputs": [{"path": "legacy.pkl", "material": "legacy"}],
+            "paper_hashes": [{"path": "evidence.json", "md5": supervisor.file_digest(evidence, "md5")}],
+        }
+        valid, error = supervisor.validate_completed_ack(ack, "ABC", self.policy)
+        self.assertFalse(valid)
+        self.assertIn("immutable asset", error)
+
+    def test_policy_integrity_lock_is_required_when_enabled(self):
+        self.policy["integrity"]["enforce"] = True
+        result = supervisor.verify_policy_integrity(self.policy)
+        self.assertFalse(result["passed"])
+        self.assertIn("lock", result["error"])
+
+    def test_hash_backed_active_pool_manifest_switches_pool(self):
+        replacement = self.root / "replacement.pkl"
+        replacement.write_bytes((self.root / "pool.pkl").read_bytes())
+        replacement_sha = supervisor.file_digest(replacement)
+        evidence = self.root / "replacement_evidence.json"
+        evidence.write_text(json.dumps({
+            "passed": True,
+            "evidence_version": "paper2-replacement-pool-v1",
+            "pool_sha256": replacement_sha,
+        }) + "\n", encoding="ascii")
+        manifest = {
+            "schema_version": 1,
+            "active": True,
+            "pool_spec": {"path": "replacement.pkl", "resume_command": "resume replacement"},
+            "pool_sha256": replacement_sha,
+            "previous_pool": {
+                "path": "pool.pkl",
+                "sha256": supervisor.file_digest(self.root / "pool.pkl"),
+                "md5": supervisor.file_digest(self.root / "pool.pkl", "md5"),
+            },
+            "activation_evidence": {
+                "path": "replacement_evidence.json",
+                "sha256": supervisor.file_digest(evidence),
+            },
+        }
+        supervisor.atomic_json(self.root / ".state" / "active_pool.json", manifest)
+        spec, state = supervisor.resolve_active_pool(self.policy)
+        self.assertTrue(state["passed"])
+        self.assertTrue(state["active"])
+        self.assertEqual(spec["path"], "replacement.pkl")
+        replacement.write_bytes(b"tampered")
+        _, state = supervisor.resolve_active_pool(self.policy)
+        self.assertFalse(state["passed"])
+        self.assertIn("SHA256", state["error"])
+
+    def test_integrity_mismatch_preserves_active_dispatch(self):
+        self.policy["integrity"]["enforce"] = True
+        active = {
+            "request_id": "active-request",
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "attempt": 1,
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, active)
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            result = supervisor.evaluate_once(self.policy)
+        preserved = supervisor.load_json(supervisor.DISPATCH_REQUEST)
+        self.assertEqual(preserved, active)
+        self.assertEqual(result["dispatch"]["request_id"], "active-request")
+        self.assertEqual(result["next_action"], "stop_and_report")
 
     def test_matching_ack_and_evidence_advance_to_next_gate(self):
         self.write_status({"status": "running", "pid": 999999})
@@ -393,6 +470,33 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(gates["d65_colorimetry"])
         self.assertIn("evidence_version", details["d65_colorimetry"]["evidence"][0]["semantic_error"])
 
+    def test_protocol_bound_gate_survives_active_pool_switch(self):
+        evidence = self.root / "evidence.json"
+        evidence.write_text(json.dumps({
+            "passed": True,
+            "pool_sha256": "SOURCE-POOL",
+            "evidence_version": "paper2-d65-v1",
+        }) + "\n", encoding="ascii")
+        supervisor.atomic_json(supervisor.GATE_STATE, {
+            "schema_version": 1,
+            "gates": {"d65_colorimetry": {
+                "passed": True,
+                "checked_at": supervisor.now_iso(),
+                "evidence": [{"path": "evidence.json", "sha256": supervisor.file_digest(evidence)}],
+            }},
+        })
+        gates, _ = supervisor.verify_gate_evidence(
+            self.policy, {"passed": True, "sha256": "ACTIVE-POOL", "records": 2}
+        )
+        self.assertTrue(gates["d65_colorimetry"])
+        for item in self.policy["workflow"]["actions"]:
+            if item["gate"] == "d65_colorimetry":
+                item["binding"] = "pool"
+        gates, _ = supervisor.verify_gate_evidence(
+            self.policy, {"passed": True, "sha256": "ACTIVE-POOL", "records": 2}
+        )
+        self.assertFalse(gates["d65_colorimetry"])
+
     def test_valid_pool_manifest_is_derived_without_manual_gate_entry(self):
         manifest = supervisor.STATE / "pool_manifest.json"
         supervisor.atomic_json(
@@ -433,6 +537,26 @@ class ControllerTests(unittest.TestCase):
                 gates["training_allowed"] = True
         self.assertIsNone(supervisor.select_workflow_action(self.policy, gates))
 
+    def test_reference_and_replacement_precede_new_joint_gate(self):
+        gates = {item["gate"]: False for item in self.policy["workflow"]["actions"]}
+        gates.update({
+            "pool_complete": True,
+            "strict_pool_validation": True,
+            "pool_manifest_frozen": True,
+            "d65_colorimetry": True,
+        })
+        self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "reference_resolution")
+        gates["reference_resolution"] = True
+        self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "replacement_pool_generation")
+        gates["replacement_pool_ready"] = True
+        self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "joint_numerical_convergence")
+
+    def test_replacement_pool_is_auditor_activated(self):
+        instruction = supervisor.build_instruction("replacement_pool_generation", self.policy)
+        self.assertIn("do not register the gate", instruction)
+        self.assertIn("failure_class=scientific", instruction)
+        self.assertIn("do not", instruction.lower())
+
     def test_running_ack_with_live_lease_prevents_retry(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):
@@ -453,6 +577,44 @@ class ControllerTests(unittest.TestCase):
             second = supervisor.evaluate_once(self.policy)
         self.assertEqual(second["dispatch"]["status"], "in_progress")
         self.assertEqual(second["dispatch"]["attempt"], 1)
+
+    def test_nonterminal_dispatch_survives_workflow_reordering(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        active = {
+            "schema_version": 1,
+            "protocol_version": 2,
+            "request_id": supervisor.make_dispatch_id(
+                "paper2_pipeline", "joint_numerical_convergence", pool_sha
+            ),
+            "target_thread_id": self.policy["executor_thread_id"],
+            "stage": "paper2_pipeline",
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "attempt": 1,
+            "max_attempts": 3,
+            "created_at": supervisor.now_iso(),
+            "updated_at": supervisor.now_iso(),
+            "ack_required": True,
+            "payload": {"pool": "pool.pkl", "pool_sha256": pool_sha},
+            "instruction": "frozen active request",
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, active)
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "request_id": active["request_id"],
+            "attempt": 1,
+            "status": "running",
+            "observed_at": supervisor.now_iso(),
+            "lease_expires_at": (
+                datetime.now().astimezone() + timedelta(hours=1)
+            ).isoformat(timespec="seconds"),
+        })
+        result = supervisor.update_dispatch(
+            "reference_resolution", self.policy, {"pool": {"sha256": "NEW-POOL"}}
+        )
+        self.assertEqual(result["request_id"], active["request_id"])
+        self.assertEqual(result["action"], "joint_numerical_convergence")
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(result["payload"]["pool_sha256"], pool_sha)
 
     def test_expired_running_lease_retries(self):
         self.write_status({"status": "running", "pid": 999999})

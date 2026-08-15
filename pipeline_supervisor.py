@@ -9,6 +9,7 @@ It never edits data pools, paper files, or training code.
 from __future__ import annotations
 
 import argparse
+import copy
 import ctypes
 import hashlib
 import json
@@ -381,7 +382,11 @@ def audit_pool(path: Path, spec: dict[str, Any]) -> dict[str, Any]:
 
 def audit_protected_files(policy: dict[str, Any]) -> list[dict[str, Any]]:
     results = []
-    for item in policy["protected_files"]:
+    assets = [
+        *policy.get("protected_files", []),
+        *policy.get("immutable_assets", []),
+    ]
+    for item in assets:
         path = ROOT / item["path"]
         actual = file_digest(path, "md5") if path.exists() else None
         results.append(
@@ -393,6 +398,44 @@ def audit_protected_files(policy: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return results
+
+
+def verify_policy_integrity(policy: dict[str, Any]) -> dict[str, Any]:
+    """Verify the policy and supervisor code against a separately pinned lock."""
+    spec = policy.get("integrity", {})
+    if not isinstance(spec, dict) or spec.get("enforce") is not True:
+        return {"enforced": False, "passed": True}
+    lock_value = spec.get("lock_path")
+    lock_path = workspace_file(lock_value)
+    if lock_path is None or not lock_path.is_file():
+        return {
+            "enforced": True,
+            "passed": False,
+            "error": "integrity lock is missing or outside the workspace",
+        }
+    try:
+        lock = load_json(lock_path, {}) or {}
+        expected_policy = str(lock.get("policy_sha256", "")).upper()
+        expected_supervisor = str(lock.get("supervisor_sha256", "")).upper()
+        actual_policy = file_digest(POLICY).upper()
+        actual_supervisor = file_digest(ROOT / "pipeline_supervisor.py").upper()
+    except Exception as exc:
+        return {
+            "enforced": True,
+            "passed": False,
+            "error": f"integrity lock unreadable: {type(exc).__name__}: {exc}",
+        }
+    passed = bool(expected_policy and expected_supervisor)
+    passed = passed and actual_policy == expected_policy and actual_supervisor == expected_supervisor
+    return {
+        "enforced": True,
+        "passed": passed,
+        "lock_path": str(lock_path.relative_to(ROOT)).replace("\\", "/"),
+        "expected_policy_sha256": expected_policy or None,
+        "actual_policy_sha256": actual_policy,
+        "expected_supervisor_sha256": expected_supervisor or None,
+        "actual_supervisor_sha256": actual_supervisor,
+    }
 
 
 def recovery_attempt(status: dict[str, Any]) -> int:
@@ -459,10 +502,14 @@ def verify_gate_evidence(
                         evidence_pool_sha = payload.get("pool_sha256")
                         if not evidence_pool_sha and isinstance(payload.get("pool"), dict):
                             evidence_pool_sha = payload["pool"].get("sha256")
+                        binding = gate_specs.get(gate, {}).get("binding", "pool")
                         if not evidence_pool_sha:
                             semantic_valid = False
                             semantic_error = "evidence is not bound to the audited pool SHA256"
-                        elif str(evidence_pool_sha).upper() != str(pool.get("sha256", "")).upper():
+                        elif (
+                            binding == "pool"
+                            and str(evidence_pool_sha).upper() != str(pool.get("sha256", "")).upper()
+                        ):
                             semantic_valid = False
                             semantic_error = "evidence pool SHA256 does not match the audited pool"
                     except Exception as exc:
@@ -476,6 +523,7 @@ def verify_gate_evidence(
                     "actual_sha256": actual,
                     "semantic_passed": semantic_valid,
                     "semantic_error": semantic_error,
+                    "binding": gate_specs.get(gate, {}).get("binding", "pool"),
                     "passed": item_valid,
                 }
             )
@@ -672,7 +720,8 @@ def executor_finalization_grace(
 
 def select_workflow_action(policy: dict[str, Any], gates: dict[str, bool]) -> str | None:
     for item in policy["workflow"]["actions"]:
-        if gates.get(item["gate"], False):
+        gate = item["gate"]
+        if gates.get(gate, False):
             continue
         if item.get("requires_training_allowed") and not gates.get("training_allowed"):
             return "stop_and_report"
@@ -692,8 +741,91 @@ def workspace_file(value: Any) -> Path | None:
     return path
 
 
+def resolve_active_pool(policy: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve a hash-backed replacement pool without mutating the frozen policy pool."""
+    base = copy.deepcopy(policy["pool"])
+    config = policy.get("active_pool", {})
+    if not isinstance(config, dict) or config.get("enabled") is not True:
+        return base, {"passed": True, "source": "policy", "active": False}
+    manifest_path = workspace_file(config.get("manifest_path"))
+    if manifest_path is None:
+        return base, {"passed": False, "source": "manifest", "error": "active pool path escapes workspace"}
+    if not manifest_path.exists():
+        return base, {
+            "passed": True,
+            "source": "policy",
+            "active": False,
+            "manifest_path": str(manifest_path.relative_to(ROOT)).replace("\\", "/"),
+        }
+    try:
+        manifest = load_json(manifest_path, {}) or {}
+        if manifest.get("schema_version") != 1 or manifest.get("active") is not True:
+            raise ValueError("invalid active pool manifest schema or state")
+        override = manifest.get("pool_spec")
+        if not isinstance(override, dict):
+            raise ValueError("active pool manifest lacks pool_spec")
+        spec = copy.deepcopy(base)
+        spec.update(override)
+        pool_path = workspace_file(spec.get("path"))
+        if pool_path is None or not pool_path.is_file():
+            raise ValueError("activated pool is missing or outside workspace")
+        actual_pool_sha = file_digest(pool_path)
+        expected_pool_sha = str(manifest.get("pool_sha256", "")).upper()
+        if actual_pool_sha != expected_pool_sha:
+            raise ValueError("activated pool SHA256 mismatch")
+        previous = manifest.get("previous_pool", {})
+        base_path = workspace_file(base.get("path"))
+        if base_path is None or not base_path.is_file():
+            raise ValueError("policy source pool is unavailable")
+        if str(previous.get("path", "")).replace("\\", "/") != str(base["path"]).replace("\\", "/"):
+            raise ValueError("active pool previous path does not match policy pool")
+        if str(previous.get("sha256", "")).upper() != file_digest(base_path):
+            raise ValueError("active pool previous SHA256 does not match policy pool")
+        if str(previous.get("md5", "")).upper() != file_digest(base_path, "md5"):
+            raise ValueError("active pool previous MD5 does not match policy pool")
+        activation = manifest.get("activation_evidence", {})
+        evidence_path = workspace_file(activation.get("path"))
+        if evidence_path is None or not evidence_path.is_file():
+            raise ValueError("activation evidence is missing")
+        expected_evidence_sha = str(activation.get("sha256", "")).upper()
+        if file_digest(evidence_path) != expected_evidence_sha:
+            raise ValueError("activation evidence SHA256 mismatch")
+        evidence = load_json(evidence_path, {}) or {}
+        replacement_spec = next(
+            item for item in policy["workflow"]["actions"]
+            if item["gate"] == "replacement_pool_ready"
+        )
+        if evidence.get("passed") is not True:
+            raise ValueError("activation evidence does not declare passed=true")
+        if evidence.get("evidence_version") != replacement_spec.get("evidence_version"):
+            raise ValueError("activation evidence version mismatch")
+        if str(evidence.get("pool_sha256", "")).upper() != actual_pool_sha:
+            raise ValueError("activation evidence is not bound to the replacement pool")
+        return spec, {
+            "passed": True,
+            "source": "manifest",
+            "active": True,
+            "manifest_path": str(manifest_path.relative_to(ROOT)).replace("\\", "/"),
+            "manifest_sha256": file_digest(manifest_path),
+            "pool_path": str(pool_path.relative_to(ROOT)).replace("\\", "/"),
+            "pool_sha256": actual_pool_sha,
+            "previous_pool": previous,
+            "activation_evidence": activation,
+        }
+    except Exception as exc:
+        return base, {
+            "passed": False,
+            "source": "manifest",
+            "active": False,
+            "manifest_path": str(manifest_path.relative_to(ROOT)).replace("\\", "/"),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def validate_completed_ack(
-    ack: dict[str, Any], pool_sha256: str | None
+    ack: dict[str, Any],
+    pool_sha256: str | None,
+    policy: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     """Require a durable, hash-backed completion handoff before advancing."""
     checks = ack.get("checks")
@@ -714,10 +846,22 @@ def validate_completed_ack(
         path = workspace_file(item["path"])
         if path is None or not path.is_file():
             return False, f"completed ack output is missing: {item.get('path')}"
+        if policy is not None:
+            protected = {
+                str(asset.get("path", "")).replace("\\", "/").casefold()
+                for asset in (
+                    *policy.get("protected_files", []),
+                    *policy.get("immutable_assets", []),
+                )
+            }
+            relative = str(path.relative_to(ROOT)).replace("\\", "/").casefold()
+            if relative in protected:
+                return False, f"completed ack output targets immutable asset: {item.get('path')}"
 
     paper_hashes = ack.get("paper_hashes")
     if not isinstance(paper_hashes, list) or not paper_hashes:
         return False, "completed ack paper_hashes must be a non-empty object list"
+    seen_paper_paths = set()
     for item in paper_hashes:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             return False, "completed ack paper_hashes must contain path/md5 objects"
@@ -730,16 +874,30 @@ def validate_completed_ack(
         actual = file_digest(path, "md5")
         if actual != expected:
             return False, f"completed ack paper hash mismatch: {item.get('path')}"
+        seen_paper_paths.add(str(path.relative_to(ROOT)).replace("\\", "/").casefold())
+    if policy is not None and policy.get("protected_files"):
+        required_paper_paths = {
+            str(item.get("path", "")).replace("\\", "/").casefold()
+            for item in policy["protected_files"]
+        }
+        if seen_paper_paths != required_paper_paths:
+            return False, "completed ack paper_hashes must cover exactly the protected paper files"
     return True, None
 
 
 def build_instruction(action: str, policy: dict[str, Any]) -> str:
     protected = ", ".join(item["path"] for item in policy["protected_files"])
+    immutable = ", ".join(item["path"] for item in policy.get("immutable_assets", []))
+    global_guard = (
+        " Never modify, overwrite, resume, or emit outputs to any protected paper file, immutable legacy "
+        f"asset, old pool, or paper 1 script. Protected papers: {protected}. Immutable assets: {immutable}."
+    )
     if action == "resume_pool_generation":
         return (
             f"Resume exactly: {policy['pool']['resume_command']}. Do not create a new pool or start training. "
             "Write an atomic executor ack. On completed, use outputs=[{path,material}], "
             "paper_hashes=[{path,md5}], and checks.pool_sha256 matching the audited pool."
+            + global_guard
         )
     if action == "pool_validation":
         return (
@@ -748,13 +906,15 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
             "convergence, cross-solver spectra, circular control, and geometry split remain mandatory. "
             f"Protected files: {protected}. On completed, use outputs=[{{path,material}}], "
             "paper_hashes=[{path,md5}], and checks.pool_sha256 matching the audited pool."
+            + global_guard
         )
     if action == "stop_and_report":
         return "Stop all downstream work and report the first failing check."
-    gate = next(
-        (item["gate"] for item in policy["workflow"]["actions"] if item["action"] == action),
-        None,
+    action_spec = next(
+        (item for item in policy["workflow"]["actions"] if item["action"] == action),
+        {},
     )
+    gate = action_spec.get("gate")
     action_instructions = {
         "d65_colorimetry": (
             "Implement a versioned paper 2 D65 SPD colorimetry path without changing legacy paper 1 results. "
@@ -764,6 +924,16 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
         "joint_numerical_convergence": (
             "Run the pre-registered stratified numerical gate on at least 32 geometries across nG 131/201/251 "
             "and Nxy 256/384, with 1 nm checks for sharp spectra. Preserve raw R/T and actual requested/retained orders."
+        ),
+        "reference_resolution": (
+            "Run python scripts/audit_reference_resolution_result.py against the completed versioned diagnostic. "
+            "Treat it as a candidate-reference audit only: never mark the historical joint gate passed, never reuse "
+            "5 nm labels for a 1 nm claim, and preserve raw R/T, requested/retained orders, and all failed evidence."
+        ),
+        "replacement_pool_generation": (
+            "Generate a new versioned production pool from the approved reference protocol in a new output path. "
+            "Never overwrite or resume the historical nG131 pool; write a complete manifest, preserve checkpoints, "
+            "and require strict pointwise conservation before switching the active pool."
         ),
         "cross_solver_spectrum_validation": (
             "Run python scripts/run_cross_solver_validation.py --n-jobs 8. Use its frozen paper2-cross-solver-v1 "
@@ -794,6 +964,14 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
         ),
     }
     instruction = action_instructions.get(action, f"Execute the bounded pipeline action: {action}.")
+    if action_spec.get("diagnostic_only") is True:
+        return (
+            instruction
+            + " Preserve a versioned result and checkpoint, but do not register the gate or activate the new pool. "
+            "After successful computation, write executor_ack status=failed with failure_class=scientific and point "
+            "to the result so the independent auditor can validate and atomically activate it."
+            + global_guard
+        )
     return (
         instruction
         + f" On success, write a versioned evidence artifact, register gate {gate} in .state/gate_state.json "
@@ -803,6 +981,7 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
         "On completed, use outputs=[{path,material}], paper_hashes=[{path,md5}], and "
         "checks.pool_sha256 matching the audited pool; the supervisor recomputes every file hash. "
         "On scientific failure, do not mark the gate passed; write a failed ack with evidence."
+        + global_guard
     )
 
 
@@ -863,7 +1042,25 @@ def strategy_override(
 def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) -> dict[str, Any]:
     existing = load_json(DISPATCH_REQUEST, {}) or {}
     ack = load_json(EXECUTOR_ACK, {}) or {}
-    pool_sha = audit.get("pool", {}).get("sha256")
+    ack_is_terminal_for_existing = (
+        ack.get("request_id") == existing.get("request_id")
+        and int(ack.get("attempt", 0)) == int(existing.get("attempt", 0))
+        and ack.get("status") in {"completed", "succeeded", "failed"}
+    )
+    if (
+        existing.get("status") in {"pending", "in_progress"}
+        and existing.get("action")
+        and not ack_is_terminal_for_existing
+    ):
+        # A durable non-terminal request is immutable until it is acknowledged
+        # or fails. Workflow, policy, and active-pool revisions apply only to
+        # the next request and must never orphan a live worker/ack pair.
+        action = str(existing["action"])
+    pool_sha = (
+        existing.get("payload", {}).get("pool_sha256")
+        if existing.get("status") in {"pending", "in_progress"} and not ack_is_terminal_for_existing
+        else None
+    ) or audit.get("pool", {}).get("sha256")
     strategy = strategy_override(action, policy, existing)
     strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
     request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
@@ -953,7 +1150,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
                 request["status"] = "acknowledged"
                 request["acknowledged_at"] = ack.get("observed_at", now_iso())
             else:
-                valid_ack, ack_error = validate_completed_ack(ack, pool_sha)
+                valid_ack, ack_error = validate_completed_ack(ack, pool_sha, policy)
                 if valid_ack:
                     request["status"] = "acknowledged"
                     request["acknowledged_at"] = ack.get("observed_at", now_iso())
@@ -1001,19 +1198,39 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
 
 def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     policy = policy or load_policy()
+    active_pool_spec, active_pool = resolve_active_pool(policy)
+    runtime_policy = copy.deepcopy(policy)
+    runtime_policy["pool"] = active_pool_spec
+    if active_pool.get("active") is True:
+        previous = active_pool.get("previous_pool", {})
+        runtime_policy.setdefault("immutable_assets", []).append(
+            {"path": previous["path"], "md5": previous["md5"]}
+        )
     status = load_json(STATUS, {}) or {}
     watchdog = load_json(STATE / "paper2_watchdog_status.json", {}) or {}
     producer_status = status.get("status", "missing")
     alive = pid_alive(status.get("pid") or status.get("python_pid"))
-    pool = audit_pool(ROOT / policy["pool"]["path"], policy["pool"])
-    protected = audit_protected_files(policy)
+    pool = audit_pool(ROOT / runtime_policy["pool"]["path"], runtime_policy["pool"])
+    protected = audit_protected_files(runtime_policy)
     protected_passed = all(item["passed"] for item in protected)
+    integrity = verify_policy_integrity(policy)
     errors: list[dict[str, Any]] = []
     action = None
     effective_status = producer_status
     reconciled = False
 
-    if producer_status == "failed":
+    if not integrity.get("passed", False):
+        effective_status = "blocked"
+        errors.append({"code": "POLICY_INTEGRITY_MISMATCH", "detail": integrity})
+        action = "stop_and_report"
+    if not active_pool.get("passed", False):
+        effective_status = "blocked"
+        errors.append({"code": "ACTIVE_POOL_MANIFEST_INVALID", "detail": active_pool})
+        action = "stop_and_report"
+
+    if action is not None:
+        pass
+    elif producer_status == "failed":
         effective_status = "failed"
         errors.append({"code": "PRODUCER_REPORTED_FAILED"})
         action = "stop_and_report"
@@ -1037,9 +1254,9 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         action = "stop_and_report"
 
     stage_passed = effective_status == "completed" and pool["passed"] and protected_passed
-    training_gates, gate_evidence = verify_gate_evidence(policy, pool)
+    training_gates, gate_evidence = verify_gate_evidence(runtime_policy, pool)
     if stage_passed and action is None:
-        action = select_workflow_action(policy, training_gates)
+        action = select_workflow_action(runtime_policy, training_gates)
     audit = {
         "schema_version": 2,
         "stage": "pool_generation",
@@ -1049,6 +1266,8 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         "status_reconciled": reconciled,
         "passed": stage_passed,
         "protected_files": protected,
+        "policy_integrity": integrity,
+        "active_pool": active_pool,
         "pool": pool,
         "training_gates": training_gates,
         "gate_evidence": gate_evidence,
@@ -1058,14 +1277,21 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     }
     atomic_json(AUDIT_RESULT, audit)
 
-    dispatch = update_dispatch(action, policy, audit) if action else None
+    integrity_blocked = not integrity.get("passed", False)
+    if integrity_blocked:
+        # Keep the last durable request intact while policy and lock are being
+        # atomically revised. Replacing it with stop_and_report would orphan a
+        # live worker whose acknowledgement is bound to the existing request.
+        dispatch = load_json(DISPATCH_REQUEST, None)
+    else:
+        dispatch = update_dispatch(action, runtime_policy, audit) if action else None
     if dispatch and dispatch.get("status") == "failed":
         action = "stop_and_report"
         stage_passed = False
     recovery_plan = build_recovery_plan(
         dispatch.get("action") if isinstance(dispatch, dict) else action,
         dispatch,
-        policy,
+        runtime_policy,
     )
     if isinstance(dispatch, dict) and dispatch.get("status") in {"pending", "in_progress", "failed"}:
         active_stage = dispatch.get("action")
@@ -1091,7 +1317,7 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     atomic_json(NEXT_PLAN, next_plan)
     controller = {
         "schema_version": 1,
-        "project": policy["project"],
+        "project": runtime_policy["project"],
         "controller_status": "blocked" if action == "stop_and_report" else effective_status,
         "producer_status": producer_status,
         "effective_status": effective_status,

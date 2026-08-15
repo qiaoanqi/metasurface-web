@@ -7,6 +7,22 @@
     {"path": "paper_oe.pdf", "md5": "C6C69241EA687A1D3858386B0C646027"},
     {"path": "\u8bba\u6587.pdf", "md5": "C6C69241EA687A1D3858386B0C646027"}
   ],
+  "immutable_assets": [
+    {"path": "paper_full.md", "md5": "DC347B854AEABC90EF2232516827D6AC"},
+    {"path": "closed_loop_validate.py", "md5": "FFB55A8575F39813CE08B31E5A416351"},
+    {"path": "ml_module.py", "md5": "2EF58119C0E8CC7E9969A59F659FB292"},
+    {"path": "train_new_materials.py", "md5": "14A39C753CD057E0F62B8311DD31D98E"},
+    {"path": "train_overnight.py", "md5": "B2C223C5040AB26A98B0501F732BCA19"},
+    {"path": "train_rcwa.py", "md5": "DA6D9EB13FFEFE6B2735779EBE82A4E0"},
+    {"path": "train_rcwa_wavelength.py", "md5": "99C2D9F214119A5A116767FB6853EB1D"},
+    {"path": "spearman_repro.py", "md5": "03612E6627D88CA3B823886995A5A3DF"},
+    {"path": "data/rcwa_5k.pkl", "md5": "83389302EB2E30CDC47ED7D72ACF9B33"},
+    {"path": "data/rcwa_5k_b2.pkl", "md5": "FE886968D7C51C79DB1360027B2AF1CD"}
+  ],
+  "integrity": {
+    "enforce": true,
+    "lock_path": ".state/pipeline_integrity.json"
+  },
   "pool": {
     "path": "data/rcwa_ellip_TiO2_3000_air.pkl",
     "expected_records": 6000,
@@ -45,10 +61,28 @@
     },
     "resume_command": "python pool_generate_elliptical.py --samples 3000 --seed 2026 --material TiO2 --substrate SiO2 --background air --pol both --nG 131 --n-jobs 16 --out data/rcwa_ellip_TiO2_3000_air.pkl --resume"
   },
+  "active_pool": {
+    "enabled": true,
+    "manifest_path": ".state/active_pool.json"
+  },
   "workflow": {
     "actions": [
       {"action": "pool_validation", "gate": "pool_manifest_frozen"},
-      {"action": "d65_colorimetry", "gate": "d65_colorimetry", "evidence_version": "paper2-d65-v1"},
+      {"action": "d65_colorimetry", "gate": "d65_colorimetry", "evidence_version": "paper2-d65-v1", "binding": "solver_protocol"},
+      {
+        "action": "reference_resolution",
+        "gate": "reference_resolution",
+        "evidence_version": "paper2-reference-resolution-audit-v1",
+        "runner": "python scripts/audit_reference_resolution_result.py",
+        "binding": "solver_protocol"
+      },
+      {
+        "action": "replacement_pool_generation",
+        "gate": "replacement_pool_ready",
+        "evidence_version": "paper2-replacement-pool-v1",
+        "requires_new_versioned_pool": true,
+        "diagnostic_only": true
+      },
       {"action": "joint_numerical_convergence", "gate": "joint_numerical_convergence", "evidence_version": "paper2-joint-convergence-v1.1"},
       {
         "action": "cross_solver_spectrum_validation",
@@ -68,6 +102,8 @@
       "strict_pool_validation",
       "d65_colorimetry",
       "joint_numerical_convergence",
+      "reference_resolution",
+      "replacement_pool_ready",
       "cross_solver_spectrum_validation",
       "circular_control",
       "geometry_split_frozen"
