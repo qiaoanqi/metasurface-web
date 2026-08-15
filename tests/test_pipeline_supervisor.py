@@ -439,6 +439,28 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["status"], "pending")
         self.assertEqual(second["dispatch"]["attempt"], 2)
 
+    def test_dead_worker_does_not_hide_behind_future_lease(self):
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            first = supervisor.evaluate_once(self.policy)
+        request = first["dispatch"]
+        future = (datetime.now().astimezone() + timedelta(hours=1)).isoformat(timespec="seconds")
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {
+                "request_id": request["request_id"],
+                "attempt": request["attempt"],
+                "status": "running",
+                "observed_at": supervisor.now_iso(),
+                "lease_expires_at": future,
+                "worker_pid": 999999,
+            },
+        )
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            second = supervisor.evaluate_once(self.policy)
+        self.assertEqual(second["dispatch"]["status"], "pending")
+        self.assertEqual(second["dispatch"]["attempt"], 2)
+
     def test_scientific_failure_is_terminal_not_retried(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):

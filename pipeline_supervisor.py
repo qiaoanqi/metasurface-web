@@ -533,8 +533,13 @@ def retry_or_fail(
 
 def active_executor_lease(ack: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str | None]:
     worker_pid = ack.get("worker_pid")
-    if worker_pid and pid_alive(worker_pid):
-        return True, ack.get("lease_expires_at")
+    if worker_pid:
+        # A running ack with an explicit worker must be tied to that process.
+        # Do not let an unexpired lease hide an early process exit; the next
+        # supervisor pass can then perform bounded checkpoint recovery.
+        if pid_alive(worker_pid):
+            return True, ack.get("lease_expires_at")
+        return False, None
     expires = parse_timestamp(ack.get("lease_expires_at"))
     if expires is None:
         observed = parse_timestamp(ack.get("heartbeat_at") or ack.get("observed_at"))
