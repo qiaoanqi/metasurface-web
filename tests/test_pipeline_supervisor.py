@@ -559,6 +559,41 @@ class ControllerTests(unittest.TestCase):
         gates["replacement_pool_ready"] = True
         self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "joint_numerical_convergence")
 
+    def test_post_activation_actions_use_only_v2_protocol_bound_runners(self):
+        actions = {
+            item["action"]: item for item in self.policy["workflow"]["actions"]
+        }
+        self.assertEqual(
+            actions["reference_resolution"]["evidence_version"],
+            "paper2-reference-holdout-audit-v1",
+        )
+        self.assertEqual(
+            actions["joint_numerical_convergence"]["evidence_version"],
+            "paper2-joint-convergence-v2",
+        )
+        self.assertIn(
+            "run_joint_convergence_v2.py",
+            actions["joint_numerical_convergence"]["runner"],
+        )
+        self.assertEqual(
+            actions["cross_solver_spectrum_validation"]["evidence_version"],
+            "paper2-cross-solver-v2",
+        )
+        self.assertIn(
+            "run_cross_solver_validation_v2.py",
+            actions["cross_solver_spectrum_validation"]["runner"],
+        )
+        joint_instruction = supervisor.build_instruction(
+            "joint_numerical_convergence", self.policy
+        )
+        cross_instruction = supervisor.build_instruction(
+            "cross_solver_spectrum_validation", self.policy
+        )
+        self.assertIn("run_joint_convergence_v2.py", joint_instruction)
+        self.assertIn("activated replacement pool", joint_instruction)
+        self.assertIn("run_cross_solver_validation_v2.py", cross_instruction)
+        self.assertIn("active pool", cross_instruction)
+
     def test_replacement_pool_is_auditor_activated(self):
         instruction = supervisor.build_instruction("replacement_pool_generation", self.policy)
         self.assertIn("do not register the gate", instruction)

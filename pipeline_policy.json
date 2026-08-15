@@ -72,24 +72,30 @@
       {
         "action": "reference_resolution",
         "gate": "reference_resolution",
-        "evidence_version": "paper2-reference-resolution-audit-v1",
-        "runner": "python scripts/audit_reference_resolution_result.py",
+        "evidence_version": "paper2-reference-holdout-audit-v1",
+        "runner": "python scripts/audit_reference_resolution_holdout.py",
         "binding": "solver_protocol"
       },
       {
         "action": "replacement_pool_generation",
         "gate": "replacement_pool_ready",
         "evidence_version": "paper2-replacement-pool-v1",
+        "runner": "python scripts/run_replacement_pool.py --approved-protocol .state/replacement_protocol_v1.json --n-jobs 16 --resume",
         "requires_new_versioned_pool": true,
         "diagnostic_only": true
       },
-      {"action": "joint_numerical_convergence", "gate": "joint_numerical_convergence", "evidence_version": "paper2-joint-convergence-v1.1"},
+      {
+        "action": "joint_numerical_convergence",
+        "gate": "joint_numerical_convergence",
+        "evidence_version": "paper2-joint-convergence-v2",
+        "runner": "python scripts/run_joint_convergence_v2.py"
+      },
       {
         "action": "cross_solver_spectrum_validation",
         "gate": "cross_solver_spectrum_validation",
-        "evidence_version": "paper2-cross-solver-v1",
-        "runner": "python scripts/run_cross_solver_validation.py --n-jobs 8",
-        "checkpoint": ".state/cross_solver_v1_checkpoint.pkl"
+        "evidence_version": "paper2-cross-solver-v2",
+        "runner": "python scripts/run_cross_solver_validation_v2.py --n-jobs 8",
+        "checkpoint": ".state/cross_solver_v2_checkpoint.pkl"
       },
       {"action": "circular_control", "gate": "circular_control", "evidence_version": "paper2-circular-control-v1"},
       {"action": "geometry_split_freeze", "gate": "geometry_split_frozen", "evidence_version": "paper2-geometry-split-v1"},

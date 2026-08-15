@@ -922,25 +922,28 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
             "maps to neutral D65 white and archive tests plus derived-label provenance."
         ),
         "joint_numerical_convergence": (
-            "Run the pre-registered stratified numerical gate on at least 32 geometries across nG 131/201/251 "
-            "and Nxy 256/384, with 1 nm checks for sharp spectra. Preserve raw R/T and actual requested/retained orders."
+            f"Run {action_spec.get('runner', 'the configured joint-convergence runner')}. "
+            "Require the activated replacement pool, its exact SHA256, the auditor-approved production protocol, "
+            "and the frozen 32-geometry raw reference. Recompute D65 labels from raw R/T, handle canonical-axis p/s "
+            "mapping, and reject all historical v1/v1.1 evidence."
         ),
         "reference_resolution": (
-            "Run python scripts/audit_reference_resolution_result.py against the completed versioned diagnostic. "
-            "Treat it as a candidate-reference audit only: never mark the historical joint gate passed, never reuse "
-            "5 nm labels for a 1 nm claim, and preserve raw R/T, requested/retained orders, and all failed evidence."
+            f"Run {action_spec.get('runner', 'the configured reference audit')}. "
+            "The eight-case diagnostic is candidate evidence only. Register this gate only after the pre-frozen "
+            "24-case extension yields exact 32-case/320-task evidence with production_reference_approved=true. "
+            "Never mark the historical joint gate passed or reuse coarse labels for a fine-grid claim."
         ),
         "replacement_pool_generation": (
-            "Generate a new versioned production pool from the approved reference protocol in a new output path. "
-            "Never overwrite or resume the historical nG131 pool; write a complete manifest, preserve checkpoints, "
-            "and require strict pointwise conservation before switching the active pool."
+            f"Run {action_spec.get('runner', 'the configured replacement-pool runner')}. "
+            "Use only the hash-bound protocol approved by the independent 32-case audit. Generate a canonical-axis, "
+            "dual-polarization pool below data/replacement with SQLite WAL resume and correct D65 labels. Never use "
+            "the historical generator, overwrite the nG131 pool, or activate the result from the executor task."
         ),
         "cross_solver_spectrum_validation": (
-            "Run python scripts/run_cross_solver_validation.py --n-jobs 8. Use its frozen paper2-cross-solver-v1 "
-            "protocol: 12 geometries in four sharpness strata, both polarizations and all 81 wavelengths at matched "
-            "11x11/Nxy256, plus four stress geometries at 13x13/Nxy384 for both solvers. Require analytic and symmetry "
-            "controls, solver self-convergence, spectrum RMSE, D65 joint color error, energy conservation, checkpoint "
-            "resume, and explicit failure classification. Never replace it with the historical circular or energy-only probes."
+            f"Run {action_spec.get('runner', 'the configured cross-solver runner')}. "
+            "Bind the matched third-party comparison to the active pool and approved nG/Nxy protocol. Use 12 frozen "
+            "sharpness-stratified geometries, both polarizations, analytic and symmetry controls, plus independent "
+            "order-axis, grid-axis, and corner stress configurations on four cases. Reject old-pool or v1 evidence."
         ),
         "circular_control": (
             "Generate or validate a corrected-solver, air-background circular TiO2 control under a matched, frozen "
