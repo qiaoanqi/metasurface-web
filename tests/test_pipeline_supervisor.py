@@ -642,6 +642,40 @@ class ControllerTests(unittest.TestCase):
         strategy = supervisor.strategy_override(failed["action"], self.policy, failed)
         self.assertIsNotNone(strategy)
 
+    def test_active_strategy_revalidates_and_refreshes_evidence(self):
+        repair = self.root / "repair_evidence.json"
+        repair.write_text('{"passed": true, "revision": 1}\n', encoding="ascii")
+        failed = {
+            "request_id": "failed-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "terminal_failure": True,
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, failed)
+        self.policy["strategy_override"] = {
+            "enabled": True,
+            "decision": "retry_same_gate",
+            "revision": 1,
+            "action": failed["action"],
+            "based_on_request_id": failed["request_id"],
+            "instruction_append": "Use only the hash-bound repair evidence.",
+            "evidence": [
+                {"path": "repair_evidence.json", "sha256": supervisor.file_digest(repair)}
+            ],
+        }
+        audit = {"pool": {"sha256": "ABC"}}
+        first = supervisor.update_dispatch(failed["action"], self.policy, audit)
+        first_id = first["request_id"]
+
+        repair.write_text('{"passed": true, "revision": 2}\n', encoding="ascii")
+        new_hash = supervisor.file_digest(repair)
+        self.policy["strategy_override"]["evidence"][0]["sha256"] = new_hash
+        second = supervisor.update_dispatch(failed["action"], self.policy, audit)
+        self.assertEqual(second["request_id"], first_id)
+        self.assertEqual(second["strategy_evidence"][0]["sha256"], new_hash)
+
 
 if __name__ == "__main__":
     unittest.main()

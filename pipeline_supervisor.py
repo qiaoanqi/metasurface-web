@@ -828,19 +828,22 @@ def strategy_override(
         return None
     if revision <= 0:
         return None
-    if (
+    same_strategy_request = (
         existing.get("action") == action
         and int(existing.get("strategy_revision", 0)) == revision
         and existing.get("strategy_based_on") == strategy.get("based_on_request_id")
-    ):
-        return strategy
-    if existing.get("status") != "failed" or existing.get("request_id") != strategy.get("based_on_request_id"):
-        return None
-    attempts_exhausted = int(existing.get("attempt", 0)) >= int(
-        existing.get("max_attempts", policy["dispatch"]["max_attempts"])
     )
-    if not existing.get("terminal_failure") and not attempts_exhausted:
-        return None
+    if not same_strategy_request:
+        if (
+            existing.get("status") != "failed"
+            or existing.get("request_id") != strategy.get("based_on_request_id")
+        ):
+            return None
+        attempts_exhausted = int(existing.get("attempt", 0)) >= int(
+            existing.get("max_attempts", policy["dispatch"]["max_attempts"])
+        )
+        if not existing.get("terminal_failure") and not attempts_exhausted:
+            return None
     evidence = strategy.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         return None
@@ -877,6 +880,9 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         instruction = build_instruction(action, policy)
         if strategy:
             instruction += " Strategy amendment: " + strategy["instruction_append"].strip()
+            request["strategy_revision"] = strategy_revision
+            request["strategy_based_on"] = strategy["based_on_request_id"]
+            request["strategy_evidence"] = strategy["evidence"]
         request["instruction"] = instruction
     else:
         timestamp = now_iso()
