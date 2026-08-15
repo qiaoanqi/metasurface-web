@@ -271,6 +271,28 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["attempt"], 2)
         self.assertIn("paper hash mismatch", second["dispatch"]["last_error"])
 
+    def test_ack_from_wrong_executor_thread_is_terminal_policy_failure(self):
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            first = supervisor.evaluate_once(self.policy)
+        request = first["dispatch"]
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {
+                "request_id": request["request_id"],
+                "attempt": request["attempt"],
+                "thread_id": "not-the-authorized-executor",
+                "status": "running",
+                "observed_at": supervisor.now_iso(),
+            },
+        )
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            second = supervisor.evaluate_once(self.policy)
+        self.assertEqual(second["dispatch"]["status"], "failed")
+        self.assertTrue(second["dispatch"]["terminal_failure"])
+        self.assertEqual(second["dispatch"]["failure_class"], "policy")
+        self.assertIn("identity mismatch", second["dispatch"]["last_error"])
+
     def test_timeout_retries_then_stops(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):

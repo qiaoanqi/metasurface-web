@@ -883,7 +883,21 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             request["strategy_based_on"] = strategy["based_on_request_id"]
             request["strategy_evidence"] = strategy["evidence"]
 
-    matching_ack = ack.get("request_id") == request_id and int(ack.get("attempt", 0)) == int(request["attempt"])
+    same_request_attempt = (
+        ack.get("request_id") == request_id
+        and int(ack.get("attempt", 0)) == int(request["attempt"])
+    )
+    ack_thread = ack.get("thread_id") or ack.get("target_thread_id")
+    identity_mismatch = bool(ack_thread) and ack_thread != policy["executor_thread_id"]
+    matching_ack = same_request_attempt and not identity_mismatch
+    if same_request_attempt and identity_mismatch:
+        request["failure_class"] = "policy"
+        retry_or_fail(
+            request,
+            max_attempts,
+            "executor thread identity mismatch",
+            terminal=True,
+        )
     if matching_ack:
         ack_status = ack.get("status")
         if ack_status in {"accepted", "claimed", "running", "in_progress"}:
