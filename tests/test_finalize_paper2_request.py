@@ -81,7 +81,7 @@ class Paper2FinalizerTests(unittest.TestCase):
             "attempt": 1,
             "thread_id": "executor-thread",
             "status": "running",
-            "worker_pid": worker_pid,
+            "worker_pid": worker_pid if worker_pid is not None else 999999,
             "checkpoint_path": ".state/checkpoint.pkl",
             "checks": {"pool_sha256": self.pool_sha},
         }

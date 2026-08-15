@@ -66,6 +66,8 @@ def load_matching_ack(path: Path, dispatch: dict[str, Any], policy: dict[str, An
     actual_thread = ack.get("thread_id") or ack.get("target_thread_id")
     if expected_thread and actual_thread != expected_thread:
         raise ValueError("finalizer ack executor thread identity mismatch")
+    if ack.get("status") in ACTIVE_ACK_STATUSES and not ack.get("worker_pid"):
+        raise ValueError("finalizer requires a recorded worker PID before finalization")
     if ack.get("worker_pid") and supervisor.pid_alive(ack["worker_pid"]):
         raise ValueError("finalizer refuses to run while the worker is alive")
     return ack

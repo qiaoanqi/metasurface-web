@@ -304,7 +304,7 @@
   "strategy_override": {
     "enabled": true,
     "decision": "retry_same_gate",
-    "revision": 5,
+    "revision": 6,
     "action": "joint_numerical_convergence",
     "based_on_request_id": "000786ba2cb4154777b8",
     "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before starting any worker; if it reports audit_existing_evidence, skip the worker and run only the independent auditor. Preserve the independent checkpoint and raw 1 nm/0.5 nm R/T arrays. When the worker is dead, run scripts/finalize_paper2_request.py; it must independently audit, atomically replace the matching running ack, and classify v2 results as failed/scientific. Then let pipeline_supervisor and paper2_auto_transition.py decide the next evidence-bound step. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
@@ -367,11 +367,11 @@
       },
       {
         "path": "scripts/finalize_paper2_request.py",
-        "sha256": "C40701C31A62AA42EBB182D43D0AD0D498EB0BA80A5B54DAE9F1C184F558F83E"
+        "sha256": "1AA098F6290649B2A2754111FDCF9A4E3A9B10BB30236D7944127B89F33ABBFD"
       },
       {
         "path": "tests/test_finalize_paper2_request.py",
-        "sha256": "6C5BCBDB6D688460BE58AD7A4E9342C7341D3D779DD5F9B9F58EBBC206031852"
+        "sha256": "42064EB3C832F71BFAC19977F1E870FFA044728DF3DBD226417D763CD0077857"
       }
     ]
   },
