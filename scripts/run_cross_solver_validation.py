@@ -568,17 +568,34 @@ def summarize(checkpoint, checkpoint_path, controls):
     }
 
 
-def joint_gate_ready():
+def joint_gate_ready(pool_sha256: str | None = None) -> bool:
+    """Require the currently configured joint gate and the exact input pool.
+
+    The production pool and convergence evidence are versioned independently.
+    Binding both here prevents a future strategy revision from accidentally
+    running this legacy runner against an older pool or stale evidence file.
+    """
     audit = load_json(ROOT / ".state" / "audit_result.json", {}) or {}
     if audit.get("training_gates", {}).get("joint_numerical_convergence") is not True:
         return False
     detail = audit.get("gate_evidence", {}).get("joint_numerical_convergence", {})
     if detail.get("verified") is not True:
         return False
+    policy = load_json(ROOT / "pipeline_policy.json", {}) or {}
+    expected_version = None
+    for item in policy.get("workflow", {}).get("actions", []):
+        if item.get("gate") == "joint_numerical_convergence":
+            expected_version = item.get("evidence_version")
+            break
+    if not expected_version:
+        return False
     for evidence in detail.get("evidence", []):
         path = ROOT / str(evidence.get("path", ""))
         payload = load_json(path, {}) if path.suffix.lower() == ".json" else {}
-        if payload.get("evidence_version") == "paper2-joint-convergence-v1.1":
+        if (
+            payload.get("evidence_version") == expected_version
+            and (pool_sha256 is None or payload.get("pool_sha256") == pool_sha256)
+        ):
             return True
     return False
 
@@ -649,7 +666,8 @@ def main():
     if args.plan_only:
         print(json.dumps(meta, indent=2, ensure_ascii=True))
         return
-    if not joint_gate_ready():
+    pool_sha256 = file_digest(pool_path)
+    if not joint_gate_ready(pool_sha256):
         raise SystemExit("joint numerical convergence v1.1 gate is not verified")
 
     checkpoint_path = ROOT / args.checkpoint
