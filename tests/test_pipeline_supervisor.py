@@ -985,6 +985,95 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("audit_replacement_pool.py", run.call_args_list[0].args[0][1])
         self.assertIn("activate_replacement_pool.py", run.call_args_list[1].args[0][1])
 
+    def test_executor_finalizer_waits_for_live_worker_and_stale_evidence(self):
+        dispatch = {
+            "request_id": "live-finalizer-request",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "payload": {"pool_sha256": supervisor.file_digest(self.root / "pool.pkl")},
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "running",
+            "worker_pid": 999999,
+        })
+        with patch.object(supervisor, "pid_alive", return_value=True), patch.object(
+            supervisor.subprocess, "run"
+        ) as run:
+            self.assertIsNone(supervisor.run_executor_finalization(self.policy))
+        run.assert_not_called()
+
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            result = supervisor.run_executor_finalization(self.policy)
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["reason"], "worker_evidence_missing")
+
+    def test_executor_finalizer_replaces_dead_complete_ack_before_transition(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        dispatch = {
+            "request_id": "dead-finalizer-request",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "payload": {"pool_sha256": pool_sha},
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
+        checkpoint = self.root / "checkpoint.pkl"
+        checkpoint.write_bytes(b"complete")
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "running",
+            "worker_pid": 999999,
+            "checkpoint_path": "checkpoint.pkl",
+        })
+        evidence = self.root / ".state/reference_resolution_budget_v2.json"
+        supervisor.atomic_json(evidence, {
+            "request": {"request_id": dispatch["request_id"], "attempt": 1},
+        })
+        diagnostic = self.root / "finalization-diagnostic.json"
+        diagnostic.write_text("{}\n", encoding="ascii")
+        terminal = {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "scientific",
+            "checks": {"pool_sha256": pool_sha},
+            "evidence": [{"path": "finalization-diagnostic.json", "sha256": supervisor.file_digest(diagnostic)}],
+        }
+
+        class FakeFinalizerProcess:
+            returncode = 2
+
+            def __init__(self):
+                self.polls = 0
+
+            def poll(self):
+                self.polls += 1
+                return None if self.polls == 1 else self.returncode
+
+            def communicate(self):
+                supervisor.atomic_json(supervisor.EXECUTOR_ACK, terminal)
+                return '{"status":"failed"}\n', ""
+
+        def fake_finalizer(*_args, **_kwargs):
+            return FakeFinalizerProcess()
+
+        with patch.object(supervisor, "pid_alive", return_value=False), patch.object(
+            supervisor, "executor_finalization_grace", return_value=(False, None)
+        ), patch.object(supervisor.subprocess, "Popen", side_effect=fake_finalizer) as run:
+            with patch.object(supervisor.time, "sleep", return_value=None):
+                result = supervisor.run_executor_finalization(self.policy)
+        self.assertEqual(result["status"], "finalized")
+        self.assertEqual(result["ack_status"], "failed")
+        self.assertIn("finalize_paper2_request.py", run.call_args.args[0][1])
+        heartbeat = supervisor.load_json(supervisor.CONTROLLER_STATE)
+        self.assertEqual(heartbeat["controller_status"], "finalizing")
+        self.assertFalse(heartbeat["training_allowed"])
+
     def test_verified_replacement_activation_archives_failed_generation_and_advances(self):
         failed = {
             "schema_version": 1,

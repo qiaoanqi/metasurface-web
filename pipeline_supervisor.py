@@ -213,6 +213,8 @@ def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
             cwd=str(ROOT),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600,
             check=False,
         )
@@ -240,6 +242,118 @@ def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
             **result,
         }
     return result
+
+
+def executor_finalization_ready(dispatch: dict[str, Any], ack: dict[str, Any]) -> tuple[bool, str]:
+    """Return whether a completed worker artifact is ready for independent finalization."""
+    action = dispatch.get("action")
+    if action == "joint_numerical_convergence":
+        evidence_path = STATE / "reference_resolution_budget_v2.json"
+    elif action == "reference_resolution":
+        evidence_path = STATE / "reference_resolution_holdout_v2.json"
+    else:
+        return False, "unsupported_action"
+    if not evidence_path.is_file():
+        return False, "worker_evidence_missing"
+    evidence = load_json(evidence_path, {}) or {}
+    request = evidence.get("request") if isinstance(evidence, dict) else None
+    if not isinstance(request, dict) or request.get("request_id") != dispatch.get("request_id"):
+        # Evidence from another request is not proof of completion for this one;
+        # leave bounded checkpoint recovery to the normal dispatch path.
+        return False, "worker_evidence_bound_to_different_request"
+    if int(request.get("attempt", 0)) > int(dispatch.get("attempt", 0)):
+        return False, "worker_evidence_from_future_attempt"
+    return True, str(evidence_path.relative_to(ROOT)).replace("\\", "/")
+
+
+def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
+    """Finalize a dead, complete executor deterministically from the supervisor watch loop."""
+    dispatch = load_json(DISPATCH_REQUEST, {}) or {}
+    ack = load_json(EXECUTOR_ACK, {}) or {}
+    if (
+        dispatch.get("status") != "in_progress"
+        or dispatch.get("action") not in {"joint_numerical_convergence", "reference_resolution"}
+        or ack.get("request_id") != dispatch.get("request_id")
+        or int(ack.get("attempt", 0)) != int(dispatch.get("attempt", 0))
+        or ack.get("status") not in {"accepted", "claimed", "running", "in_progress"}
+    ):
+        return None
+    worker_pid = ack.get("worker_pid")
+    if not worker_pid:
+        return {"status": "blocked", "reason": "active_ack_missing_worker_pid"}
+    if pid_alive(worker_pid):
+        return None
+    ready, reason = executor_finalization_ready(dispatch, ack)
+    if not ready:
+        return {"status": "waiting", "reason": reason}
+    grace_active, grace_until = executor_finalization_grace(ack, policy)
+    if grace_active:
+        return {"status": "waiting", "reason": "finalization_grace", "until": grace_until}
+
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "finalize_paper2_request.py"),
+        "--dispatch",
+        str(DISPATCH_REQUEST.relative_to(ROOT)),
+        "--ack",
+        str(EXECUTOR_ACK.relative_to(ROOT)),
+    ]
+    process = subprocess.Popen(
+        command,
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    started = time.monotonic()
+    timeout_seconds = 1900
+    while process.poll() is None:
+        atomic_json(
+            CONTROLLER_STATE,
+            {
+                "schema_version": 1,
+                "controller_status": "finalizing",
+                "next_action": "finalize_paper2_request",
+                "request_id": dispatch.get("request_id"),
+                "attempt": int(dispatch.get("attempt", 0)),
+                "training_allowed": False,
+                "updated_at": now_iso(),
+            },
+        )
+        if time.monotonic() - started >= timeout_seconds:
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise RuntimeError(
+                "paper2 finalizer timed out: " + (stderr or stdout or "").strip()
+            )
+        time.sleep(10)
+    stdout, stderr = process.communicate()
+    completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    terminal = load_json(EXECUTOR_ACK, {}) or {}
+    if (
+        terminal.get("request_id") != dispatch.get("request_id")
+        or int(terminal.get("attempt", 0)) != int(dispatch.get("attempt", 0))
+        or terminal.get("status") not in {"completed", "succeeded", "failed"}
+    ):
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"paper2 finalizer did not produce a terminal ack: {detail}")
+    pool_sha = str(dispatch.get("payload", {}).get("pool_sha256", "")).upper()
+    if terminal.get("status") in {"completed", "succeeded"}:
+        valid, error = validate_completed_ack(terminal, pool_sha, policy)
+    else:
+        valid, error = validate_failed_ack(terminal, pool_sha)
+    if not valid:
+        raise RuntimeError(f"paper2 finalizer produced an invalid terminal ack: {error}")
+    return {
+        "status": "finalized",
+        "ack_status": terminal.get("status"),
+        "request_id": dispatch.get("request_id"),
+        "attempt": int(dispatch.get("attempt", 0)),
+        "returncode": completed.returncode,
+        "evidence": reason,
+    }
 
 
 def pid_alive(pid: Any) -> bool:
@@ -2697,7 +2811,15 @@ def watch(interval: int) -> None:
         while True:
             try:
                 policy = load_policy()
-                paths = [STATUS, POLICY, EXECUTOR_ACK, GATE_STATE, ROOT / policy["pool"]["path"]]
+                paths = [
+                    STATUS,
+                    POLICY,
+                    EXECUTOR_ACK,
+                    GATE_STATE,
+                    ROOT / policy["pool"]["path"],
+                    STATE / "reference_resolution_budget_v2.json",
+                    STATE / "reference_resolution_holdout_v2.json",
+                ]
                 parts = []
                 for path in paths:
                     stat = path.stat() if path.exists() else None
@@ -2707,9 +2829,14 @@ def watch(interval: int) -> None:
                 parts.append(("minute", int(time.time() // 60)))
                 fingerprint = repr(parts)
                 if fingerprint != last_fingerprint:
+                    finalization = run_executor_finalization(policy)
                     controller = evaluate_once(policy)
                     transition = run_auto_transition(controller)
-                    payload = {"controller": controller, "auto_transition": transition}
+                    payload = {
+                        "controller": controller,
+                        "executor_finalization": finalization,
+                        "auto_transition": transition,
+                    }
                     print(json.dumps(payload, ensure_ascii=True), flush=True)
                     last_fingerprint = None if (
                         isinstance(transition, dict)
