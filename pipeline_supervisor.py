@@ -1283,6 +1283,8 @@ def strategy_override(
     if revision <= 0:
         return None
     same_strategy_request = (
+        existing.get("status") in {"pending", "in_progress", "acknowledged"}
+        and
         existing.get("action") == action
         and int(existing.get("strategy_revision", 0)) == revision
         and existing.get("strategy_based_on") == strategy.get("based_on_request_id")
