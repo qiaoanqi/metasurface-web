@@ -1074,6 +1074,118 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(heartbeat["controller_status"], "finalizing")
         self.assertFalse(heartbeat["training_allowed"])
 
+    def test_executor_finalizer_rejects_returncode_ack_mismatch(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        dispatch = {
+            "request_id": "mismatched-finalizer",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "payload": {"pool_sha256": pool_sha},
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
+        checkpoint = self.root / "checkpoint.pkl"
+        checkpoint.write_bytes(b"complete")
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "running",
+            "worker_pid": 999999,
+            "checkpoint_path": "checkpoint.pkl",
+        })
+        supervisor.atomic_json(
+            self.root / ".state/reference_resolution_budget_v2.json",
+            {"request": {"request_id": dispatch["request_id"], "attempt": 1}},
+        )
+        diagnostic = self.root / "finalization-diagnostic.json"
+        diagnostic.write_text("{}\n", encoding="ascii")
+        terminal = {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "permanent",
+            "checks": {"pool_sha256": pool_sha},
+            "evidence": [
+                {"path": diagnostic.name, "sha256": supervisor.file_digest(diagnostic)}
+            ],
+        }
+
+        class MismatchedProcess:
+            returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self):
+                supervisor.atomic_json(supervisor.EXECUTOR_ACK, terminal)
+                return '{"status":"failed"}\n', ""
+
+        with patch.object(supervisor, "pid_alive", return_value=False), patch.object(
+            supervisor, "executor_finalization_grace", return_value=(False, None)
+        ), patch.object(supervisor.subprocess, "Popen", return_value=MismatchedProcess()):
+            with self.assertRaisesRegex(RuntimeError, "returncode does not match"):
+                supervisor.run_executor_finalization(self.policy)
+
+    def test_audit_only_recovery_finalizes_without_worker_pid(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        dispatch = {
+            "request_id": "audit-only-request",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "strategy_based_on": "source-request",
+            "payload": {"pool_sha256": pool_sha},
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
+        checkpoint = self.root / "checkpoint.pkl"
+        checkpoint.write_bytes(b"complete")
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "running",
+            "worker_pid": None,
+            "checkpoint_path": "checkpoint.pkl",
+            "checks": {
+                "audit_only_recovery": True,
+                "finalization_ready": True,
+            },
+        })
+        supervisor.atomic_json(
+            self.root / ".state/reference_resolution_budget_v2.json",
+            {"request": {"request_id": "source-request", "attempt": 1}},
+        )
+        diagnostic = self.root / "audit-only-diagnostic.json"
+        diagnostic.write_text("{}\n", encoding="ascii")
+        terminal = {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "scientific",
+            "checks": {"pool_sha256": pool_sha},
+            "evidence": [
+                {"path": diagnostic.name, "sha256": supervisor.file_digest(diagnostic)}
+            ],
+        }
+
+        class AuditOnlyProcess:
+            returncode = 2
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self):
+                supervisor.atomic_json(supervisor.EXECUTOR_ACK, terminal)
+                return '{"status":"failed"}\n', ""
+
+        with patch(
+            "scripts.reference_budget_v2_lineage.validate_lineage", return_value={}
+        ), patch.object(
+            supervisor.subprocess, "Popen", return_value=AuditOnlyProcess()
+        ):
+            result = supervisor.run_executor_finalization(self.policy)
+        self.assertEqual(result["status"], "finalized")
+        self.assertEqual(result["ack_status"], "failed")
+
     def test_verified_replacement_activation_archives_failed_generation_and_advances(self):
         failed = {
             "schema_version": 1,

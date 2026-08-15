@@ -19,6 +19,7 @@ class Paper2AutoTransitionTests(unittest.TestCase):
             patch.object(transition, "DISPATCH", self.state / "dispatch_request.json"),
             patch.object(transition, "V1_AUDIT", self.state / "reference_resolution_v1_audit.json"),
             patch.object(transition, "V2_AUDIT", self.state / "reference_resolution_budget_v2_audit.json"),
+            patch.object(transition, "ACK", self.state / "executor_ack.json"),
         )
         for item in self.patches:
             item.start()
@@ -108,13 +109,16 @@ class Paper2AutoTransitionTests(unittest.TestCase):
 
     def test_v2_pass_is_bound_before_holdout_transition(self):
         dispatch = self.dispatch(revision=2)
-        produced_request = transition.request_identity(dispatch)
+        active_request = transition.request_identity(dispatch)
+        produced_request = dict(active_request)
         produced_request["attempt"] = 1
         atomic_json(
             transition.V2_AUDIT,
             {
                 "evidence_version": "paper2-reference-resolution-budget-v2-audit",
-                "request": produced_request,
+                "authorization_request": active_request,
+                "request": active_request,
+                "producer_request": produced_request,
                 "passed": True,
                 "classification": "budget_v2_converged",
                 "training_allowed": False,
@@ -129,17 +133,20 @@ class Paper2AutoTransitionTests(unittest.TestCase):
 
     def test_v2_newer_attempt_evidence_fails_closed(self):
         dispatch = self.dispatch(revision=2)
+        active_request = transition.request_identity(dispatch)
         atomic_json(
             transition.V2_AUDIT,
             {
                 "evidence_version": "paper2-reference-resolution-budget-v2-audit",
-                "request": {"request_id": dispatch["request_id"], "attempt": 3},
+                "authorization_request": active_request,
+                "request": active_request,
+                "producer_request": {"request_id": dispatch["request_id"], "attempt": 3},
                 "passed": True,
                 "classification": "budget_v2_converged",
                 "training_allowed": False,
             },
         )
-        with self.assertRaisesRegex(ValueError, "terminal request attempt"):
+        with self.assertRaisesRegex(ValueError, "authorized request lineage"):
             transition.advance_once()
 
     def test_v2_request_mismatch_fails_closed(self):
@@ -148,6 +155,7 @@ class Paper2AutoTransitionTests(unittest.TestCase):
             transition.V2_AUDIT,
             {
                 "evidence_version": "paper2-reference-resolution-budget-v2-audit",
+                "authorization_request": {"request_id": "other", "attempt": 2},
                 "request": {"request_id": "other", "attempt": 2},
                 "passed": True,
                 "classification": "budget_v2_converged",
@@ -159,11 +167,14 @@ class Paper2AutoTransitionTests(unittest.TestCase):
 
     def test_v2_scientific_negative_stops_without_reselection(self):
         dispatch = self.dispatch(revision=2)
+        active_request = transition.request_identity(dispatch)
         atomic_json(
             transition.V2_AUDIT,
             {
                 "evidence_version": "paper2-reference-resolution-budget-v2-audit",
-                "request": transition.request_identity(dispatch),
+                "authorization_request": active_request,
+                "request": active_request,
+                "producer_request": active_request,
                 "passed": False,
                 "classification": "budget_v2_still_insufficient",
                 "training_allowed": False,

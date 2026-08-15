@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,7 +131,18 @@ class Paper2FinalizerTests(unittest.TestCase):
                 self.dispatch(request_id=f"joint-{passed}")
                 self.active_ack(request_id=f"joint-{passed}")
                 _evidence, audit_path, _checkpoint = self.audit_inputs()
-                audit = {"passed": passed, "classification": classification, "checks": {"independent": True}}
+                request = {"request_id": f"joint-{passed}", "attempt": 1}
+                audit = {
+                    "evidence_version": "paper2-reference-resolution-budget-v2-audit",
+                    "authorization_request": request,
+                    "request": request,
+                    "producer_request": request,
+                    "passed": passed,
+                    "classification": classification,
+                    "pool_sha256": self.pool_sha,
+                    "checks": {"independent": True},
+                    "training_allowed": False,
+                }
                 with patch.object(finalizer, "run_auditor", return_value=audit):
                     result = finalizer.finalize(self.dispatch_path, self.ack_path)
                 self.assertEqual(result["status"], "failed")
@@ -181,6 +193,53 @@ class Paper2FinalizerTests(unittest.TestCase):
         self.assertEqual(result["failure_class"], "permanent")
         self.assertEqual(len(result["evidence"]), 1)
         self.assertTrue((self.root / result["evidence"][0]["path"]).is_file())
+
+    def test_strategy_evidence_drift_writes_terminal_integrity_failure(self):
+        dispatch = self.dispatch(request_id="drifted-strategy")
+        frozen = self.root / "frozen-auditor.py"
+        frozen.write_text("old\n", encoding="ascii")
+        dispatch["strategy_revision"] = 2
+        dispatch["strategy_evidence"] = [
+            {"path": frozen.name, "sha256": supervisor.file_digest(frozen)}
+        ]
+        supervisor.atomic_json(self.dispatch_path, dispatch)
+        frozen.write_text("new\n", encoding="ascii")
+        self.active_ack(request_id=dispatch["request_id"])
+        evidence, _audit, checkpoint = self.audit_inputs()
+
+        with patch.object(finalizer, "run_auditor") as auditor:
+            result = finalizer.finalize(self.dispatch_path, self.ack_path)
+
+        auditor.assert_not_called()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_class"], "permanent")
+        self.assertEqual(
+            result["checks"]["finalization_classification"],
+            "execution_integrity_failure",
+        )
+        paths = {item["path"] for item in result["evidence"]}
+        self.assertIn(str(checkpoint.relative_to(self.root)).replace("\\", "/"), paths)
+        self.assertIn(str(evidence.relative_to(self.root)).replace("\\", "/"), paths)
+        diagnostic_path = next(
+            self.root / item["path"]
+            for item in result["evidence"]
+            if "finalization_diagnostics" in item["path"]
+        )
+        diagnostic = supervisor.load_json(diagnostic_path)
+        self.assertEqual(diagnostic["classification"], "execution_integrity_failure")
+        self.assertFalse(diagnostic["strategy_evidence"][0]["passed"])
+
+    def test_auditor_returncode_must_match_declared_outcome(self):
+        output = self.state / "attempt-audit.json"
+        supervisor.atomic_json(output, {"passed": True})
+        completed = subprocess.CompletedProcess(
+            args=["python"], returncode=2, stdout="", stderr=""
+        )
+        with patch.object(finalizer.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "returncode/audit outcome mismatch"):
+                finalizer.run_auditor(
+                    "scripts/auditor.py", output, self.dispatch_path
+                )
 
 
 if __name__ == "__main__":

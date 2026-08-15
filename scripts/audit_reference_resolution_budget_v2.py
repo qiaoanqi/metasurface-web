@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
 from scripts import run_reference_resolution_escalation as v1  # noqa: E402
 from scripts.reference_v1_outcome import validate_worker_evidence  # noqa: E402
+from scripts.reference_budget_v2_lineage import validate_lineage  # noqa: E402
 
 
 VERSION = "paper2-reference-resolution-budget-v2-audit"
@@ -61,11 +62,23 @@ def dispatch_identity(path: Path) -> dict:
     }
 
 
-def reusable_request(previous: object, active: dict) -> bool:
+def reusable_request(
+    previous: object, active: dict, strategy_based_on: str | None = None
+) -> bool:
     return bool(
         isinstance(previous, dict)
-        and previous.get("request_id") == active.get("request_id")
-        and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+        and (
+            (
+                previous.get("request_id") == active.get("request_id")
+                and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+            )
+            or (
+                isinstance(strategy_based_on, str)
+                and strategy_based_on
+                and previous.get("request_id") == strategy_based_on
+                and int(previous.get("attempt", 0)) >= 1
+            )
+        )
     )
 
 
@@ -330,6 +343,8 @@ def build_audit(
     checkpoint_path: Path,
     plan_path: Path,
     request: dict,
+    strategy_based_on: str | None = None,
+    recovery_lineage: dict | None = None,
 ) -> dict:
     plan = load_json(plan_path, {}) or {}
     validate_plan(plan, plan_path)
@@ -338,7 +353,7 @@ def build_audit(
     if evidence.get("evidence_version") != "paper2-reference-resolution-budget-v2":
         raise ValueError("unexpected v2 worker evidence version")
     worker_request = evidence.get("request")
-    if not reusable_request(worker_request, request):
+    if not reusable_request(worker_request, request, strategy_based_on):
         raise ValueError("v2 worker evidence is not reusable by the active request attempt")
     require_binding(evidence.get("plan"), plan_path, "v2 evidence plan")
     require_binding(evidence.get("checkpoint"), checkpoint_path, "v2 evidence checkpoint")
@@ -427,10 +442,12 @@ def build_audit(
         raise ValueError("v2 worker passed claim must be boolean")
     if not worker_claim_matches(worker_claim, passed):
         raise ValueError("v2 worker passed claim disagrees with independent recomputation")
-    return {
+    result = {
         "schema_version": 1,
         "evidence_version": VERSION,
-        "request": worker_request,
+        "authorization_request": request,
+        "request": request,
+        "producer_request": worker_request,
         "passed": passed,
         "classification": "budget_v2_converged" if passed else "budget_v2_still_insufficient",
         "pool_sha256": plan["pool_sha256"],
@@ -447,6 +464,9 @@ def build_audit(
         "training_allowed": False,
         "decision_scope": "Diagnostic only; never activates a pool or authorizes training.",
     }
+    if recovery_lineage is not None:
+        result["recovery_lineage"] = recovery_lineage
+    return result
 
 
 def persist_audit(output: Path, audit: dict) -> None:
@@ -472,6 +492,7 @@ def main() -> int:
     parser.add_argument("--checkpoint", default=".state/reference_resolution_budget_v2_checkpoint.pkl")
     parser.add_argument("--output", default=".state/reference_resolution_budget_v2_audit.json")
     parser.add_argument("--dispatch", default=".state/dispatch_request.json")
+    parser.add_argument("--ack", default=".state/executor_ack.json")
     args = parser.parse_args()
     paths = {name: ROOT / value for name, value in (
         ("plan", args.plan), ("evidence", args.evidence), ("checkpoint", args.checkpoint)
@@ -480,14 +501,31 @@ def main() -> int:
         missing = [relative_path(path) for path in paths.values() if not path.is_file()]
         if missing:
             raise ValueError(f"required v2 audit inputs are missing: {missing}")
+        dispatch = load_json(ROOT / args.dispatch, {}) or {}
         request = dispatch_identity(ROOT / args.dispatch)
+        worker_evidence = load_json(paths["evidence"], {}) or {}
+        recovery_lineage = None
+        if worker_evidence.get("request") != request:
+            recovery_lineage = validate_lineage(
+                ROOT,
+                dispatch,
+                load_json(ROOT / args.ack, {}) or {},
+                paths["checkpoint"],
+                paths["evidence"],
+            )
         audit = build_audit(
-            paths["evidence"], paths["checkpoint"], paths["plan"], request
+            paths["evidence"],
+            paths["checkpoint"],
+            paths["plan"],
+            request,
+            dispatch.get("strategy_based_on"),
+            recovery_lineage,
         )
     except Exception as exc:
         audit = {
             "schema_version": 1,
             "evidence_version": VERSION,
+            "authorization_request": request if "request" in locals() else None,
             "passed": False,
             "classification": "execution_integrity_failure",
             "error": f"{type(exc).__name__}: {exc}",

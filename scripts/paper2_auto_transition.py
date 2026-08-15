@@ -12,11 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.reference_v1_outcome import validate_audit as validate_v1_audit  # noqa: E402
+from pipeline_supervisor import file_digest  # noqa: E402
+from scripts.reference_budget_v2_lineage import validate_lineage  # noqa: E402
 
 STATE = ROOT / ".state"
 DISPATCH = STATE / "dispatch_request.json"
 V1_AUDIT = STATE / "reference_resolution_v1_audit.json"
 V2_AUDIT = STATE / "reference_resolution_budget_v2_audit.json"
+ACK = STATE / "executor_ack.json"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -55,6 +58,18 @@ def reusable_request(previous: object, active: dict[str, Any]) -> bool:
     )
 
 
+def authorized_worker_request(previous: object, active: dict, strategy_based_on: str | None) -> bool:
+    if reusable_request(previous, active):
+        return True
+    return bool(
+        isinstance(previous, dict)
+        and isinstance(strategy_based_on, str)
+        and strategy_based_on
+        and previous.get("request_id") == strategy_based_on
+        and int(previous.get("attempt", 0)) >= 1
+    )
+
+
 def run_command(script: str) -> dict[str, Any]:
     completed = subprocess.run(
         [sys.executable, str(ROOT / script)],
@@ -81,14 +96,48 @@ def v1_transition_ready(audit: dict[str, Any]) -> bool:
 
 
 def v2_transition_decision(
-    audit: dict[str, Any], dispatch: dict[str, Any]
+    audit: dict[str, Any], dispatch: dict[str, Any], ack: dict[str, Any] | None = None
 ) -> str:
     if not audit:
         return "waiting_for_v2_audit"
     if audit.get("evidence_version") != "paper2-reference-resolution-budget-v2-audit":
         raise ValueError("unexpected v2 audit version")
-    if not reusable_request(audit.get("request"), request_identity(dispatch)):
-        raise ValueError("v2 audit is not reusable by the terminal request attempt")
+    active = request_identity(dispatch)
+    authorization = audit.get("authorization_request", audit.get("request"))
+    if authorization != active:
+        raise ValueError("v2 audit authorization is not bound to the terminal request attempt")
+    if audit.get("request") != active:
+        raise ValueError("v2 audit request is not the terminal request attempt")
+    producer_request = audit.get("producer_request", audit.get("request"))
+    if not authorized_worker_request(
+        producer_request, active, dispatch.get("strategy_based_on")
+    ):
+        raise ValueError("v2 audit worker evidence has no authorized request lineage")
+    if ack:
+        expected = {
+            "path": str(V2_AUDIT.relative_to(ROOT)).replace("\\", "/"),
+            "sha256": file_digest(V2_AUDIT),
+        }
+        if not any(
+            isinstance(item, dict)
+            and item.get("path") == expected["path"]
+            and str(item.get("sha256", "")).upper() == expected["sha256"]
+            for item in ack.get("evidence", [])
+        ):
+            raise ValueError("terminal ack does not bind the canonical v2 audit")
+    if (
+        isinstance(producer_request, dict)
+        and producer_request.get("request_id") != active.get("request_id")
+    ):
+        lineage = validate_lineage(
+            ROOT,
+            dispatch,
+            ack or {},
+            ROOT / ".state/reference_resolution_budget_v2_checkpoint.pkl",
+            ROOT / ".state/reference_resolution_budget_v2.json",
+        )
+        if audit.get("recovery_lineage") != lineage:
+            raise ValueError("v2 audit recovery lineage differs from the sealed source")
     if (
         audit.get("passed") is True
         and audit.get("classification") == "budget_v2_converged"
@@ -124,7 +173,8 @@ def advance_once() -> dict[str, Any]:
             "commands": commands,
         }
 
-    decision = v2_transition_decision(load_json(V2_AUDIT), dispatch)
+    ack = load_json(ACK)
+    decision = v2_transition_decision(load_json(V2_AUDIT), dispatch, ack or None)
     if decision == "waiting_for_v2_audit":
         return {"status": "waiting", "reason": decision}
     if decision == "terminal_scientific_negative":

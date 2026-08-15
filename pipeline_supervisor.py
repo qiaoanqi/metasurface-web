@@ -179,6 +179,45 @@ def production_reference_audit_approved(audit: Any) -> bool:
 def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
     """Run a registered, deterministic post-failure transition helper."""
     dispatch = controller.get("dispatch")
+    ack = load_json(EXECUTOR_ACK, {}) or {}
+    terminal_integrity = bool(
+        isinstance(dispatch, dict)
+        and dispatch.get("action") == "joint_numerical_convergence"
+        and dispatch.get("status") == "failed"
+        and dispatch.get("terminal_failure") is True
+        and str(dispatch.get("failure_class", "")).lower() == "permanent"
+        and ack.get("request_id") == dispatch.get("request_id")
+        and int(ack.get("attempt", 0)) == int(dispatch.get("attempt", 0))
+        and ack.get("checks", {}).get("finalization_classification")
+        == "execution_integrity_failure"
+    )
+    if terminal_integrity:
+        command = [
+            sys.executable,
+            str(ROOT / "scripts" / "arm_reference_budget_v2_audit_recovery.py"),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"paper2 integrity recovery failed: {detail}")
+        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+        if not lines:
+            raise RuntimeError("paper2 integrity recovery returned no status")
+        result = json.loads(lines[-1])
+        if not isinstance(result, dict) or result.get("status") not in {
+            "armed", "already_armed"
+        }:
+            raise RuntimeError("paper2 integrity recovery returned invalid status")
+        return result
     terminal_scientific = bool(
         isinstance(dispatch, dict)
         and dispatch.get("status") == "failed"
@@ -258,9 +297,18 @@ def executor_finalization_ready(dispatch: dict[str, Any], ack: dict[str, Any]) -
     evidence = load_json(evidence_path, {}) or {}
     request = evidence.get("request") if isinstance(evidence, dict) else None
     if not isinstance(request, dict) or request.get("request_id") != dispatch.get("request_id"):
-        # Evidence from another request is not proof of completion for this one;
-        # leave bounded checkpoint recovery to the normal dispatch path.
-        return False, "worker_evidence_bound_to_different_request"
+        if ack.get("checks", {}).get("audit_only_recovery") is not True:
+            return False, "worker_evidence_bound_to_different_request"
+        checkpoint_path = workspace_file(ack.get("checkpoint_path"))
+        if checkpoint_path is None or not checkpoint_path.is_file():
+            return False, "audit_only_checkpoint_missing"
+        try:
+            from scripts.reference_budget_v2_lineage import validate_lineage
+
+            validate_lineage(ROOT, dispatch, ack, checkpoint_path, evidence_path)
+        except Exception as exc:
+            return False, f"audit_only_lineage_invalid:{type(exc).__name__}:{exc}"
+        return True, str(evidence_path.relative_to(ROOT)).replace("\\", "/")
     if int(request.get("attempt", 0)) > int(dispatch.get("attempt", 0)):
         return False, "worker_evidence_from_future_attempt"
     return True, str(evidence_path.relative_to(ROOT)).replace("\\", "/")
@@ -280,13 +328,21 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
         return None
     worker_pid = ack.get("worker_pid")
     if not worker_pid:
-        return {"status": "blocked", "reason": "active_ack_missing_worker_pid"}
-    if pid_alive(worker_pid):
+        if not (
+            ack.get("checks", {}).get("audit_only_recovery") is True
+            and ack.get("checks", {}).get("finalization_ready") is True
+        ):
+            return {"status": "blocked", "reason": "active_ack_missing_worker_pid"}
+    elif pid_alive(worker_pid):
         return None
     ready, reason = executor_finalization_ready(dispatch, ack)
     if not ready:
         return {"status": "waiting", "reason": reason}
-    grace_active, grace_until = executor_finalization_grace(ack, policy)
+    grace_active, grace_until = (
+        (False, None)
+        if not worker_pid
+        else executor_finalization_grace(ack, policy)
+    )
     if grace_active:
         return {"status": "waiting", "reason": "finalization_grace", "until": grace_until}
 
@@ -339,6 +395,12 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
     ):
         detail = (completed.stderr or completed.stdout).strip()
         raise RuntimeError(f"paper2 finalizer did not produce a terminal ack: {detail}")
+    expected_returncode = 0 if terminal.get("status") in {"completed", "succeeded"} else 2
+    if completed.returncode != expected_returncode:
+        raise RuntimeError(
+            "paper2 finalizer returncode does not match terminal ack status: "
+            f"returncode={completed.returncode}, status={terminal.get('status')}"
+        )
     pool_sha = str(dispatch.get("payload", {}).get("pool_sha256", "")).upper()
     if terminal.get("status") in {"completed", "succeeded"}:
         valid, error = validate_completed_ack(terminal, pool_sha, policy)

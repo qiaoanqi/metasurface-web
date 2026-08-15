@@ -8,6 +8,7 @@ import json
 import os
 import pickle
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,17 +17,32 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json, pid_alive  # noqa: E402
 from scripts import run_reference_resolution_budget_v2 as runner  # noqa: E402
+from scripts.reference_budget_v2_lineage import validate_lineage  # noqa: E402
 
 
 VERSION = "paper2-reference-resolution-budget-v2-retry-v1"
 ACTIVE_ACK_STATUSES = {"accepted", "claimed", "running", "in_progress"}
 
 
-def reusable_request(previous: object, active: dict[str, Any]) -> bool:
+def reusable_request(
+    previous: object,
+    active: dict[str, Any],
+    lineage_request_id: str | None = None,
+) -> bool:
     return bool(
         isinstance(previous, dict)
-        and previous.get("request_id") == active.get("request_id")
-        and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+        and (
+            (
+                previous.get("request_id") == active.get("request_id")
+                and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+            )
+            or (
+                isinstance(lineage_request_id, str)
+                and lineage_request_id
+                and previous.get("request_id") == lineage_request_id
+                and int(previous.get("attempt", 0)) >= 1
+            )
+        )
     )
 
 
@@ -82,11 +98,12 @@ def validate_checkpoint(
     expected: dict,
     tasks: list[dict],
     active_request: dict[str, Any],
+    lineage_request_id: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get("meta"), dict):
         raise ValueError("budget-v2 retry checkpoint is malformed")
     stored_request = checkpoint["meta"].get("request")
-    if not reusable_request(stored_request, active_request):
+    if not reusable_request(stored_request, active_request, lineage_request_id):
         raise ValueError("budget-v2 checkpoint belongs to a different or newer request")
     stored_static = dict(checkpoint["meta"])
     expected_static = dict(expected)
@@ -113,10 +130,20 @@ def journal_path(directory: Path, previous: dict[str, Any], active: dict[str, An
     request_id = str(active["request_id"])
     if not request_id or any(not (char.isalnum() or char in "-_") for char in request_id):
         raise ValueError("request_id is unsafe for a retry journal path")
-    return directory / (
-        f"reference_resolution_budget_v2_retry_{request_id}_"
-        f"a{previous['attempt']}_to_a{active['attempt']}.json"
-    )
+    if previous.get("request_id") == request_id:
+        name = (
+            f"reference_resolution_budget_v2_retry_{request_id}_"
+            f"a{previous['attempt']}_to_a{active['attempt']}.json"
+        )
+    else:
+        previous_id = str(previous.get("request_id", ""))
+        if not previous_id or any(not (char.isalnum() or char in "-_") for char in previous_id):
+            raise ValueError("source request_id is unsafe for a retry journal path")
+        name = (
+            f"reference_resolution_budget_v2_lineage_{previous_id}_a{previous['attempt']}_"
+            f"to_{request_id}_a{active['attempt']}.json"
+        )
+    return directory / name
 
 
 def prepare_retry(
@@ -127,6 +154,7 @@ def prepare_retry(
     ack: dict,
     expected: dict,
     tasks: list[dict],
+    lineage_request_id: str | None = None,
 ) -> dict:
     validate_retry_ack(ack, active_request)
     if not checkpoint_path.is_file():
@@ -140,14 +168,47 @@ def prepare_retry(
         }
     with checkpoint_path.open("rb") as handle:
         checkpoint = pickle.load(handle)
-    previous = validate_checkpoint(checkpoint, expected, tasks, active_request)
+    previous = validate_checkpoint(
+        checkpoint, expected, tasks, active_request, lineage_request_id
+    )
     checkpoint_before = file_digest(checkpoint_path)
+
+    cross_request = previous["request_id"] != active_request["request_id"]
+    if cross_request:
+        if previous["request_id"] != lineage_request_id:
+            raise ValueError("cross-request checkpoint lacks sealed strategy lineage")
+        if len(checkpoint.get("results", {})) != len(tasks) or not evidence_path.is_file():
+            raise ValueError(
+                "cross-request recovery requires complete evidence; partial resume is forbidden"
+            )
+        evidence = load_json(evidence_path, {}) or {}
+        checkpoint_binding = evidence.get("checkpoint", {})
+        if (
+            evidence.get("request") != previous
+            or checkpoint_binding.get("path")
+            != str(checkpoint_path.relative_to(ROOT)).replace("\\", "/")
+            or str(checkpoint_binding.get("sha256", "")).upper() != checkpoint_before
+            or int(checkpoint_binding.get("tasks", 0)) != len(tasks)
+        ):
+            raise ValueError("sealed cross-request worker evidence is invalid")
+        return {
+            "status": "audit_existing_evidence",
+            "request": active_request,
+            "produced_request": previous,
+            "checkpoint_sha256": checkpoint_before,
+            "results": len(checkpoint.get("results", {})),
+            "cross_request": True,
+            "checkpoint_mutated": False,
+            "training_allowed": False,
+        }
 
     if evidence_path.is_file():
         evidence = load_json(evidence_path, {}) or {}
         checkpoint_binding = evidence.get("checkpoint", {})
         if (
-            reusable_request(evidence.get("request"), active_request)
+            reusable_request(
+                evidence.get("request"), active_request, lineage_request_id
+            )
             and checkpoint_binding.get("path")
             == str(checkpoint_path.relative_to(ROOT)).replace("\\", "/")
             and str(checkpoint_binding.get("sha256", "")).upper() == checkpoint_before
@@ -207,7 +268,11 @@ def prepare_retry(
         "results": len(checkpoint.get("results", {})),
         "expected_tasks": len(tasks),
         "checks": {
-            "same_request_id": True,
+            "same_request_id": previous["request_id"] == active_request["request_id"],
+            "authorized_strategy_lineage": bool(
+                previous["request_id"] == active_request["request_id"]
+                or previous["request_id"] == lineage_request_id
+            ),
             "monotonic_attempt": True,
             "static_checkpoint_protocol_unchanged": True,
             "partial_results_valid": True,
@@ -251,8 +316,32 @@ def main() -> int:
     parser.add_argument("--journal-dir", default=".state")
     args = parser.parse_args()
 
-    active_request = runner.dispatch_identity(ROOT / args.dispatch)
-    ack = load_json(ROOT / args.ack, {}) or {}
+    dispatch_path = ROOT / args.dispatch
+    ack_path = ROOT / args.ack
+    checkpoint_path = ROOT / args.checkpoint
+    evidence_path = ROOT / args.evidence
+    dispatch = load_json(dispatch_path, {}) or {}
+    active_request = runner.dispatch_identity(dispatch_path)
+    ack = load_json(ack_path, {}) or {}
+    lineage = None
+    lineage_request_id = None
+    if checkpoint_path.is_file():
+        with checkpoint_path.open("rb") as handle:
+            stored = pickle.load(handle)
+        stored_request = stored.get("meta", {}).get("request") if isinstance(stored, dict) else None
+        if (
+            isinstance(stored_request, dict)
+            and stored_request.get("request_id") != active_request["request_id"]
+        ):
+            lineage = validate_lineage(
+                ROOT,
+                dispatch,
+                ack,
+                checkpoint_path,
+                evidence_path,
+                require_ready=False,
+            )
+            lineage_request_id = lineage["producer_request"]["request_id"]
     plan_path = ROOT / args.plan
     plan, _evidence, _baseline = runner.load_inputs(
         plan_path,
@@ -262,14 +351,43 @@ def main() -> int:
     )
     tasks = runner.build_tasks(plan["selection"])
     result = prepare_retry(
-        ROOT / args.checkpoint,
-        ROOT / args.evidence,
+        checkpoint_path,
+        evidence_path,
         ROOT / args.journal_dir,
         active_request,
         ack,
         expected_meta(plan, plan_path, active_request),
         tasks,
+        lineage_request_id,
     )
+    if result.get("cross_request") is True:
+        if not isinstance(lineage, dict):
+            raise ValueError("audit-only result lacks validated lineage")
+        now = datetime.now().astimezone()
+        updated_ack = dict(ack)
+        updated_ack.update(
+            {
+                "status": "running",
+                "worker_pid": None,
+                "checkpoint_path": str(checkpoint_path.relative_to(ROOT)).replace("\\", "/"),
+                "heartbeat_at": now.isoformat(timespec="seconds"),
+                "lease_expires_at": (now + timedelta(hours=2)).isoformat(timespec="seconds"),
+            }
+        )
+        checks = dict(updated_ack.get("checks", {}))
+        checks.update(
+            {
+                "audit_only_recovery": True,
+                "finalization_ready": True,
+                "recovery_seal": lineage["seal"],
+                "completed_tasks": 96,
+                "training_allowed": False,
+                "checkpoint_mutated": False,
+            }
+        )
+        updated_ack["checks"] = checks
+        atomic_json(ack_path, updated_ack)
+        validate_lineage(ROOT, dispatch, updated_ack, checkpoint_path, evidence_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
