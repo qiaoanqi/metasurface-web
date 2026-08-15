@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / ".state"
 LOCK_PATH = STATE / "paper2_watchdog.lock"
 STATUS_PATH = STATE / "paper2_watchdog_status.json"
+CONTROLLER_STATE_PATH = STATE / "controller_state.json"
 STDOUT_PATH = STATE / "controller_stdout.log"
 STDERR_PATH = STATE / "controller_stderr.log"
 
@@ -67,6 +68,19 @@ def write_status(**updates) -> None:
     atomic_json(STATUS_PATH, current)
 
 
+def controller_state_healthy(
+    started_at: float, stale_after: float, *, now: float | None = None
+) -> bool:
+    """Return whether the supervised controller has refreshed its state recently."""
+    current_time = time.time() if now is None else now
+    try:
+        state_mtime = CONTROLLER_STATE_PATH.stat().st_mtime
+    except OSError:
+        # A freshly started controller gets a grace period to create its state.
+        return current_time - started_at < stale_after
+    return current_time - max(started_at, state_mtime) < stale_after
+
+
 def start_controller(interval: int) -> subprocess.Popen:
     STATE.mkdir(parents=True, exist_ok=True)
     stdout = STDOUT_PATH.open("ab")
@@ -94,8 +108,10 @@ def run(interval: int, restart_delay: int, max_restarts_per_hour: int) -> int:
         return 0
 
     child = None
+    child_started_at = 0.0
     restart_times: list[float] = []
     stopping = False
+    stale_after = max(180, interval * 10)
 
     def stop(_signum=None, _frame=None):
         nonlocal stopping
@@ -133,6 +149,7 @@ def run(interval: int, restart_delay: int, max_restarts_per_hour: int) -> int:
                 if child is not None:
                     time.sleep(max(5, restart_delay))
                 child = start_controller(interval)
+                child_started_at = time.time()
                 restart_times.append(time.time())
                 write_status(
                     status="running",
@@ -140,6 +157,22 @@ def run(interval: int, restart_delay: int, max_restarts_per_hour: int) -> int:
                     controller_pid=child.pid,
                     restart_count=len(restart_times),
                 )
+            elif not controller_state_healthy(child_started_at, stale_after):
+                write_status(
+                    status="controller_stale",
+                    watchdog_pid=os.getpid(),
+                    controller_pid=child.pid,
+                    restart_count=len(restart_times),
+                    stale_after_seconds=stale_after,
+                )
+                child.terminate()
+                try:
+                    child.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=15)
+                child = None
+                child_started_at = 0.0
             else:
                 write_status(
                     status="running",

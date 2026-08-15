@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -48,6 +50,30 @@ class WatchdogTests(unittest.TestCase):
             second = watchdog.acquire_lock(path)
             self.assertIsNotNone(second)
             second.close()
+
+    def test_controller_state_health_has_startup_grace(self):
+        watchdog = load_watchdog()
+        with tempfile.TemporaryDirectory() as tmp:
+            watchdog.CONTROLLER_STATE_PATH = Path(tmp) / "controller_state.json"
+            self.assertTrue(
+                watchdog.controller_state_healthy(100.0, 180.0, now=200.0)
+            )
+            self.assertFalse(
+                watchdog.controller_state_healthy(100.0, 180.0, now=281.0)
+            )
+
+    def test_controller_state_health_uses_latest_refresh(self):
+        watchdog = load_watchdog()
+        with tempfile.TemporaryDirectory() as tmp:
+            watchdog.CONTROLLER_STATE_PATH = Path(tmp) / "controller_state.json"
+            watchdog.CONTROLLER_STATE_PATH.write_text("{}", encoding="ascii")
+            os.utime(watchdog.CONTROLLER_STATE_PATH, (250.0, 250.0))
+            self.assertTrue(
+                watchdog.controller_state_healthy(100.0, 180.0, now=400.0)
+            )
+            self.assertFalse(
+                watchdog.controller_state_healthy(100.0, 180.0, now=431.0)
+            )
 
 
 if __name__ == "__main__":
