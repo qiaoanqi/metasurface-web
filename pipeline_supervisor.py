@@ -1084,7 +1084,14 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         and existing.get("action")
         and not ack_is_terminal_for_existing
     )
-    if live_request_immutable:
+    terminal_ack_transition = bool(
+        existing.get("status") in {"pending", "in_progress"}
+        and existing.get("action")
+        and ack_is_terminal_for_existing
+    )
+    preserve_existing = live_request_immutable or terminal_ack_transition
+    waiting_for_replan = False
+    if preserve_existing:
         # A durable non-terminal request is immutable until it is acknowledged
         # or fails. Workflow, policy, and active-pool revisions apply only to
         # the next request and must never orphan a live worker/ack pair.
@@ -1096,16 +1103,28 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
     else:
         pool_sha = audit.get("pool", {}).get("sha256")
         strategy = strategy_override(action, policy, existing)
-        strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
-        request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
-        max_attempts = int(policy["dispatch"]["max_attempts"])
+        if existing.get("status") == "failed" and strategy is None:
+            # Scientific, safety, policy, permanent, and exhausted transient
+            # failures remain terminal until an evidence-backed strategy names
+            # the exact failed request. Never advance to another gate merely
+            # because the workflow selector now points at it.
+            waiting_for_replan = True
+            action = str(existing.get("action") or action)
+            request = existing
+            request_id = str(existing["request_id"])
+            pool_sha = existing.get("payload", {}).get("pool_sha256") or pool_sha
+            max_attempts = int(existing.get("max_attempts", policy["dispatch"]["max_attempts"]))
+        else:
+            strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
+            request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
+            max_attempts = int(policy["dispatch"]["max_attempts"])
     timeout_seconds = int(
         policy["dispatch"].get(
             "pickup_timeout_seconds", policy["dispatch"].get("ack_timeout_seconds", 1800)
         )
     )
 
-    if live_request_immutable:
+    if preserve_existing or waiting_for_replan:
         pass
     elif existing.get("request_id") == request_id:
         request = existing
@@ -1168,7 +1187,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             "executor thread identity mismatch",
             terminal=True,
         )
-    if matching_ack:
+    if matching_ack and request.get("status") not in {"failed", "acknowledged"}:
         ack_status = ack.get("status")
         if ack_status in {"accepted", "claimed", "running", "in_progress"}:
             lease_active, lease_expires_at = active_executor_lease(ack, policy)
@@ -1212,7 +1231,18 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
                 terminal=terminal,
             )
     if request.get("status") == "acknowledged" and action not in {"resume_pool_generation", "stop_and_report"}:
-        retry_or_fail(request, max_attempts, "acknowledged without verified gate evidence")
+        action_spec = next(
+            (
+                item
+                for item in policy["workflow"]["actions"]
+                if item.get("action") == action
+            ),
+            {},
+        )
+        action_gate = action_spec.get("gate")
+        gate_verified = bool(action_gate and audit.get("training_gates", {}).get(action_gate))
+        if not gate_verified:
+            retry_or_fail(request, max_attempts, "acknowledged without verified gate evidence")
     elif request.get("status") in {"pending", "in_progress"} and not matching_ack:
         updated = parse_timestamp(request.get("updated_at")) or datetime.now().astimezone()
         age = (datetime.now().astimezone() - updated).total_seconds()
@@ -1226,7 +1256,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             "from": "pipeline_supervisor",
             "request_id": request["request_id"],
             "attempt": request["attempt"],
-            "created_at": request["updated_at"],
+            "created_at": request.get("updated_at") or now_iso(),
             "priority": "urgent" if action == "stop_and_report" else "normal",
             "action": action,
             "instruction": request["instruction"],

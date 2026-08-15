@@ -306,10 +306,10 @@ class ControllerTests(unittest.TestCase):
                 "attempt": request["attempt"],
                 "status": "completed",
                 "observed_at": supervisor.now_iso(),
-                "outputs": [{"path": ".state/pool_manifest.json", "material": "pool_manifest"}],
+                "outputs": [{"path": "pool_manifest.json", "material": "pool_manifest"}],
                 "paper_hashes": [
                     {
-                        "path": ".state/pool_manifest.json",
+                        "path": "pool_manifest.json",
                         "md5": supervisor.file_digest(manifest, "md5"),
                     }
                 ],
@@ -318,8 +318,14 @@ class ControllerTests(unittest.TestCase):
         )
         with patch.object(supervisor, "pid_alive", return_value=False):
             second = supervisor.evaluate_once(self.policy)
-        self.assertNotEqual(second["dispatch"]["request_id"], request["request_id"])
-        self.assertEqual(second["dispatch"]["action"], "d65_colorimetry")
+        self.assertEqual(second["dispatch"]["request_id"], request["request_id"])
+        self.assertEqual(second["dispatch"]["action"], "pool_validation")
+        self.assertEqual(second["dispatch"]["status"], "acknowledged")
+
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            third = supervisor.evaluate_once(self.policy)
+        self.assertNotEqual(third["dispatch"]["request_id"], request["request_id"])
+        self.assertEqual(third["dispatch"]["action"], "d65_colorimetry")
         history = (
             supervisor.STATE / "dispatch_history"
             / f"{request['request_id']}-attempt{request['attempt']}.json"
@@ -328,7 +334,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(archived["request"]["request_id"], request["request_id"])
         self.assertEqual(archived["final_ack"]["status"], "completed")
         self.assertEqual(archived["next_action"], "d65_colorimetry")
-        self.assertEqual(second["dispatch"]["attempt"], 1)
+        self.assertEqual(third["dispatch"]["attempt"], 1)
 
     def test_completed_ack_with_wrong_paper_hash_does_not_advance(self):
         self.write_status({"status": "running", "pid": 999999})
@@ -772,6 +778,53 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["status"], "failed")
         self.assertEqual(second["dispatch"]["attempt"], 1)
         self.assertEqual(second["next_action"], "stop_and_report")
+        failed_id = second["dispatch"]["request_id"]
+        failed_updated_at = second["dispatch"]["updated_at"]
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            third = supervisor.evaluate_once(self.policy)
+        self.assertEqual(third["dispatch"]["request_id"], failed_id)
+        self.assertEqual(third["dispatch"]["status"], "failed")
+        self.assertEqual(third["dispatch"]["updated_at"], failed_updated_at)
+        self.assertEqual(third["next_action"], "stop_and_report")
+
+    def test_failed_gate_cannot_advance_without_evidence_backed_strategy(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        failed = {
+            "request_id": "failed-joint-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "terminal_failure": True,
+            "payload": {"pool": "pool.pkl", "pool_sha256": pool_sha},
+            "instruction": "frozen failed request",
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, failed)
+        held = supervisor.update_dispatch(
+            "reference_resolution", self.policy, {"pool": {"sha256": pool_sha}}
+        )
+        self.assertEqual(held, failed)
+
+        evidence = self.root / "repair.json"
+        evidence.write_text('{"passed": true}\n', encoding="ascii")
+        self.policy["strategy_override"] = {
+            "enabled": True,
+            "decision": "retry_same_gate",
+            "revision": 2,
+            "action": "reference_resolution",
+            "based_on_request_id": failed["request_id"],
+            "instruction_append": "Launch only the independently audited holdout.",
+            "evidence": [
+                {"path": "repair.json", "sha256": supervisor.file_digest(evidence)}
+            ],
+        }
+        advanced = supervisor.update_dispatch(
+            "reference_resolution", self.policy, {"pool": {"sha256": pool_sha}}
+        )
+        self.assertNotEqual(advanced["request_id"], failed["request_id"])
+        self.assertEqual(advanced["action"], "reference_resolution")
+        self.assertEqual(advanced["status"], "pending")
+        self.assertEqual(advanced["strategy_revision"], 2)
 
     def test_scientific_failure_generates_guarded_recovery_plan(self):
         plan = supervisor.build_recovery_plan(
