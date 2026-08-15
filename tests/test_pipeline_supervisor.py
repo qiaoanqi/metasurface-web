@@ -419,6 +419,20 @@ class ControllerTests(unittest.TestCase):
         gates["training_allowed"] = True
         self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "training_pilot")
 
+    def test_workflow_actions_follow_preregistered_order(self):
+        actions = self.policy["workflow"]["actions"]
+        gates = {item["gate"]: False for item in actions}
+        gates.update({"pool_complete": True, "strict_pool_validation": True})
+        for item in actions:
+            expected = item["action"]
+            if item.get("requires_training_allowed"):
+                gates["training_allowed"] = True
+            self.assertEqual(supervisor.select_workflow_action(self.policy, gates), expected)
+            gates[item["gate"]] = True
+            if item["gate"] == "geometry_split_frozen":
+                gates["training_allowed"] = True
+        self.assertIsNone(supervisor.select_workflow_action(self.policy, gates))
+
     def test_running_ack_with_live_lease_prevents_retry(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):
