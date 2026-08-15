@@ -35,6 +35,19 @@ RUNTIME_PATHS = (
     "color_utils.py",
     "scripts/run_reference_resolution_budget_v2.py",
 )
+SPATIAL_CONFIGS = {
+    "order": EXTRA_CONFIGS[0],
+    "grid": EXTRA_CONFIGS[1],
+    "corner": EXTRA_CONFIGS[2],
+}
+
+
+def spatial_axis_specs() -> list[tuple[str, tuple[int, int], float]]:
+    return [
+        (f"{axis}_365x512_to_{config[0]}x{config[1]}_{'0p5nm' if step == 0.5 else '1nm'}", config, step)
+        for axis, config in SPATIAL_CONFIGS.items()
+        for step in STEPS
+    ]
 
 
 def relative_path(path: Path) -> str:
@@ -345,20 +358,19 @@ def build_audit(
         raise ValueError("v2 checkpoint raw spectra are invalid")
     baseline_results = baseline["results"]
     candidate_results = checkpoint["results"]
-    def base_id(index: int, pol: str) -> str:
-        return v1.task_id(index, pol, BASE_CONFIG, 1.0)
     def candidate_id(config: tuple[int, int], step: float):
         return lambda index, pol: task_id(index, pol, config, step)
     axes = {
-        "order_365x512_to_450x512": comparison(
-            plan["selection"], baseline_results, candidate_results, base_id, candidate_id(EXTRA_CONFIGS[0], 1.0)
-        ),
-        "grid_365x512_to_365x768": comparison(
-            plan["selection"], baseline_results, candidate_results, base_id, candidate_id(EXTRA_CONFIGS[1], 1.0)
-        ),
-        "corner_365x512_to_450x768": comparison(
-            plan["selection"], baseline_results, candidate_results, base_id, candidate_id(EXTRA_CONFIGS[2], 1.0)
-        ),
+        name: comparison(
+            plan["selection"],
+            baseline_results,
+            candidate_results,
+            lambda index, pol, step=step: v1.task_id(index, pol, BASE_CONFIG, step),
+            candidate_id(config, step),
+        )
+        for name, config, step in spatial_axis_specs()
+    }
+    axes.update({
         "spectral_450x512": comparison(
             plan["selection"], candidate_results, candidate_results,
             candidate_id(EXTRA_CONFIGS[0], 1.0), candidate_id(EXTRA_CONFIGS[0], 0.5)
@@ -371,16 +383,25 @@ def build_audit(
             plan["selection"], candidate_results, candidate_results,
             candidate_id(EXTRA_CONFIGS[2], 1.0), candidate_id(EXTRA_CONFIGS[2], 0.5)
         ),
-    }
+    })
     checks = {
         "plan_and_source_hashes_verified": True,
         "v1_scientific_failure_verified": True,
         "exact_new_task_set": validation["records"] == EXPECTED_TASKS,
         "new_spectra_valid": validation["passed"],
         "runtime_hashes_verified": runtime_hashes_match(expected_meta["runtime_hashes"]),
-        "order_converged": axes["order_365x512_to_450x512"]["passed"],
-        "grid_converged": axes["grid_365x512_to_365x768"]["passed"],
-        "corner_converged": axes["corner_365x512_to_450x768"]["passed"],
+        "order_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("order_")
+        ),
+        "grid_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("grid_")
+        ),
+        "corner_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("corner_")
+        ),
         "spectral_450x512_converged": axes["spectral_450x512"]["passed"],
         "spectral_365x768_converged": axes["spectral_365x768"]["passed"],
         "spectral_450x768_converged": axes["spectral_450x768"]["passed"],

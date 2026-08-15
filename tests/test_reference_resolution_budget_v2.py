@@ -33,6 +33,17 @@ class BudgetV2PlanTests(unittest.TestCase):
         self.assertEqual({(task["requested_nG"], task["Nxy"]) for task in tasks}, set(freeze.EXTRA_CONFIGS))
         self.assertEqual(len({task["id"] for task in tasks}), 96)
 
+    def test_every_spatial_axis_is_compared_on_both_grids(self):
+        runner_specs = budget.spatial_axis_specs()
+        auditor_specs = audit.spatial_axis_specs()
+        self.assertEqual(runner_specs, auditor_specs)
+        self.assertEqual(len(runner_specs), 6)
+        for axis in ("order", "grid", "corner"):
+            self.assertEqual(
+                {step for name, _config, step in runner_specs if name.startswith(axis)},
+                {0.5, 1.0},
+            )
+
     def test_only_registered_provisional_plan_can_be_migrated(self):
         provisional = {
             "evidence_version": freeze.VERSION,

@@ -25,6 +25,19 @@ POLS = v1.POLS
 BASE_CONFIG = v1.FINE_CONFIG
 STEPS = (1.0, 0.5)
 EXPECTED_TASKS = len(EXTRA_CONFIGS) * len(POLS) * 8 * len(STEPS)
+SPATIAL_CONFIGS = {
+    "order": EXTRA_CONFIGS[0],
+    "grid": EXTRA_CONFIGS[1],
+    "corner": EXTRA_CONFIGS[2],
+}
+
+
+def spatial_axis_specs() -> list[tuple[str, tuple[int, int], float]]:
+    return [
+        (f"{axis}_365x512_to_{config[0]}x{config[1]}_{'0p5nm' if step == 0.5 else '1nm'}", config, step)
+        for axis, config in SPATIAL_CONFIGS.items()
+        for step in STEPS
+    ]
 
 
 def task_id(index: int, pol: str, config: tuple[int, int], step: float) -> str:
@@ -279,20 +292,30 @@ def summarize(plan: dict, evidence: dict, baseline: dict, results: dict, checkpo
     combined = dict(baseline["results"])
     combined.update(results)
     axes = {
-        "order_365x512_to_450x512": comparison(selected, combined, BASE_CONFIG, 1.0, EXTRA_CONFIGS[0], 1.0),
-        "grid_365x512_to_365x768": comparison(selected, combined, BASE_CONFIG, 1.0, EXTRA_CONFIGS[1], 1.0),
-        "corner_365x512_to_450x768": comparison(selected, combined, BASE_CONFIG, 1.0, EXTRA_CONFIGS[2], 1.0),
+        name: comparison(selected, combined, BASE_CONFIG, step, config, step)
+        for name, config, step in spatial_axis_specs()
+    }
+    axes.update({
         "spectral_450x512": comparison(selected, combined, EXTRA_CONFIGS[0], 1.0, EXTRA_CONFIGS[0], 0.5),
         "spectral_365x768": comparison(selected, combined, EXTRA_CONFIGS[1], 1.0, EXTRA_CONFIGS[1], 0.5),
         "spectral_450x768": comparison(selected, combined, EXTRA_CONFIGS[2], 1.0, EXTRA_CONFIGS[2], 0.5),
-    }
+    })
     checks = {
         "exact_new_task_set": spectra["records"] == EXPECTED_TASKS,
         "new_spectra_valid": spectra["passed"],
         "runtime_hashes_verified": all(file_digest(ROOT / path) == value for path, value in runtime_hashes.items()),
-        "order_converged": axes["order_365x512_to_450x512"]["passed"],
-        "grid_converged": axes["grid_365x512_to_365x768"]["passed"],
-        "corner_converged": axes["corner_365x512_to_450x768"]["passed"],
+        "order_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("order_")
+        ),
+        "grid_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("grid_")
+        ),
+        "corner_converged": all(
+            axes[name]["passed"] for name, _config, _step in spatial_axis_specs()
+            if name.startswith("corner_")
+        ),
         "spectral_450x512_converged": axes["spectral_450x512"]["passed"],
         "spectral_365x768_converged": axes["spectral_365x768"]["passed"],
         "spectral_450x768_converged": axes["spectral_450x768"]["passed"],
