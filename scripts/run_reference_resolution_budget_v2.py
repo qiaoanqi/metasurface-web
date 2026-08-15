@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 from pipeline_supervisor import atomic_json, audit_protected_files, file_digest, load_json  # noqa: E402
 from scripts import run_reference_resolution_escalation as v1  # noqa: E402
 from scripts.freeze_reference_budget_v2 import EXTRA_CONFIGS, VERSION as PLAN_VERSION  # noqa: E402
+from scripts.reference_v1_outcome import validate_worker_evidence  # noqa: E402
 
 
 VERSION = "paper2-reference-resolution-budget-v2"
@@ -173,18 +174,8 @@ def load_inputs(
     require_binding(plan.get("source_v1_evidence"), v1_evidence_path, "v1 evidence")
     require_binding(plan.get("source_v1_checkpoint"), v1_checkpoint_path, "v1 checkpoint")
     audit = load_json(v1_audit_path, {}) or {}
-    if audit.get("evidence_version") != "paper2-reference-resolution-audit-v1":
-        raise ValueError("independent v1 reference audit is required before budget v2")
-    if audit.get("passed") is not False or audit.get("classification") in {
-        "execution_integrity_failure",
-        "worker_evidence_integrity_failure",
-    }:
-        raise ValueError("budget v2 requires a terminal scientific v1 failure")
     evidence = load_json(v1_evidence_path, {}) or {}
-    if evidence.get("evidence_version") != "paper2-reference-resolution-v1":
-        raise ValueError("v1 worker evidence version is not frozen")
-    if evidence.get("passed") is not False:
-        raise ValueError("budget v2 requires the failed v1 audit to remain explicit")
+    validate_worker_evidence(audit, evidence)
     with v1_checkpoint_path.open("rb") as handle:
         checkpoint = pickle.load(handle)
     if len(checkpoint.get("results", {})) != 80:

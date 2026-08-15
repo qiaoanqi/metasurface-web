@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
 from scripts import run_reference_resolution_escalation as v1  # noqa: E402
+from scripts.reference_v1_outcome import validate_worker_evidence  # noqa: E402
 
 
 VERSION = "paper2-reference-resolution-budget-v2-audit"
@@ -224,26 +225,9 @@ def validate_v1_source(plan: dict, plan_path: Path) -> tuple[dict, dict, dict]:
     require_binding(checkpoint_binding, checkpoint_path, "v1 checkpoint")
     require_binding(source_plan_binding, source_plan_path, "v1 plan")
     audit = load_json(audit_path, {}) or {}
-    if audit.get("evidence_version") != "paper2-reference-resolution-audit-v1":
-        raise ValueError("unexpected v1 audit version")
-    if audit.get("passed") is not False or audit.get("classification") in {
-        "execution_integrity_failure",
-        "worker_evidence_integrity_failure",
-    }:
-        raise ValueError("v1 source is not a terminal scientific failure")
-    for key in (
-        "frozen_plan_sha256_and_content",
-        "checkpoint_meta_and_runtime_hashes",
-        "reference_checkpoint_exact_80",
-        "worker_claim_matches_independent_recomputation",
-        "physics_controls_passed",
-    ):
-        if audit.get("checks", {}).get(key) is not True:
-            raise ValueError(f"v1 source prerequisite is unproven: {key}")
     evidence = load_json(evidence_path, {}) or {}
-    if evidence.get("evidence_version") != "paper2-reference-resolution-v1":
-        raise ValueError("unexpected v1 worker evidence version")
-    if evidence.get("passed") is not False or evidence.get("pool_sha256") != plan.get("pool_sha256"):
+    validate_worker_evidence(audit, evidence)
+    if evidence.get("pool_sha256") != plan.get("pool_sha256"):
         raise ValueError("v1 worker evidence is not bound to the frozen failed pool")
     if evidence.get("selection") != plan.get("selection"):
         raise ValueError("v1 worker selection differs from v2 plan")

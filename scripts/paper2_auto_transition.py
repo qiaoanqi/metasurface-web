@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.reference_v1_outcome import validate_audit as validate_v1_audit  # noqa: E402
+
 STATE = ROOT / ".state"
 DISPATCH = STATE / "dispatch_request.json"
 V1_AUDIT = STATE / "reference_resolution_v1_audit.json"
@@ -64,22 +68,7 @@ def run_command(script: str) -> dict[str, Any]:
 def v1_transition_ready(audit: dict[str, Any]) -> bool:
     if not audit:
         return False
-    if (
-        audit.get("evidence_version") != "paper2-reference-resolution-audit-v1"
-        or audit.get("passed") is not False
-        or audit.get("classification")
-        in {"execution_integrity_failure", "worker_evidence_integrity_failure"}
-    ):
-        raise ValueError("v1 evidence is not a transition-eligible scientific failure")
-    required = (
-        "frozen_plan_sha256_and_content",
-        "checkpoint_meta_and_runtime_hashes",
-        "reference_checkpoint_exact_80",
-        "worker_claim_matches_independent_recomputation",
-        "physics_controls_passed",
-    )
-    if not all(audit.get("checks", {}).get(name) is True for name in required):
-        raise ValueError("v1 independent audit prerequisites are incomplete")
+    validate_v1_audit(audit)
     return True
 
 

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
+from scripts.reference_v1_outcome import validate_audit as validate_v1_audit  # noqa: E402
 
 
 ACTION = "joint_numerical_convergence"
@@ -25,6 +26,7 @@ EVIDENCE_PATHS = (
     "scripts/freeze_reference_budget_v2.py",
     "scripts/advance_reference_budget_v2_strategy.py",
     "scripts/paper2_auto_transition.py",
+    "scripts/reference_v1_outcome.py",
     "tests/test_reference_resolution_budget_v2.py",
 )
 
@@ -49,22 +51,7 @@ def validate_terminal_dispatch(dispatch: dict) -> None:
 
 
 def validate_scientific_inputs(v1_audit: dict, v2_plan: dict) -> None:
-    if (
-        v1_audit.get("evidence_version") != V1_AUDIT_VERSION
-        or v1_audit.get("passed") is not False
-        or v1_audit.get("classification")
-        in {"execution_integrity_failure", "worker_evidence_integrity_failure"}
-    ):
-        raise ValueError("v1 independent audit is not a scientific failure")
-    for key in (
-        "frozen_plan_sha256_and_content",
-        "checkpoint_meta_and_runtime_hashes",
-        "reference_checkpoint_exact_80",
-        "worker_claim_matches_independent_recomputation",
-        "physics_controls_passed",
-    ):
-        if v1_audit.get("checks", {}).get(key) is not True:
-            raise ValueError(f"v1 independent audit prerequisite failed: {key}")
+    validate_v1_audit(v1_audit)
     if (
         v2_plan.get("evidence_version") != V2_PLAN_VERSION
         or v2_plan.get("plan_valid") is not True

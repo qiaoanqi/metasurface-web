@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
 from scripts import run_reference_resolution_escalation as v1  # noqa: E402
+from scripts.reference_v1_outcome import validate_worker_evidence  # noqa: E402
 
 
 VERSION = "paper2-reference-budget-v2-plan"
@@ -53,26 +54,6 @@ def build_plan(
     and bind the resulting files by digest so the runner cannot mix protocols.
     """
     audit = load_json(v1_audit_path, {}) or {}
-    if audit.get("evidence_version") != "paper2-reference-resolution-audit-v1":
-        raise ValueError("independent v1 reference audit is not frozen")
-    if audit.get("passed") is not False:
-        raise ValueError("v1 reference audit must remain an explicit scientific failure")
-    if audit.get("classification") in {
-        "execution_integrity_failure",
-        "worker_evidence_integrity_failure",
-    }:
-        raise ValueError("v1 reference audit is not a scientific failure")
-    audit_checks = audit.get("checks", {})
-    for key in (
-        "frozen_plan_sha256_and_content",
-        "checkpoint_meta_and_runtime_hashes",
-        "reference_checkpoint_exact_80",
-        "worker_claim_matches_independent_recomputation",
-        "physics_controls_passed",
-    ):
-        if audit_checks.get(key) is not True:
-            raise ValueError(f"v1 audit prerequisite is not proven: {key}")
-
     inputs = audit.get("inputs", {})
     def source_path(name: str, explicit: Path | None) -> Path:
         if explicit is not None:
@@ -87,10 +68,9 @@ def build_plan(
     v1_checkpoint_path = source_path("reference_checkpoint", v1_checkpoint_path)
     v1_plan_path = source_path("plan", v1_plan_path)
     evidence = load_json(v1_evidence_path, {}) or {}
-    if evidence.get("evidence_version") != "paper2-reference-resolution-v1":
-        raise ValueError("v1 worker evidence version is not frozen")
-    if evidence.get("passed") is not False or len(evidence.get("selection", [])) != 8:
-        raise ValueError("v1 failed eight-case selection is not frozen")
+    validate_worker_evidence(audit, evidence)
+    if len(evidence.get("selection", [])) != 8:
+        raise ValueError("v1 eight-case selection is not frozen")
     if not v1_checkpoint_path.is_file() or not v1_plan_path.is_file():
         raise ValueError("v1 source checkpoint or plan is missing")
     with v1_checkpoint_path.open("rb") as handle:

@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +11,7 @@ from scripts import run_reference_resolution_budget_v2 as budget
 from scripts import audit_reference_resolution_budget_v2 as audit
 from scripts import advance_reference_budget_v2_strategy as advance
 from scripts import advance_reference_holdout_strategy as advance_holdout
+from scripts import reference_v1_outcome as v1_outcome
 
 
 def cases():
@@ -19,6 +22,59 @@ def cases():
 
 
 class BudgetV2PlanTests(unittest.TestCase):
+    def test_converged_v1_outcome_freezes_and_loads_real_budget_plan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / ".state"
+            state.mkdir()
+            old_freeze_root, old_budget_root = freeze.ROOT, budget.ROOT
+            freeze.ROOT = budget.ROOT = root
+            try:
+                selected = cases()
+                source_plan = state / "reference_resolution_v1_plan.json"
+                source_plan.write_text('{"frozen":true}\n', encoding="ascii")
+                checkpoint_path = state / "reference_resolution_v1_checkpoint.pkl"
+                tasks = budget.v1.build_tasks(selected)
+                with checkpoint_path.open("wb") as handle:
+                    pickle.dump(
+                        {
+                            "meta": {"selected_geometries": selected},
+                            "results": {task["id"]: valid_result(task) for task in tasks},
+                        },
+                        handle,
+                        protocol=pickle.HIGHEST_PROTOCOL,
+                    )
+                evidence_path = state / "reference_resolution_v1.json"
+                evidence = {
+                    "evidence_version": v1_outcome.WORKER_VERSION,
+                    "passed": True,
+                    "pool_sha256": "A" * 64,
+                    "selection": selected,
+                }
+                evidence_path.write_text(json.dumps(evidence) + "\n", encoding="ascii")
+                audit_path = state / "reference_resolution_v1_audit.json"
+                audit_payload = BudgetV2IntegrityTests.terminal_audit(True)
+                audit_payload["inputs"] = {
+                    "reference_evidence": freeze._binding(evidence_path),
+                    "reference_checkpoint": freeze._binding(checkpoint_path),
+                    "plan": freeze._binding(source_plan),
+                }
+                audit_path.write_text(json.dumps(audit_payload) + "\n", encoding="ascii")
+
+                plan = freeze.build_plan(
+                    audit_path, evidence_path, checkpoint_path, source_plan
+                )
+                plan_path = state / "reference_resolution_budget_v2_plan.json"
+                plan_path.write_text(json.dumps(plan) + "\n", encoding="ascii")
+                loaded_plan, loaded_evidence, loaded_checkpoint = budget.load_inputs(
+                    plan_path, audit_path, evidence_path, checkpoint_path
+                )
+                self.assertEqual(loaded_plan, plan)
+                self.assertTrue(loaded_evidence["passed"])
+                self.assertEqual(len(loaded_checkpoint["results"]), 80)
+            finally:
+                freeze.ROOT, budget.ROOT = old_freeze_root, old_budget_root
+
     def test_plan_is_fixed_factor_not_diagonal_only(self):
         plan = {
             "pool_sha256": "POOL",
@@ -85,6 +141,42 @@ def valid_result(task):
 
 
 class BudgetV2IntegrityTests(unittest.TestCase):
+    @staticmethod
+    def terminal_audit(passed=True):
+        return {
+            "evidence_version": v1_outcome.AUDIT_VERSION,
+            "passed": passed,
+            "classification": (
+                "historical_production_budget_rejected"
+                if passed
+                else "reference_spatial_budget_insufficient_order_and_grid"
+            ),
+            "checks": {name: True for name in v1_outcome.REQUIRED_CHECKS},
+        }
+
+    def test_v1_outcome_contract_accepts_both_scientific_terminal_results(self):
+        for passed in (False, True):
+            with self.subTest(passed=passed):
+                audit_payload = self.terminal_audit(passed)
+                evidence = {
+                    "evidence_version": v1_outcome.WORKER_VERSION,
+                    "passed": passed,
+                }
+                v1_outcome.validate_worker_evidence(audit_payload, evidence)
+
+    def test_v1_outcome_contract_rejects_integrity_and_claim_mismatch(self):
+        audit_payload = self.terminal_audit(True)
+        audit_payload["classification"] = "execution_integrity_failure"
+        with self.assertRaises(ValueError):
+            v1_outcome.validate_audit(audit_payload)
+        audit_payload = self.terminal_audit(True)
+        evidence = {
+            "evidence_version": v1_outcome.WORKER_VERSION,
+            "passed": False,
+        }
+        with self.assertRaises(ValueError):
+            v1_outcome.validate_worker_evidence(audit_payload, evidence)
+
     def test_task_id_tamper_fails_in_runner_and_auditor(self):
         task = budget.build_tasks(cases())[0]
         result = valid_result(task)

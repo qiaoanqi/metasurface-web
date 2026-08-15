@@ -67,7 +67,35 @@ class Paper2AutoTransitionTests(unittest.TestCase):
             {
                 "evidence_version": "paper2-reference-resolution-audit-v1",
                 "passed": False,
-                "classification": "reference_spatial_budget_insufficient",
+                "classification": "reference_spatial_budget_insufficient_order_and_grid",
+                "checks": checks,
+            },
+        )
+        with patch.object(
+            transition, "run_command", side_effect=lambda script: {"script": script}
+        ) as run:
+            result = transition.advance_once()
+        self.assertEqual(result["transition"], "reference_budget_v2")
+        self.assertEqual(run.call_count, 2)
+
+    def test_converged_v1_reference_still_advances_historical_failed_gate(self):
+        self.dispatch()
+        checks = {
+            name: True
+            for name in (
+                "frozen_plan_sha256_and_content",
+                "checkpoint_meta_and_runtime_hashes",
+                "reference_checkpoint_exact_80",
+                "worker_claim_matches_independent_recomputation",
+                "physics_controls_passed",
+            )
+        }
+        atomic_json(
+            transition.V1_AUDIT,
+            {
+                "evidence_version": "paper2-reference-resolution-audit-v1",
+                "passed": True,
+                "classification": "historical_production_budget_rejected",
                 "checks": checks,
             },
         )
