@@ -93,6 +93,10 @@ _bench_speed.py
 *.fls
 *.fdb_latexmk
 
+# Local unattended controller runtime state
+.state/*.lock
+.state/paper2_watchdog_status.json
+
 # Tex stage backups (named .bak-<stage>)
 *.bak-*
 
