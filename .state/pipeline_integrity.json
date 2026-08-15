@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "5D0EBA8ACCE084D786511A4B30D8549584AED6254DA26978FEB0192FD094886C",
-  "supervisor_sha256": "78611D11D3C30D48C466A5A54A1307D7103E7C6700C6E2CFEB3F7D6FFB51B4B9",
-  "protected_assets_revision": 31,
-  "note": "multifidelity preregistration contract installed; full pool is manual fallback"
+  "policy_sha256": "38F6EFE60971FE2C045D88D15D7BA95E0BB0B2906E331B2C40D8E9C20656488A",
+  "supervisor_sha256": "C15F4A0AF89272913136A7500B7462D31B5232FE2F5E99CBA7608C26D60C487E",
+  "protected_assets_revision": 32,
+  "note": "safe pause bound to active request; explicit authorization required to resume"
 }

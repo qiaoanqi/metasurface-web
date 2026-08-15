@@ -460,11 +460,11 @@
       },
       {
         "path": "pipeline_supervisor.py",
-        "sha256": "78611D11D3C30D48C466A5A54A1307D7103E7C6700C6E2CFEB3F7D6FFB51B4B9"
+        "sha256": "C15F4A0AF89272913136A7500B7462D31B5232FE2F5E99CBA7608C26D60C487E"
       },
       {
         "path": "tests/test_pipeline_supervisor.py",
-        "sha256": "AE0569497873DD82C3A384D1E4A487F4138AE0A78AACC74F1BA5A5405679D4E1"
+        "sha256": "52417953C95764A2339EBCA66D1F721BC3A57079F3C6994231254E2C5772B6A0"
       }
     ]
   },
@@ -499,6 +499,14 @@
       ],
       "must_use_new_versioned_output": true,
       "must_not_overwrite_low_fidelity_pool": true
+    }
+  },
+  "operations": {
+    "pause_after_request": {
+      "enabled": true,
+      "request_id": "4218267d445f18aa0aef",
+      "reason": "user_requested_safe_pause",
+      "resume_requires": "explicit_user_authorization"
     }
   }
 }

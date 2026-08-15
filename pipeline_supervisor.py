@@ -446,9 +446,35 @@ def production_reference_audit_approved(audit: Any) -> bool:
     )
 
 
-def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
+def pause_after_request(policy: dict[str, Any], dispatch: Any) -> dict[str, Any] | None:
+    """Return the exact user-authorized safe pause bound to one request."""
+    if not isinstance(dispatch, dict):
+        return None
+    pause = policy.get("operations", {}).get("pause_after_request")
+    if (
+        not isinstance(pause, dict)
+        or pause.get("enabled") is not True
+        or pause.get("request_id") != dispatch.get("request_id")
+    ):
+        return None
+    return pause
+
+
+def run_auto_transition(
+    controller: dict[str, Any], policy: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Run a registered, deterministic post-failure transition helper."""
     dispatch = controller.get("dispatch")
+    active_pause = pause_after_request(policy or load_policy(), dispatch)
+    if active_pause is not None and isinstance(dispatch, dict) and dispatch.get("status") == "failed":
+        return {
+            "status": "paused",
+            "reason": active_pause.get("reason", "user_requested_safe_pause"),
+            "based_on_request_id": dispatch.get("request_id"),
+            "resume_requires": active_pause.get(
+                "resume_requires", "explicit_user_authorization"
+            ),
+        }
     ack = load_json(EXECUTOR_ACK, {}) or {}
     terminal_integrity = bool(
         isinstance(dispatch, dict)
@@ -3614,7 +3640,7 @@ def watch(interval: int) -> None:
                 if fingerprint != last_fingerprint:
                     finalization = run_executor_finalization(policy)
                     controller = evaluate_once(policy)
-                    transition = run_auto_transition(controller)
+                    transition = run_auto_transition(controller, policy)
                     payload = {
                         "controller": controller,
                         "executor_finalization": finalization,

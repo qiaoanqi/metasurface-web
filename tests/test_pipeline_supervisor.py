@@ -1091,6 +1091,43 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("audit_replacement_pool.py", run.call_args_list[0].args[0][1])
         self.assertIn("activate_replacement_pool.py", run.call_args_list[1].args[0][1])
 
+    def test_user_pause_blocks_post_terminal_transition_for_exact_request(self):
+        dispatch = {
+            "request_id": "paused-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "terminal_failure": True,
+            "failure_class": "scientific",
+        }
+        policy = {
+            "operations": {
+                "pause_after_request": {
+                    "enabled": True,
+                    "request_id": "paused-request",
+                    "reason": "user_requested_safe_pause",
+                    "resume_requires": "explicit_user_authorization",
+                }
+            }
+        }
+        with patch.object(supervisor.subprocess, "run") as run:
+            result = supervisor.run_auto_transition({"dispatch": dispatch}, policy)
+        self.assertEqual(result["status"], "paused")
+        self.assertEqual(result["based_on_request_id"], "paused-request")
+        self.assertEqual(result["resume_requires"], "explicit_user_authorization")
+        run.assert_not_called()
+
+        policy["operations"]["pause_after_request"]["request_id"] = "other-request"
+        completed = supervisor.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=0,
+            stdout='{"status":"advanced","transition":"reference_budget_v2"}\n',
+            stderr="",
+        )
+        with patch.object(supervisor.subprocess, "run", return_value=completed) as run:
+            result = supervisor.run_auto_transition({"dispatch": dispatch}, policy)
+        self.assertEqual(result["status"], "advanced")
+        run.assert_called_once()
+
     def test_auto_transition_arms_only_matching_terminal_integrity_failure(self):
         dispatch = {
             "request_id": "integrity-request",
