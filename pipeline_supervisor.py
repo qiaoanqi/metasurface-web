@@ -1027,6 +1027,16 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         dispatch,
         policy,
     )
+    if isinstance(dispatch, dict) and dispatch.get("status") in {"pending", "in_progress", "failed"}:
+        active_stage = dispatch.get("action")
+    elif effective_status == "completed":
+        active_stage = "pool_generation_complete"
+    else:
+        active_stage = "pool_generation"
+    audit["active_stage"] = active_stage
+    audit["dispatch"] = dispatch
+    audit["recovery_plan"] = recovery_plan
+    atomic_json(AUDIT_RESULT, audit)
     next_plan = {
         "schema_version": 2,
         "audit_passed": stage_passed,
@@ -1046,7 +1056,8 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         "producer_status": producer_status,
         "effective_status": effective_status,
         "status_reconciled": reconciled,
-        "current_stage": "pool_generation",
+        "current_stage": active_stage,
+        "active_stage": active_stage,
         "next_action": action,
         "dispatch": dispatch,
         "recovery_plan": recovery_plan,
