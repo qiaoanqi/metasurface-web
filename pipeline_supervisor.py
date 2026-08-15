@@ -89,6 +89,11 @@ def file_digest(path: Path, algorithm: str = "sha256") -> str:
     return digest.hexdigest().upper()
 
 
+def json_payload_digest(payload: Any) -> str:
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest().upper()
+
+
 def pid_alive(pid: Any) -> bool:
     try:
         pid = int(pid)
@@ -764,25 +769,6 @@ def resolve_active_pool(policy: dict[str, Any]) -> tuple[dict[str, Any], dict[st
         override = manifest.get("pool_spec")
         if not isinstance(override, dict):
             raise ValueError("active pool manifest lacks pool_spec")
-        spec = copy.deepcopy(base)
-        spec.update(override)
-        pool_path = workspace_file(spec.get("path"))
-        if pool_path is None or not pool_path.is_file():
-            raise ValueError("activated pool is missing or outside workspace")
-        actual_pool_sha = file_digest(pool_path)
-        expected_pool_sha = str(manifest.get("pool_sha256", "")).upper()
-        if actual_pool_sha != expected_pool_sha:
-            raise ValueError("activated pool SHA256 mismatch")
-        previous = manifest.get("previous_pool", {})
-        base_path = workspace_file(base.get("path"))
-        if base_path is None or not base_path.is_file():
-            raise ValueError("policy source pool is unavailable")
-        if str(previous.get("path", "")).replace("\\", "/") != str(base["path"]).replace("\\", "/"):
-            raise ValueError("active pool previous path does not match policy pool")
-        if str(previous.get("sha256", "")).upper() != file_digest(base_path):
-            raise ValueError("active pool previous SHA256 does not match policy pool")
-        if str(previous.get("md5", "")).upper() != file_digest(base_path, "md5"):
-            raise ValueError("active pool previous MD5 does not match policy pool")
         activation = manifest.get("activation_evidence", {})
         evidence_path = workspace_file(activation.get("path"))
         if evidence_path is None or not evidence_path.is_file():
@@ -795,12 +781,142 @@ def resolve_active_pool(policy: dict[str, Any]) -> tuple[dict[str, Any], dict[st
             item for item in policy["workflow"]["actions"]
             if item["gate"] == "replacement_pool_ready"
         )
-        if evidence.get("passed") is not True:
-            raise ValueError("activation evidence does not declare passed=true")
+        if evidence.get("schema_version") != 1 or evidence.get("passed") is not True:
+            raise ValueError("activation evidence does not declare schema v1 passed=true")
         if evidence.get("evidence_version") != replacement_spec.get("evidence_version"):
             raise ValueError("activation evidence version mismatch")
+        if evidence.get("pool_spec") != override:
+            raise ValueError("active pool_spec differs from activation evidence")
+
+        approved = evidence.get("approved_protocol")
+        if not isinstance(approved, dict) or approved != manifest.get("approved_protocol"):
+            raise ValueError("active pool approved protocol binding mismatch")
+        protocol_path = workspace_file(approved.get("path"))
+        if protocol_path is None or not protocol_path.is_file():
+            raise ValueError("approved replacement protocol is missing")
+        protocol_sha = str(approved.get("sha256", "")).upper()
+        if not protocol_sha or file_digest(protocol_path) != protocol_sha:
+            raise ValueError("approved replacement protocol SHA256 mismatch")
+        protocol = load_json(protocol_path, {}) or {}
+        if (
+            protocol.get("schema_version") != 1
+            or protocol.get("evidence_version") != "paper2-replacement-protocol-v1"
+            or protocol.get("approved") is not True
+            or protocol.get("automatic_launch_authorized") is not True
+            or protocol.get("pool_spec") != override
+        ):
+            raise ValueError("approved replacement protocol is invalid or differs from pool_spec")
+        for runtime_path, expected_sha in protocol.get("runtime_hashes", {}).items():
+            path = workspace_file(runtime_path)
+            if path is None or not path.is_file() or file_digest(path) != str(expected_sha).upper():
+                raise ValueError(f"approved protocol runtime hash mismatch: {runtime_path}")
+
+        source = protocol.get("source_reference_gate")
+        if not isinstance(source, dict):
+            raise ValueError("approved protocol lacks source reference gate")
+        source_path = workspace_file(source.get("path"))
+        source_sha = str(source.get("sha256", "")).upper()
+        if source_path is None or not source_path.is_file() or file_digest(source_path) != source_sha:
+            raise ValueError("source reference gate hash mismatch")
+        source_audit = load_json(source_path, {}) or {}
+        if (
+            source_audit.get("evidence_version") != "paper2-reference-holdout-audit-v1"
+            or source_audit.get("passed") is not True
+            or source_audit.get("production_reference_approved") is not True
+        ):
+            raise ValueError("source reference gate is not production-approved")
+        registered_reference = (load_json(GATE_STATE, {}) or {}).get("gates", {}).get(
+            "reference_resolution", {}
+        )
+        if registered_reference.get("passed") is not True or {
+            "path": str(source.get("path", "")),
+            "sha256": source_sha,
+        } not in registered_reference.get("evidence", []):
+            raise ValueError("source reference gate is not registered")
+
+        immutable_equal = (
+            "expected_records",
+            "polarizations",
+            "material",
+            "substrate",
+            "lossless",
+            "range_tolerance",
+            "pointwise_conservation_tolerance",
+            "stored_value_tolerance",
+            "quality_tolerance",
+        )
+        for field in immutable_equal:
+            if override.get(field) != base.get(field):
+                raise ValueError(f"active pool_spec changes frozen field {field}")
+        if int(override.get("expected_records", 0)) <= 0:
+            raise ValueError("active pool expected_records must be positive")
+        expected_meta = override.get("expected_meta")
+        base_meta = base.get("expected_meta", {})
+        if not isinstance(expected_meta, dict):
+            raise ValueError("active pool expected_meta is missing")
+        for field in (
+            "seed", "material", "substrate", "background", "pols", "n_samples",
+            "sampler_version", "quality_rule",
+        ):
+            if expected_meta.get(field) != base_meta.get(field):
+                raise ValueError(f"active pool expected_meta changes frozen field {field}")
+        required = set(base.get("required_record_fields", []))
+        if not required.issubset(set(override.get("required_record_fields", []))):
+            raise ValueError("active pool removes required record fields")
+
+        spec = copy.deepcopy(override)
+        pool_path = workspace_file(spec.get("path"))
+        if pool_path is None or not pool_path.is_file():
+            raise ValueError("activated pool is missing or outside workspace")
+        replacement_root = (ROOT / "data" / "replacement").resolve()
+        try:
+            pool_path.relative_to(replacement_root)
+        except ValueError as exc:
+            raise ValueError("active pool must be a new file below data/replacement") from exc
+        actual_pool_sha = file_digest(pool_path)
+        expected_pool_sha = str(manifest.get("pool_sha256", "")).upper()
+        if actual_pool_sha != expected_pool_sha:
+            raise ValueError("activated pool SHA256 mismatch")
         if str(evidence.get("pool_sha256", "")).upper() != actual_pool_sha:
             raise ValueError("activation evidence is not bound to the replacement pool")
+        activation_id = hashlib.sha256(
+            f"{protocol_sha}|{actual_pool_sha}".encode("ascii")
+        ).hexdigest()[:24]
+        if evidence.get("activation_id") != activation_id or manifest.get("activation_id") != activation_id:
+            raise ValueError("active pool activation_id is not hash-bound")
+        previous = manifest.get("previous_pool", {})
+        base_path = workspace_file(base.get("path"))
+        if base_path is None or not base_path.is_file():
+            raise ValueError("policy source pool is unavailable")
+        if str(previous.get("path", "")).replace("\\", "/") != str(base["path"]).replace("\\", "/"):
+            raise ValueError("active pool previous path does not match policy pool")
+        if str(previous.get("sha256", "")).upper() != file_digest(base_path):
+            raise ValueError("active pool previous SHA256 does not match policy pool")
+        if str(previous.get("md5", "")).upper() != file_digest(base_path, "md5"):
+            raise ValueError("active pool previous MD5 does not match policy pool")
+        pool_manifest = manifest.get("pool_manifest")
+        if not isinstance(pool_manifest, dict):
+            raise ValueError("active pool lacks strict pool manifest binding")
+        pool_manifest_path = workspace_file(pool_manifest.get("path"))
+        pool_manifest_sha = str(pool_manifest.get("sha256", "")).upper()
+        if (
+            pool_manifest_path is None
+            or not pool_manifest_path.is_file()
+            or file_digest(pool_manifest_path) != pool_manifest_sha
+        ):
+            raise ValueError("strict replacement pool manifest hash mismatch")
+        strict_manifest = load_json(pool_manifest_path, {}) or {}
+        if (
+            strict_manifest.get("strict_validation_passed") is not True
+            or strict_manifest.get("immutable") is not True
+            or str(strict_manifest.get("pool_sha256", "")).upper() != actual_pool_sha
+            or int(strict_manifest.get("records", -1)) != int(spec["expected_records"])
+            or strict_manifest.get("approved_protocol") != approved
+            or strict_manifest.get("activation_id") != activation_id
+            or str(strict_manifest.get("pool_spec_sha256", "")).upper()
+            != json_payload_digest(spec)
+        ):
+            raise ValueError("strict replacement pool manifest content mismatch")
         return spec, {
             "passed": True,
             "source": "manifest",

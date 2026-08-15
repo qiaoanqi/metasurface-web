@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import pickle
 import tempfile
@@ -216,40 +217,192 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("lock", result["error"])
 
-    def test_hash_backed_active_pool_manifest_switches_pool(self):
-        replacement = self.root / "replacement.pkl"
+    def write_valid_active_pool_chain(self, pool_spec_updates=None):
+        replacement_dir = self.root / "data" / "replacement"
+        replacement_dir.mkdir(parents=True, exist_ok=True)
+        replacement = replacement_dir / "replacement_v1.pkl"
         replacement.write_bytes((self.root / "pool.pkl").read_bytes())
         replacement_sha = supervisor.file_digest(replacement)
-        evidence = self.root / "replacement_evidence.json"
-        evidence.write_text(json.dumps({
-            "passed": True,
-            "evidence_version": "paper2-replacement-pool-v1",
-            "pool_sha256": replacement_sha,
-        }) + "\n", encoding="ascii")
-        manifest = {
+
+        pool_spec = copy.deepcopy(self.policy["pool"])
+        pool_spec.update(
+            {
+                "path": "data/replacement/replacement_v1.pkl",
+                "resume_command": "resume approved replacement",
+            }
+        )
+        if pool_spec_updates:
+            pool_spec.update(pool_spec_updates)
+
+        reference = supervisor.STATE / "reference_holdout_audit.json"
+        supervisor.atomic_json(
+            reference,
+            {
+                "schema_version": 1,
+                "evidence_version": "paper2-reference-holdout-audit-v1",
+                "passed": True,
+                "production_reference_approved": True,
+                "pool_sha256": supervisor.file_digest(self.root / "pool.pkl"),
+            },
+        )
+        reference_binding = {
+            "path": ".state/reference_holdout_audit.json",
+            "sha256": supervisor.file_digest(reference),
+        }
+        supervisor.atomic_json(
+            supervisor.GATE_STATE,
+            {
+                "schema_version": 1,
+                "gates": {
+                    "reference_resolution": {
+                        "passed": True,
+                        "checked_at": supervisor.now_iso(),
+                        "evidence": [reference_binding],
+                    }
+                },
+            },
+        )
+
+        runtime = self.root / "replacement_runtime.py"
+        runtime.write_text("# frozen replacement runtime\n", encoding="ascii")
+        protocol = supervisor.STATE / "replacement_protocol.json"
+        supervisor.atomic_json(
+            protocol,
+            {
+                "schema_version": 1,
+                "evidence_version": "paper2-replacement-protocol-v1",
+                "approved": True,
+                "automatic_launch_authorized": True,
+                "source_reference_gate": reference_binding,
+                "runtime_hashes": {
+                    "replacement_runtime.py": supervisor.file_digest(runtime),
+                },
+                "pool_spec": pool_spec,
+            },
+        )
+        approved_protocol = {
+            "path": ".state/replacement_protocol.json",
+            "sha256": supervisor.file_digest(protocol),
+        }
+        activation_id = hashlib.sha256(
+            f"{approved_protocol['sha256']}|{replacement_sha}".encode("ascii")
+        ).hexdigest()[:24]
+
+        evidence = supervisor.STATE / "replacement_activation_evidence.json"
+        supervisor.atomic_json(
+            evidence,
+            {
+                "schema_version": 1,
+                "evidence_version": "paper2-replacement-pool-v1",
+                "passed": True,
+                "pool_sha256": replacement_sha,
+                "pool_spec": pool_spec,
+                "approved_protocol": approved_protocol,
+                "activation_id": activation_id,
+            },
+        )
+        evidence_binding = {
+            "path": ".state/replacement_activation_evidence.json",
+            "sha256": supervisor.file_digest(evidence),
+        }
+        previous_pool = {
+            "path": "pool.pkl",
+            "sha256": supervisor.file_digest(self.root / "pool.pkl"),
+            "md5": supervisor.file_digest(self.root / "pool.pkl", "md5"),
+        }
+
+        strict_manifest = supervisor.STATE / "replacement_pool_manifest.json"
+        supervisor.atomic_json(
+            strict_manifest,
+            {
+                "schema_version": 1,
+                "immutable": True,
+                "strict_validation_passed": True,
+                "pool_sha256": replacement_sha,
+                "records": pool_spec["expected_records"],
+                "approved_protocol": approved_protocol,
+                "activation_id": activation_id,
+                "pool_spec_sha256": supervisor.json_payload_digest(pool_spec),
+            },
+        )
+        active_manifest = {
             "schema_version": 1,
             "active": True,
-            "pool_spec": {"path": "replacement.pkl", "resume_command": "resume replacement"},
+            "pool_spec": pool_spec,
             "pool_sha256": replacement_sha,
-            "previous_pool": {
-                "path": "pool.pkl",
-                "sha256": supervisor.file_digest(self.root / "pool.pkl"),
-                "md5": supervisor.file_digest(self.root / "pool.pkl", "md5"),
-            },
-            "activation_evidence": {
-                "path": "replacement_evidence.json",
-                "sha256": supervisor.file_digest(evidence),
+            "activation_id": activation_id,
+            "approved_protocol": approved_protocol,
+            "previous_pool": previous_pool,
+            "activation_evidence": evidence_binding,
+            "pool_manifest": {
+                "path": ".state/replacement_pool_manifest.json",
+                "sha256": supervisor.file_digest(strict_manifest),
             },
         }
-        supervisor.atomic_json(self.root / ".state" / "active_pool.json", manifest)
+        supervisor.atomic_json(supervisor.STATE / "active_pool.json", active_manifest)
+        return {
+            "replacement": replacement,
+            "reference": reference,
+            "protocol": protocol,
+            "evidence": evidence,
+            "strict_manifest": strict_manifest,
+            "active_manifest": active_manifest,
+            "pool_spec": pool_spec,
+        }
+
+    def test_hash_backed_active_pool_manifest_switches_pool(self):
+        chain = self.write_valid_active_pool_chain()
         spec, state = supervisor.resolve_active_pool(self.policy)
         self.assertTrue(state["passed"])
         self.assertTrue(state["active"])
-        self.assertEqual(spec["path"], "replacement.pkl")
-        replacement.write_bytes(b"tampered")
+        self.assertEqual(spec, chain["pool_spec"])
+        chain["replacement"].write_bytes(b"tampered")
         _, state = supervisor.resolve_active_pool(self.policy)
         self.assertFalse(state["passed"])
         self.assertIn("SHA256", state["error"])
+
+    def test_active_pool_rejects_zero_expected_records(self):
+        self.write_valid_active_pool_chain({"expected_records": 0})
+        _, state = supervisor.resolve_active_pool(self.policy)
+        self.assertFalse(state["passed"])
+        self.assertIn("expected_records", state["error"])
+
+    def test_active_pool_rejects_any_tampered_activation_layer(self):
+        cases = {
+            "pool_spec": lambda chain: chain["active_manifest"]["pool_spec"].update(
+                {"quality_tolerance": 0.5}
+            ),
+            "evidence": lambda chain: chain["evidence"].write_text(
+                '{"tampered": true}\n', encoding="ascii"
+            ),
+            "protocol": lambda chain: chain["protocol"].write_text(
+                '{"tampered": true}\n', encoding="ascii"
+            ),
+            "reference": lambda chain: chain["reference"].write_text(
+                '{"tampered": true}\n', encoding="ascii"
+            ),
+            "strict_manifest": lambda chain: chain["strict_manifest"].write_text(
+                '{"tampered": true}\n', encoding="ascii"
+            ),
+        }
+        expected_errors = {
+            "pool_spec": "pool_spec differs",
+            "evidence": "activation evidence SHA256 mismatch",
+            "protocol": "protocol SHA256 mismatch",
+            "reference": "reference gate hash mismatch",
+            "strict_manifest": "pool manifest hash mismatch",
+        }
+        for name, tamper in cases.items():
+            with self.subTest(layer=name):
+                chain = self.write_valid_active_pool_chain()
+                tamper(chain)
+                if name == "pool_spec":
+                    supervisor.atomic_json(
+                        supervisor.STATE / "active_pool.json", chain["active_manifest"]
+                    )
+                _, state = supervisor.resolve_active_pool(self.policy)
+                self.assertFalse(state["passed"])
+                self.assertIn(expected_errors[name], state["error"])
 
     def test_integrity_mismatch_preserves_active_dispatch(self):
         self.policy["integrity"]["enforce"] = True
