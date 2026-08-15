@@ -557,6 +557,59 @@ def select_workflow_action(policy: dict[str, Any], gates: dict[str, bool]) -> st
     return None
 
 
+def workspace_file(value: Any) -> Path | None:
+    """Resolve a relative workspace path without allowing path escape."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        path = (ROOT / Path(value)).resolve()
+        path.relative_to(ROOT.resolve())
+    except (OSError, ValueError):
+        return None
+    return path
+
+
+def validate_completed_ack(
+    ack: dict[str, Any], pool_sha256: str | None
+) -> tuple[bool, str | None]:
+    """Require a durable, hash-backed completion handoff before advancing."""
+    checks = ack.get("checks")
+    if not isinstance(checks, dict):
+        return False, "completed ack missing checks object"
+    declared_pool = str(checks.get("pool_sha256", "")).upper()
+    if not declared_pool or declared_pool != str(pool_sha256 or "").upper():
+        return False, "completed ack pool SHA256 does not match audited pool"
+
+    outputs = ack.get("outputs")
+    if not isinstance(outputs, list) or not outputs:
+        return False, "completed ack outputs must be a non-empty object list"
+    for item in outputs:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            return False, "completed ack outputs must contain path/material objects"
+        if not isinstance(item.get("material"), str) or not item["material"].strip():
+            return False, "completed ack output material is missing"
+        path = workspace_file(item["path"])
+        if path is None or not path.is_file():
+            return False, f"completed ack output is missing: {item.get('path')}"
+
+    paper_hashes = ack.get("paper_hashes")
+    if not isinstance(paper_hashes, list) or not paper_hashes:
+        return False, "completed ack paper_hashes must be a non-empty object list"
+    for item in paper_hashes:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            return False, "completed ack paper_hashes must contain path/md5 objects"
+        expected = str(item.get("md5", "")).upper()
+        if len(expected) != 32 or any(char not in "0123456789ABCDEF" for char in expected):
+            return False, f"completed ack has invalid MD5: {item.get('path')}"
+        path = workspace_file(item["path"])
+        if path is None or not path.is_file():
+            return False, f"completed ack paper hash file is missing: {item.get('path')}"
+        actual = file_digest(path, "md5")
+        if actual != expected:
+            return False, f"completed ack paper hash mismatch: {item.get('path')}"
+    return True, None
+
+
 def build_instruction(action: str, policy: dict[str, Any]) -> str:
     protected = ", ".join(item["path"] for item in policy["protected_files"])
     if action == "resume_pool_generation":
@@ -738,8 +791,20 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             else:
                 retry_or_fail(request, max_attempts, "executor lease expired")
         elif ack_status in {"completed", "succeeded"}:
-            request["status"] = "acknowledged"
-            request["acknowledged_at"] = ack.get("observed_at", now_iso())
+            if action == "stop_and_report":
+                request["status"] = "acknowledged"
+                request["acknowledged_at"] = ack.get("observed_at", now_iso())
+            else:
+                valid_ack, ack_error = validate_completed_ack(ack, pool_sha)
+                if valid_ack:
+                    request["status"] = "acknowledged"
+                    request["acknowledged_at"] = ack.get("observed_at", now_iso())
+                else:
+                    retry_or_fail(
+                        request,
+                        max_attempts,
+                        ack_error or "invalid completed ack",
+                    )
         elif ack_status == "failed":
             failure_class = str(ack.get("failure_class", "transient")).lower()
             terminal = failure_class in {"scientific", "safety", "policy", "permanent"}
