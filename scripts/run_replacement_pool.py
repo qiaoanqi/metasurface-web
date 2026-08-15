@@ -585,7 +585,8 @@ def publish_pool(
 
 
 def build_evidence(
-    context: dict[str, Any], audit: dict[str, Any], checkpoint_path: Path, failure_events: int
+    context: dict[str, Any], audit: dict[str, Any], checkpoint_path: Path,
+    failure_events: int, request: dict[str, Any]
 ) -> dict[str, Any]:
     output = context["output"]
     source = context["protocol"]["source_reference_gate"]
@@ -598,6 +599,7 @@ def build_evidence(
     return {
         "schema_version": 1,
         "evidence_version": EVIDENCE_VERSION,
+        "request": request,
         "passed": True,
         "activation_id": hashlib.sha256(
             f"{context['protocol_sha256']}|{pool_sha256}".encode("ascii")
@@ -652,6 +654,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "tasks": len(tasks),
             "output": relative_path(context["output"]),
         }
+    request = supervisor.current_request_identity("replacement_pool_generation")
     if context["output"].exists() or evidence_path.exists():
         raise ValueError("final output or evidence already exists; use a new versioned protocol")
     with RunLock(lock_path, context["protocol_sha256"]):
@@ -681,7 +684,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         finally:
             checkpoint.close()
         audit = publish_pool(context, results, checkpoint_path)
-        evidence = build_evidence(context, audit, checkpoint_path, failure_events)
+        evidence = build_evidence(context, audit, checkpoint_path, failure_events, request)
         atomic_json(evidence_path, evidence)
         return evidence
 

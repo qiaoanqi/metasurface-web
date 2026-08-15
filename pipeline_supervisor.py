@@ -45,6 +45,69 @@ REFERENCE_HOLDOUT_FINAL_REFERENCE = {
     "Nxy": 768,
     "wavelength_step_nm": 0.5,
 }
+AUDITOR_RUNTIME_PATHS = {
+    "replacement_pool_generation": {
+        "pipeline_supervisor.py",
+        "scripts/audit_replacement_pool.py",
+        "scripts/run_replacement_pool.py",
+        "rcwa_batch.py",
+        "paper2_colorimetry_fine.py",
+        "color_utils.py",
+    },
+    "joint_numerical_convergence": {
+        "pipeline_supervisor.py",
+        "scripts/audit_joint_convergence_v2.py",
+        "scripts/run_joint_convergence_v2.py",
+        "scripts/run_replacement_pool.py",
+        "scripts/run_reference_resolution_escalation.py",
+        "scripts/run_reference_resolution_holdout.py",
+        "scripts/run_reference_resolution_budget_v2.py",
+        "scripts/freeze_reference_holdout_plan.py",
+        "scripts/freeze_reference_budget_v2.py",
+        "scripts/reference_protocol_selection.py",
+        "scripts/reference_v1_outcome.py",
+        "scripts/run_joint_convergence.py",
+        "rcwa_batch.py",
+        "paper2_colorimetry_fine.py",
+        "color_utils.py",
+    },
+    "cross_solver_spectrum_validation": {
+        "pipeline_supervisor.py",
+        "scripts/audit_cross_solver_v2.py",
+        "scripts/run_cross_solver_validation_v2.py",
+        "scripts/run_cross_solver_validation.py",
+        "scripts/run_joint_convergence_v2.py",
+        "scripts/run_joint_convergence.py",
+        "scripts/run_replacement_pool.py",
+        "scripts/run_reference_resolution_escalation.py",
+        "scripts/run_reference_resolution_holdout.py",
+        "scripts/run_reference_resolution_budget_v2.py",
+        "scripts/freeze_reference_holdout_plan.py",
+        "scripts/freeze_reference_budget_v2.py",
+        "scripts/reference_protocol_selection.py",
+        "scripts/reference_v1_outcome.py",
+        "rcwa_batch.py",
+        "paper2_colorimetry.py",
+        "paper2_colorimetry_fine.py",
+        "color_utils.py",
+    },
+    "reference_resolution": {
+        "pipeline_supervisor.py",
+        "scripts/audit_reference_resolution_holdout.py",
+        "scripts/run_reference_resolution_holdout.py",
+        "scripts/run_reference_resolution_budget_v2.py",
+        "scripts/run_reference_resolution_escalation.py",
+        "scripts/freeze_reference_holdout_plan.py",
+        "scripts/freeze_reference_budget_v2.py",
+        "scripts/reference_protocol_selection.py",
+        "scripts/reference_v1_outcome.py",
+        "scripts/run_replacement_pool.py",
+        "scripts/run_joint_convergence.py",
+        "rcwa_batch.py",
+        "paper2_colorimetry_fine.py",
+        "color_utils.py",
+    },
+}
 
 
 def now_iso() -> str:
@@ -124,38 +187,56 @@ def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
     )
     if not terminal_scientific:
         return None
-    scripts = {
-        "joint_numerical_convergence": "paper2_auto_transition.py",
-        "replacement_pool_generation": "activate_replacement_pool.py",
-    }
-    script_name = scripts.get(dispatch.get("action"))
-    if script_name is None:
+    action = dispatch.get("action")
+    if action not in {"joint_numerical_convergence", "replacement_pool_generation"}:
         return None
-    script = ROOT / "scripts" / script_name
-    completed = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=False,
-    )
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
-        raise RuntimeError(f"paper2 auto-transition failed: {detail}")
+
+    steps: list[list[str]]
+    if action == "replacement_pool_generation":
+        audit_path = STATE / "replacement_pool_v1_audit.json"
+        steps = [
+            [sys.executable, str(ROOT / "scripts" / "audit_replacement_pool.py")],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "activate_replacement_pool.py"),
+                "--audit",
+                str(audit_path.relative_to(ROOT)),
+            ],
+        ]
+    else:
+        steps = [[sys.executable, str(ROOT / "scripts" / "paper2_auto_transition.py")]]
+
+    completed = None
+    for command in steps:
+        completed = subprocess.run(
+            command,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"paper2 auto-transition failed: {detail}")
+    assert completed is not None
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
     if not lines:
         raise RuntimeError("paper2 auto-transition returned no status")
     result = json.loads(lines[-1])
     if not isinstance(result, dict):
         raise RuntimeError("paper2 auto-transition returned invalid status")
-    if script_name == "activate_replacement_pool.py":
+    if action == "replacement_pool_generation":
         if result.get("active") is not True or not result.get("pool_sha256"):
             raise RuntimeError("replacement activation did not return a hash-bound active pool")
         return {
             "status": "advanced",
             "transition": "replacement_pool_activation",
             "based_on_request_id": dispatch.get("request_id"),
+            "independent_audit": {
+                "path": str(audit_path.relative_to(ROOT)).replace("\\", "/"),
+                "sha256": file_digest(audit_path),
+            },
             **result,
         }
     return result
@@ -647,9 +728,157 @@ def valid_request_identity(request: Any) -> bool:
     )
 
 
+def current_request_identity(action: str) -> dict[str, Any]:
+    dispatch = load_json(DISPATCH_REQUEST, {}) or {}
+    if (
+        dispatch.get("action") != action
+        or dispatch.get("status") not in {"pending", "in_progress", "failed"}
+        or not valid_request_identity({
+            "request_id": dispatch.get("request_id"),
+            "attempt": dispatch.get("attempt"),
+        })
+    ):
+        raise ValueError(f"active dispatch identity is invalid for {action}")
+    return {
+        "request_id": dispatch["request_id"],
+        "attempt": int(dispatch["attempt"]),
+    }
+
+
+def reusable_evidence_request(request: Any, action: str) -> dict[str, Any]:
+    if not valid_request_identity(request):
+        raise ValueError(f"stored evidence request identity is invalid for {action}")
+    active = current_request_identity(action)
+    if (
+        request["request_id"] != active["request_id"]
+        or int(request["attempt"]) > int(active["attempt"])
+    ):
+        raise ValueError(f"stored evidence request is not reusable for {action}")
+    return {"request_id": request["request_id"], "attempt": int(request["attempt"])}
+
+
+def request_identity_authorized(request: Any, action: str) -> bool:
+    if not valid_request_identity(request):
+        return False
+    dispatch = load_json(DISPATCH_REQUEST, {}) or {}
+    if (
+        dispatch.get("action") == action
+        and dispatch.get("request_id") == request["request_id"]
+        and int(dispatch.get("attempt", 0)) >= int(request["attempt"])
+    ):
+        return True
+    history = STATE / "dispatch_history" / (
+        f"{request['request_id']}-attempt{int(request['attempt'])}.json"
+    )
+    archived = load_json(history, {}) or {}
+    archived_request = archived.get("request", {})
+    return bool(
+        archived_request.get("action") == action
+        and archived_request.get("request_id") == request["request_id"]
+        and int(archived_request.get("attempt", 0)) == int(request["attempt"])
+    )
+
+
+def failed_ack_authorizes_worker(
+    worker_binding: Any, request: Any, action: str
+) -> bool:
+    """Bind diagnostic activation to the exact evidence named by its terminal ack."""
+    if not valid_request_identity(request):
+        return False
+
+    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    dispatch = load_json(DISPATCH_REQUEST, {}) or {}
+    ack = load_json(EXECUTOR_ACK, {}) or {}
+    if (
+        dispatch.get("action") == action
+        and dispatch.get("request_id") == request["request_id"]
+        and int(dispatch.get("attempt", 0)) == int(request["attempt"])
+    ):
+        candidates.append((dispatch, ack))
+    history_path = STATE / "dispatch_history" / (
+        f"{request['request_id']}-attempt{int(request['attempt'])}.json"
+    )
+    archived = load_json(history_path, {}) or {}
+    if isinstance(archived.get("request"), dict):
+        candidates.append((archived["request"], archived.get("final_ack") or {}))
+
+    for bound_request, bound_ack in candidates:
+        if (
+            bound_request.get("action") == action
+            and bound_request.get("status") == "failed"
+            and bound_request.get("terminal_failure") is True
+            and str(bound_request.get("failure_class", "")).lower() == "scientific"
+            and bound_ack.get("request_id") == request["request_id"]
+            and int(bound_ack.get("attempt", 0)) == int(request["attempt"])
+            and bound_ack.get("status") == "failed"
+            and str(bound_ack.get("failure_class", "")).lower() == "scientific"
+            and worker_binding in bound_ack.get("evidence", [])
+        ):
+            return True
+    return False
+
+
+def audited_worker_payload(
+    payload: dict[str, Any],
+    *,
+    action: str,
+    audit_version: str,
+    worker_version: str,
+    audit_fields: set[str],
+    auditor_runtime_paths: set[str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate an auditor envelope without executing worker-controlled artifacts."""
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("evidence_version") != audit_version
+        or payload.get("independent_reproduction") is not True
+        or not request_identity_authorized(payload.get("request"), action)
+    ):
+        return None, f"{action} independent audit identity is invalid"
+    worker, error = bound_json(payload.get("worker_evidence"), f"{action} worker evidence")
+    if error:
+        return None, error
+    worker_request = worker.get("request")
+    audit_request = payload.get("request")
+    if (
+        worker.get("schema_version") != 1
+        or worker.get("evidence_version") != worker_version
+        or not valid_request_identity(worker_request)
+        or worker_request["request_id"] != audit_request["request_id"]
+        or int(worker_request["attempt"]) > int(audit_request["attempt"])
+    ):
+        return None, f"{action} worker evidence identity is invalid"
+    valid, error = runtime_hashes_match(
+        payload.get("auditor_runtime_hashes"), auditor_runtime_paths
+    )
+    if not valid:
+        return None, error
+    expected = copy.deepcopy(worker)
+    expected["evidence_version"] = audit_version
+    expected["request"] = audit_request
+    expected["worker_evidence"] = payload.get("worker_evidence")
+    expected["independent_reproduction"] = True
+    expected["auditor_runtime_hashes"] = payload.get("auditor_runtime_hashes")
+    for name in audit_fields:
+        expected[name] = payload.get(name)
+    if expected != payload:
+        return None, f"{action} audit is not an exact extension of its worker evidence"
+    return worker, None
+
+
 def verify_protected_snapshot(snapshot: Any) -> tuple[bool, str | None]:
     if not isinstance(snapshot, list) or not snapshot:
         return False, "protected-file snapshot is missing"
+    policy = load_policy(POLICY)
+    required_paths = {
+        item["path"]
+        for item in (*policy.get("protected_files", []), *policy.get("immutable_assets", []))
+    }
+    snapshot_paths = {
+        item.get("path") for item in snapshot if isinstance(item, dict)
+    }
+    if snapshot_paths != required_paths:
+        return False, "protected-file snapshot differs from the complete policy set"
     seen = set()
     for item in snapshot:
         if not isinstance(item, dict) or item.get("passed") is not True:
@@ -686,7 +915,7 @@ REFERENCE_COMPARISON_NAMES = {
 
 
 def verify_reference_comparisons(
-    comparisons: Any, count: int, require_pass: bool
+    comparisons: Any, count: int, require_pass: bool, *, start_index: int
 ) -> tuple[bool, str | None]:
     if not isinstance(comparisons, dict) or set(comparisons) != REFERENCE_COMPARISON_NAMES:
         return False, "reference comparison set differs from the registered contract"
@@ -697,6 +926,37 @@ def verify_reference_comparisons(
         rows = comparison.get("rows")
         if values is None or np.any(values < 0) or not isinstance(rows, list) or len(rows) != count * 2:
             return False, f"reference comparison raw values are invalid: {name}"
+        row_values: dict[tuple[int, str], float] = {}
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {"geometry_index", "pol", "dE00"}:
+                return False, f"reference comparison row schema is invalid: {name}"
+            geometry_index = row.get("geometry_index")
+            pol = row.get("pol")
+            try:
+                value = float(row.get("dE00"))
+            except (TypeError, ValueError):
+                return False, f"reference comparison row value is invalid: {name}"
+            key = (geometry_index, pol)
+            if (
+                not isinstance(geometry_index, int)
+                or isinstance(geometry_index, bool)
+                or geometry_index not in range(start_index, start_index + count)
+                or pol not in {"p", "s"}
+                or key in row_values
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                return False, f"reference comparison row identity is invalid: {name}"
+            row_values[key] = value
+        row_joint = np.asarray(
+            [
+                max(row_values[(index, "p")], row_values[(index, "s")])
+                for index in range(start_index, start_index + count)
+            ],
+            dtype=float,
+        )
+        if not np.allclose(values, row_joint, rtol=0.0, atol=1e-12):
+            return False, f"reference comparison rows differ from joint values: {name}"
         mean = float(np.mean(values))
         maximum = float(np.max(values))
         if (
@@ -746,78 +1006,23 @@ def verify_active_protocol_bindings(
     return True, None
 
 
-def verify_cross_checkpoint(
-    binding: Any, payload: dict[str, Any]
-) -> tuple[bool, str | None]:
-    valid, error = verify_file_binding(binding, "cross-solver checkpoint")
-    if not valid:
-        return False, error
-    if not isinstance(binding.get("tasks"), int) or binding["tasks"] <= 0:
-        return False, "cross-solver checkpoint task count is invalid"
-    path = workspace_file(binding["path"])
-    try:
-        with path.open("rb") as handle:
-            checkpoint = pickle.load(handle)
-    except Exception as exc:
-        return False, f"cross-solver checkpoint is unreadable: {type(exc).__name__}: {exc}"
-    if not isinstance(checkpoint, dict):
-        return False, "cross-solver checkpoint must be an object"
-    meta = checkpoint.get("meta")
-    results = checkpoint.get("results")
-    if not isinstance(meta, dict) or not isinstance(results, dict):
-        return False, "cross-solver checkpoint lacks meta or results"
-    expected_tasks = int(meta.get("expected_tasks", -1))
-    registered_tasks = 12 * 2 + 4 * 2 * len(payload.get("protocol", {}).get("stress_configs", []))
-    if (
-        expected_tasks != registered_tasks
-        or expected_tasks != binding["tasks"]
-        or len(results) != expected_tasks
-    ):
-        return False, "cross-solver checkpoint task set is incomplete"
-    protocol = payload.get("protocol", {})
-    if (
-        meta.get("version") != "paper2-cross-solver-v2"
-        or str(meta.get("pool_sha256", "")).upper() != str(payload.get("pool_sha256", "")).upper()
-        or meta.get("production") != protocol.get("production")
-        or meta.get("stress_configs") != protocol.get("stress_configs")
-        or meta.get("selected_geometries") != payload.get("selected_geometries")
-        or meta.get("runtime_hashes") != payload.get("runtime_hashes")
-        or meta.get("thresholds") != payload.get("thresholds")
-        or str(meta.get("approved_protocol_sha256", "")).upper()
-        != str(payload.get("approved_protocol", {}).get("sha256", "")).upper()
-    ):
-        return False, "cross-solver checkpoint metadata differs from the evidence"
-    scientific_keys = set()
-    wavelength = np.arange(380.0, 785.0, 5.0)
-    for key, result in results.items():
-        if not isinstance(result, dict) or key != result.get("id") or result.get("status") != "ok":
-            return False, "cross-solver checkpoint result key or status is invalid"
-        identity = (result.get("geometry_index"), result.get("pol"), result.get("mode"))
-        if identity in scientific_keys or result.get("pol") not in {"p", "s"}:
-            return False, "cross-solver checkpoint contains a duplicate scientific task"
-        scientific_keys.add(identity)
-        try:
-            stored_wavelength = np.asarray(result.get("wavelength_nm"), dtype=float)
-        except (TypeError, ValueError):
-            return False, "cross-solver checkpoint wavelength grid is invalid"
-        if stored_wavelength.shape != wavelength.shape or not np.array_equal(stored_wavelength, wavelength):
-            return False, "cross-solver checkpoint wavelength grid differs"
-        for field in ("grcwa_R", "grcwa_T", "thirdparty_R", "thirdparty_T"):
-            values = finite_values(result.get(field), wavelength.size)
-            if values is None or np.any(values < -1e-8) or np.any(values > 1.0 + 1e-8):
-                return False, f"cross-solver checkpoint spectrum is invalid: {field}"
-    return True, None
-
-
 def verify_reference_resolution_gate(
     payload: dict[str, Any], _pool: dict[str, Any]
 ) -> tuple[bool, str | None]:
     if payload.get("schema_version") != 1 or not production_reference_audit_approved(payload):
         return False, "reference audit is not the registered v2 holdout pass"
-    if not valid_request_identity(payload.get("request")):
+    if not request_identity_authorized(payload.get("request"), "reference_resolution"):
         return False, "reference audit request identity is invalid"
     if payload.get("training_allowed") is not False:
         return False, "reference evidence must keep training disabled"
+    if payload.get("independent_reproduction") is not True:
+        return False, "reference audit is not an independent reproduction"
+    valid, error = runtime_hashes_match(
+        payload.get("auditor_runtime_hashes"),
+        AUDITOR_RUNTIME_PATHS["reference_resolution"],
+    )
+    if not valid:
+        return False, error
     if payload.get("primary_gate_population") != "24_new_holdout_geometries_only":
         return False, "reference gate population is not the frozen 24-case holdout"
     if payload.get("combined_32_population_scope") != "supplemental_reporting_only":
@@ -862,6 +1067,8 @@ def verify_reference_resolution_gate(
     }
     if not isinstance(sources, dict) or set(sources) != required_sources:
         return False, "reference source binding set differs from the registered contract"
+    if payload.get("worker_evidence") != sources.get("holdout_evidence"):
+        return False, "reference audit worker binding differs from its source ledger"
     valid, error = bindings_exist(list(sources.values()), "reference source")
     if not valid:
         return False, error
@@ -892,12 +1099,12 @@ def verify_reference_resolution_gate(
         if sources[name] != plan.get(name):
             return False, f"reference source differs from the frozen plan: {name}"
     valid, error = verify_reference_comparisons(
-        payload.get("independent_holdout_comparisons"), 24, True
+        payload.get("independent_holdout_comparisons"), 24, True, start_index=8
     )
     if not valid:
         return False, error
     valid, error = verify_reference_comparisons(
-        payload.get("combined_32_supplemental_comparisons"), 32, False
+        payload.get("combined_32_supplemental_comparisons"), 32, False, start_index=0
     )
     if not valid:
         return False, error
@@ -907,6 +1114,22 @@ def verify_reference_resolution_gate(
 def verify_replacement_pool_gate(
     payload: dict[str, Any], pool: dict[str, Any]
 ) -> tuple[bool, str | None]:
+    worker, error = audited_worker_payload(
+        payload,
+        action="replacement_pool_generation",
+        audit_version="paper2-replacement-pool-audit-v1",
+        worker_version="paper2-replacement-pool-v1",
+        audit_fields={"independent_audit"},
+        auditor_runtime_paths=AUDITOR_RUNTIME_PATHS["replacement_pool_generation"],
+    )
+    if error:
+        return False, error
+    assert worker is not None
+    if not failed_ack_authorizes_worker(
+        payload.get("worker_evidence"), payload.get("request"),
+        "replacement_pool_generation",
+    ):
+        return False, "replacement worker evidence is not authorized by the failed ack"
     if payload.get("schema_version") != 1 or payload.get("training_allowed") is not False:
         return False, "replacement evidence schema or training lock is invalid"
     pool_sha = str(payload.get("pool_sha256", "")).upper()
@@ -950,6 +1173,8 @@ def verify_replacement_pool_gate(
     }
     if not isinstance(audit, dict) or set(audit) != audit_fields:
         return False, "replacement strict audit is missing"
+    if payload.get("independent_audit") != audit:
+        return False, "replacement independent audit differs from the worker audit"
     if pool.get("passed") is not True or any(audit.get(name) != pool.get(name) for name in audit_fields):
         return False, "replacement strict audit metrics are invalid"
     if (
@@ -975,6 +1200,17 @@ def verify_replacement_pool_gate(
 def verify_joint_v2_gate(
     payload: dict[str, Any], pool: dict[str, Any]
 ) -> tuple[bool, str | None]:
+    worker, error = audited_worker_payload(
+        payload,
+        action="joint_numerical_convergence",
+        audit_version="paper2-joint-convergence-audit-v1",
+        worker_version="paper2-joint-convergence-v2",
+        audit_fields={"independent_evaluation"},
+        auditor_runtime_paths=AUDITOR_RUNTIME_PATHS["joint_numerical_convergence"],
+    )
+    if error:
+        return False, error
+    assert worker is not None
     if payload.get("classification") != "passed" or payload.get("training_allowed") is not False:
         return False, "joint-v2 classification or training lock is invalid"
     if str(payload.get("pool_sha256", "")).upper() != str(pool.get("sha256", "")).upper():
@@ -997,6 +1233,8 @@ def verify_joint_v2_gate(
     }:
         return False, "joint-v2 thresholds differ from the registered contract"
     evaluation = payload.get("evaluation", {})
+    if payload.get("independent_evaluation") != evaluation:
+        return False, "joint-v2 independent evaluation differs from worker evidence"
     valid, error = all_checks_true(
         evaluation.get("checks"),
         {
@@ -1067,6 +1305,19 @@ def verify_joint_v2_gate(
 def verify_cross_solver_v2_gate(
     payload: dict[str, Any], pool: dict[str, Any]
 ) -> tuple[bool, str | None]:
+    worker, error = audited_worker_payload(
+        payload,
+        action="cross_solver_spectrum_validation",
+        audit_version="paper2-cross-solver-audit-v1",
+        worker_version="paper2-cross-solver-v2",
+        audit_fields={"independent_controls", "independent_evaluation"},
+        auditor_runtime_paths=AUDITOR_RUNTIME_PATHS[
+            "cross_solver_spectrum_validation"
+        ],
+    )
+    if error:
+        return False, error
+    assert worker is not None
     if payload.get("classification") != "passed" or payload.get("training_allowed") is not False:
         return False, "cross-solver classification or training lock is invalid"
     if str(payload.get("pool_sha256", "")).upper() != str(pool.get("sha256", "")).upper():
@@ -1083,6 +1334,8 @@ def verify_cross_solver_v2_gate(
     if not valid:
         return False, error
     controls = payload.get("controls", {})
+    if payload.get("independent_controls") != controls:
+        return False, "cross-solver independent controls differ from worker evidence"
     control_names = {
         f"{solver}_{metric}"
         for solver in ("grcwa", "thirdparty")
@@ -1095,6 +1348,8 @@ def verify_cross_solver_v2_gate(
     if not valid or controls.get("passed") is not True:
         return False, error or "cross-solver controls failed"
     evaluation = payload.get("evaluation", {})
+    if payload.get("independent_evaluation") != evaluation:
+        return False, "cross-solver independent evaluation differs from worker evidence"
     valid, error = all_checks_true(
         evaluation.get("checks"),
         {"no_task_failures", "production_cross_solver", "all_stress_cross_solver", "both_solvers_converged"},
@@ -1199,9 +1454,6 @@ def verify_cross_solver_v2_gate(
         return False, error
     if evaluation.get("classification") != "passed" or evaluation.get("failures"):
         return False, "cross-solver evaluation classification is invalid"
-    valid, error = verify_cross_checkpoint(payload.get("raw_checkpoint"), payload)
-    if not valid:
-        return False, error
     return verify_protected_snapshot(payload.get("protected_files"))
 
 
@@ -1913,8 +2165,15 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
             "to the result so the independent auditor can validate and atomically activate it."
             + global_guard
         )
+    auditor_instruction = ""
+    if action_spec.get("auditor"):
+        auditor_instruction = (
+            f" After the worker finishes, run {action_spec['auditor']} as a separate independent reproduction. "
+            "Register only the auditor JSON; never register the worker evidence directly."
+        )
     return (
         instruction
+        + auditor_instruction
         + f" On success, write a versioned evidence artifact, register gate {gate} in .state/gate_state.json "
         "with its SHA256, then atomically write executor_ack.json with the matching request_id and attempt. "
         "The gate evidence manifest must be JSON, declare passed=true, and bind to the requested pool SHA256. "

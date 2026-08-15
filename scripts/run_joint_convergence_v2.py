@@ -272,7 +272,7 @@ def evaluate(context: dict, reference: dict) -> dict:
     }
 
 
-def build_evidence(context: dict, reference: dict) -> dict:
+def build_evidence(context: dict, reference: dict, request: dict) -> dict:
     evaluation = evaluate(context, reference)
     protected = supervisor.audit_protected_files(context["policy"])
     checks = {
@@ -287,6 +287,7 @@ def build_evidence(context: dict, reference: dict) -> dict:
     return {
         "schema_version": 1,
         "evidence_version": VERSION,
+        "request": request,
         "passed": all(checks.values()),
         "classification": "passed" if all(checks.values()) else "replacement_pool_numerical_mismatch",
         "pool_sha256": context["pool_sha256"],
@@ -320,7 +321,8 @@ def main() -> int:
     output = ROOT / args.output
     context = load_active_context(ROOT / args.active)
     reference = load_reference(context)
-    evidence = build_evidence(context, reference)
+    request = supervisor.current_request_identity("joint_numerical_convergence")
+    evidence = build_evidence(context, reference, request)
     if output.exists():
         existing = json.loads(output.read_text(encoding="utf-8"))
         if existing != evidence:

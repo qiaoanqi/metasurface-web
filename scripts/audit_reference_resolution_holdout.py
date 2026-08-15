@@ -663,6 +663,12 @@ def build_audit(
             "holdout_evidence": binding(worker_path),
             "holdout_checkpoint": binding(checkpoint_path),
         },
+        "worker_evidence": binding(worker_path),
+        "independent_reproduction": True,
+        "auditor_runtime_hashes": {
+            path: supervisor.file_digest(ROOT / path)
+            for path in supervisor.AUDITOR_RUNTIME_PATHS["reference_resolution"]
+        },
         "protected_files": protected,
         "training_allowed": False,
     }

@@ -83,12 +83,14 @@ class ActivateReplacementPoolTests(unittest.TestCase):
             old_pool.write_bytes(b"old")
             new_pool.write_bytes(b"new")
             evidence_path = state / "replacement.json"
+            audit_path = state / "replacement-audit.json"
             evidence = {
                 "activation_id": "ACTIVATION",
                 "approved_protocol": {"path": ".state/protocol.json", "sha256": "PROTO"},
                 "pool_sha256": supervisor.file_digest(new_pool),
             }
             supervisor.atomic_json(evidence_path, evidence)
+            supervisor.atomic_json(audit_path, {"passed": True})
             active_path = state / "active.json"
             manifest_path = state / "manifest.json"
             transaction_path = state / "transaction.json"
@@ -129,18 +131,27 @@ class ActivateReplacementPoolTests(unittest.TestCase):
                 patch.object(supervisor, "audit_pool", return_value=audit),
                 patch.object(supervisor, "audit_protected_files", return_value=[{"passed": True}]),
                 patch.object(activation, "replacement_spec", return_value=spec),
+                patch.object(activation, "validate_audit", return_value={"passed": True}),
                 patch.object(replacement, "canonical_workspace_path", return_value=new_pool),
             )
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
                 with patch.object(supervisor, "atomic_json", side_effect=fail_once):
                     with self.assertRaisesRegex(OSError, "synthetic crash"):
                         activation.activate(
-                            evidence_path, active_path, manifest_path, transaction_path
+                            evidence_path,
+                            active_path,
+                            manifest_path,
+                            transaction_path,
+                            audit_path,
                         )
                 self.assertTrue(manifest_path.exists())
                 self.assertFalse(active_path.exists())
                 result = activation.activate(
-                    evidence_path, active_path, manifest_path, transaction_path
+                    evidence_path,
+                    active_path,
+                    manifest_path,
+                    transaction_path,
+                    audit_path,
                 )
             self.assertTrue(result["active"])
             self.assertTrue(active_path.exists())

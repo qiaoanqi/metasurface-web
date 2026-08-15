@@ -139,6 +139,29 @@ class ReferenceHoldoutTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             auditor.reusable_worker_request(newer, current["request"])
+        with self.assertRaises(ValueError):
+            auditor.reusable_worker_request(other, current["request"])
+
+    def test_worker_evidence_retry_reuse_is_byte_stable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.json"
+            stored = {
+                "evidence_version": holdout.VERSION,
+                "request": {"request_id": "request-1", "attempt": 1},
+                "passed": True,
+            }
+            path.write_text(
+                json.dumps(stored, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            original = path.read_bytes()
+            retry = copy.deepcopy(stored)
+            retry["request"]["attempt"] = 2
+
+            reused = holdout.write_retry_safe_evidence(path, retry)
+
+            self.assertEqual(reused, stored)
+            self.assertEqual(path.read_bytes(), original)
 
     def test_audit_retry_only_replaces_prior_execution_failure(self):
         failed = {

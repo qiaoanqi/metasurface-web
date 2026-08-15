@@ -32,10 +32,9 @@ def protocol_bound_gates(policy: dict) -> set[str]:
 
 
 def replacement_spec(policy: dict, evidence: dict) -> dict:
-    expected = action_spec(policy, "replacement_pool_ready")
     if evidence.get("schema_version") != 1 or evidence.get("passed") is not True:
         raise ValueError("replacement evidence must be schema v1 with passed=true")
-    if evidence.get("evidence_version") != expected.get("evidence_version"):
+    if evidence.get("evidence_version") != replacement.EVIDENCE_VERSION:
         raise ValueError("replacement evidence version mismatch")
     approved = evidence.get("approved_protocol")
     if not isinstance(approved, dict):
@@ -62,6 +61,35 @@ def replacement_spec(policy: dict, evidence: dict) -> dict:
     if evidence.get("activation_id") != activation_id:
         raise ValueError("replacement activation_id is not bound to protocol and pool hashes")
     return copy.deepcopy(protocol_spec)
+
+
+def validate_audit(audit_path: Path, evidence_path: Path, evidence: dict) -> dict:
+    audit = supervisor.load_json(audit_path, {}) or {}
+    worker, error = supervisor.audited_worker_payload(
+        audit,
+        action="replacement_pool_generation",
+        audit_version="paper2-replacement-pool-audit-v1",
+        worker_version=replacement.EVIDENCE_VERSION,
+        audit_fields={"independent_audit"},
+        auditor_runtime_paths=supervisor.AUDITOR_RUNTIME_PATHS[
+            "replacement_pool_generation"
+        ],
+    )
+    if error or worker != evidence:
+        raise ValueError(error or "replacement audit worker evidence differs")
+    if (
+        audit.get("passed") is not True
+        or audit.get("training_allowed") is not False
+        or audit.get("independent_audit") != evidence.get("audit")
+    ):
+        raise ValueError("replacement independent audit contract is invalid")
+    expected_worker = {
+        "path": str(evidence_path.relative_to(ROOT)).replace("\\", "/"),
+        "sha256": supervisor.file_digest(evidence_path),
+    }
+    if audit.get("worker_evidence") != expected_worker:
+        raise ValueError("replacement audit is not bound to the worker evidence")
+    return audit
 
 
 def build_gate_state(
@@ -162,12 +190,15 @@ def activate(
     active_path: Path,
     pool_manifest_path: Path,
     transaction_path: Path | None = None,
+    audit_path: Path | None = None,
 ) -> dict:
     policy = supervisor.load_policy()
     integrity = supervisor.verify_policy_integrity(policy)
     if integrity.get("passed") is not True:
         raise ValueError("pipeline policy integrity is not verified")
     evidence = supervisor.load_json(evidence_path, {}) or {}
+    audit_path = audit_path or (ROOT / ".state" / "replacement_pool_v1_audit.json")
+    validate_audit(audit_path, evidence_path, evidence)
     spec = replacement_spec(policy, evidence)
     pool_path = replacement.canonical_workspace_path(
         spec["path"], require_replacement_dir=True
@@ -177,9 +208,11 @@ def activate(
     pool_sha256 = supervisor.file_digest(pool_path)
     if str(evidence.get("pool_sha256", "")).upper() != pool_sha256:
         raise ValueError("replacement evidence pool SHA256 mismatch")
-    audit = supervisor.audit_pool(pool_path, spec)
-    if audit.get("passed") is not True:
-        raise ValueError(f"replacement pool strict audit failed: {audit.get('errors', [])[:5]}")
+    strict_audit = supervisor.audit_pool(pool_path, spec)
+    if strict_audit.get("passed") is not True:
+        raise ValueError(
+            f"replacement pool strict audit failed: {strict_audit.get('errors', [])[:5]}"
+        )
     protected = supervisor.audit_protected_files(policy)
     if not all(item.get("passed") for item in protected):
         raise ValueError("protected paper 1 asset changed; refuse activation")
@@ -196,14 +229,14 @@ def activate(
         "pool_path": str(pool_path.relative_to(ROOT)).replace("\\", "/"),
         "pool_sha256": pool_sha256,
         "pool_md5": supervisor.file_digest(pool_path, "md5"),
-        "records": audit["records"],
-        "expected_records": audit["expected_records"],
-        "geometries": audit["geometries"],
-        "complete_pairs": audit["complete_pairs"],
-        "duplicate_keys": audit["duplicate_keys"],
+        "records": strict_audit["records"],
+        "expected_records": strict_audit["expected_records"],
+        "geometries": strict_audit["geometries"],
+        "complete_pairs": strict_audit["complete_pairs"],
+        "duplicate_keys": strict_audit["duplicate_keys"],
         "activation_evidence": {
-            "path": str(evidence_path.relative_to(ROOT)).replace("\\", "/"),
-            "sha256": supervisor.file_digest(evidence_path),
+            "path": str(audit_path.relative_to(ROOT)).replace("\\", "/"),
+            "sha256": supervisor.file_digest(audit_path),
         },
         "activation_id": evidence["activation_id"],
         "approved_protocol": evidence["approved_protocol"],
@@ -221,8 +254,8 @@ def activate(
         "approved_protocol": evidence["approved_protocol"],
         "previous_pool": previous,
         "activation_evidence": {
-            "path": str(evidence_path.relative_to(ROOT)).replace("\\", "/"),
-            "sha256": supervisor.file_digest(evidence_path),
+            "path": str(audit_path.relative_to(ROOT)).replace("\\", "/"),
+            "sha256": supervisor.file_digest(audit_path),
         },
         "pool_manifest": {
             "path": str(pool_manifest_path.relative_to(ROOT)).replace("\\", "/"),
@@ -251,7 +284,7 @@ def activate(
         gate_state,
         policy,
         pool_manifest_path,
-        evidence_path,
+        audit_path,
         checked_at=checked_at,
         activation_id=evidence["activation_id"],
         pool_manifest_sha256=supervisor_json_digest(pool_manifest),
@@ -262,7 +295,7 @@ def activate(
         "gate_state": (supervisor.GATE_STATE, next_gates),
     }
     transaction = transaction_payload(
-        evidence["activation_id"], evidence_path, targets, gate_state, checked_at
+        evidence["activation_id"], audit_path, targets, gate_state, checked_at
     )
     if existing_transaction:
         expected_targets = transaction["targets"]
@@ -300,12 +333,14 @@ def main() -> int:
     parser.add_argument("--active", default=".state/active_pool.json")
     parser.add_argument("--pool-manifest", default=".state/pool_manifest_active_v1.json")
     parser.add_argument("--transaction", default=".state/active_pool_transaction_v1.json")
+    parser.add_argument("--audit", default=".state/replacement_pool_v1_audit.json")
     args = parser.parse_args()
     active = activate(
         ROOT / args.evidence,
         ROOT / args.active,
         ROOT / args.pool_manifest,
         ROOT / args.transaction,
+        ROOT / args.audit,
     )
     print(json.dumps({"active": True, "pool_sha256": active["pool_sha256"]}))
     return 0

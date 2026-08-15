@@ -442,7 +442,9 @@ def joint_v2_ready(context: dict) -> bool:
     return gates.get("joint_numerical_convergence") is True
 
 
-def summarize(context: dict, meta: dict, checkpoint: dict, checkpoint_path: Path) -> dict:
+def summarize(
+    context: dict, meta: dict, checkpoint: dict, checkpoint_path: Path, request: dict
+) -> dict:
     evaluation = evaluate_results(checkpoint["results"], meta["stress_configs"])
     controls = run_controls(meta["production"]["nG_requested"], meta["production"]["Nxy"])
     runtime_ok = all(
@@ -464,6 +466,7 @@ def summarize(context: dict, meta: dict, checkpoint: dict, checkpoint_path: Path
     return {
         "schema_version": 1,
         "evidence_version": VERSION,
+        "request": request,
         "passed": all(checks.values()),
         "pool_sha256": context["pool_sha256"],
         "checks": checks,
@@ -514,6 +517,7 @@ def main() -> int:
     args = parser.parse_args()
 
     context = joint_v2.load_active_context(ROOT / args.active)
+    request = supervisor.current_request_identity("cross_solver_spectrum_validation")
     geometries, _records = load_pool(context["pool_path"])
     selected = legacy.select_cross_solver_geometries(geometries)
     tasks, stress = build_tasks(selected, context["protocol"])
@@ -579,7 +583,7 @@ def main() -> int:
             validate_checkpoint_results(checkpoint, tasks, require_complete=True)
         except (TypeError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
-        evidence = summarize(context, meta, checkpoint, checkpoint_path)
+        evidence = summarize(context, meta, checkpoint, checkpoint_path, request)
         if evidence_path.exists():
             existing = json.loads(evidence_path.read_text(encoding="utf-8"))
             if existing != evidence:

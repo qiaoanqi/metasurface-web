@@ -80,22 +80,25 @@
       {
         "action": "replacement_pool_generation",
         "gate": "replacement_pool_ready",
-        "evidence_version": "paper2-replacement-pool-v1",
+        "evidence_version": "paper2-replacement-pool-audit-v1",
         "runner": "python scripts/run_replacement_pool.py --approved-protocol .state/replacement_protocol_v1.json --n-jobs 16 --resume",
+        "auditor": "python scripts/audit_replacement_pool.py",
         "requires_new_versioned_pool": true,
         "diagnostic_only": true
       },
       {
         "action": "joint_numerical_convergence",
         "gate": "joint_numerical_convergence",
-        "evidence_version": "paper2-joint-convergence-v2",
-        "runner": "python scripts/run_joint_convergence_v2.py"
+        "evidence_version": "paper2-joint-convergence-audit-v1",
+        "runner": "python scripts/run_joint_convergence_v2.py",
+        "auditor": "python scripts/audit_joint_convergence_v2.py"
       },
       {
         "action": "cross_solver_spectrum_validation",
         "gate": "cross_solver_spectrum_validation",
-        "evidence_version": "paper2-cross-solver-v2",
+        "evidence_version": "paper2-cross-solver-audit-v1",
         "runner": "python scripts/run_cross_solver_validation_v2.py --n-jobs 8",
+        "auditor": "python scripts/audit_cross_solver_v2.py",
         "checkpoint": ".state/cross_solver_v2_checkpoint.pkl"
       },
       {"action": "circular_control", "gate": "circular_control", "evidence_version": "paper2-circular-control-v1"},

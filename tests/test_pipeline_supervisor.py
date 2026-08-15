@@ -115,10 +115,29 @@ class GatePayloadVerifierTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.old_root = supervisor.ROOT
+        self.old_policy = supervisor.POLICY
+        self.old_state = supervisor.STATE
+        self.old_dispatch = supervisor.DISPATCH_REQUEST
+        self.old_executor_ack = supervisor.EXECUTOR_ACK
         supervisor.ROOT = self.root
+        supervisor.STATE = self.root / ".state"
+        supervisor.STATE.mkdir()
+        supervisor.POLICY = self.root / "pipeline_policy.json"
+        supervisor.DISPATCH_REQUEST = supervisor.STATE / "dispatch_request.json"
+        supervisor.EXECUTOR_ACK = supervisor.STATE / "executor_ack.json"
+        self.policy = {
+            "schema_version": 1,
+            "protected_files": [],
+            "immutable_assets": [],
+        }
+        supervisor.atomic_json(supervisor.POLICY, self.policy)
 
     def tearDown(self):
         supervisor.ROOT = self.old_root
+        supervisor.POLICY = self.old_policy
+        supervisor.STATE = self.old_state
+        supervisor.DISPATCH_REQUEST = self.old_dispatch
+        supervisor.EXECUTOR_ACK = self.old_executor_ack
         self.tmp.cleanup()
 
     def binding(self, name: str, content: bytes = b"bound evidence\n"):
@@ -139,6 +158,8 @@ class GatePayloadVerifierTests(unittest.TestCase):
     def protected_snapshot(self):
         item = self.binding("paper1.locked", b"immutable paper 1\n")
         md5 = supervisor.file_digest(self.root / item["path"], "md5")
+        self.policy["protected_files"] = [{"path": item["path"], "md5": md5}]
+        supervisor.atomic_json(supervisor.POLICY, self.policy)
         return [{
             "path": item["path"],
             "expected_md5": md5,
@@ -152,6 +173,53 @@ class GatePayloadVerifierTests(unittest.TestCase):
             for name in names
         }
 
+    def authorize(self, action: str, request=None, status="in_progress"):
+        request = request or {"request_id": f"{action}-request", "attempt": 1}
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, {
+            "action": action,
+            "status": status,
+            **request,
+        })
+        return request
+
+    def audited_payload(
+        self,
+        worker: dict,
+        *,
+        action: str,
+        audit_version: str,
+        independent: dict,
+    ):
+        worker = copy.deepcopy(worker)
+        worker.setdefault("schema_version", 1)
+        worker["request"] = self.authorize(action)
+        worker_binding = self.json_binding(f"state/{action}-worker.json", worker)
+        audit = copy.deepcopy(worker)
+        audit["evidence_version"] = audit_version
+        audit["worker_evidence"] = worker_binding
+        audit["independent_reproduction"] = True
+        audit.update(copy.deepcopy(independent))
+        audit["auditor_runtime_hashes"] = self.runtime_hashes(
+            supervisor.AUDITOR_RUNTIME_PATHS[action]
+        )
+        return audit
+
+    def authorize_failed_worker(self, audit: dict):
+        request = copy.deepcopy(audit["request"])
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, {
+            "action": "replacement_pool_generation",
+            "status": "failed",
+            "terminal_failure": True,
+            "failure_class": "scientific",
+            **request,
+        })
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
+            "status": "failed",
+            "failure_class": "scientific",
+            "evidence": [copy.deepcopy(audit["worker_evidence"])],
+            **request,
+        })
+
     def comparison_set(self, count: int):
         names = (
             "order_365x768_to_450x768_0p5nm",
@@ -160,6 +228,12 @@ class GatePayloadVerifierTests(unittest.TestCase):
             "spectral_450x768_1nm_to_0p5nm",
             "frozen_candidate_to_final_reference",
         )
+        start_index = 8 if count == 24 else 0
+        rows = [
+            {"geometry_index": index, "pol": pol, "dE00": 0.0}
+            for index in range(start_index, start_index + count)
+            for pol in ("p", "s")
+        ]
         return {
             name: {
                 "count": count,
@@ -169,7 +243,7 @@ class GatePayloadVerifierTests(unittest.TestCase):
                 "all_lt_2_3": True,
                 "passed": True,
                 "joint_max_by_geometry": [0.0] * count,
-                "rows": [{}] * (count * 2),
+                "rows": copy.deepcopy(rows),
             }
             for name in names
         }
@@ -238,6 +312,82 @@ class GatePayloadVerifierTests(unittest.TestCase):
             with self.subTest(verifier=verifier.__name__):
                 self.assertFalse(verifier(payload, pool)[0])
 
+    def test_auditor_envelope_rejects_replay_worker_tamper_and_runtime_tamper(self):
+        worker = {
+            "schema_version": 1,
+            "evidence_version": "paper2-joint-convergence-v2",
+            "request": {"request_id": "stable-request", "attempt": 1},
+            "passed": True,
+        }
+        worker_binding = self.json_binding("state/joint-worker.json", worker)
+        active_request = {"request_id": "stable-request", "attempt": 2}
+        self.authorize("joint_numerical_convergence", active_request)
+        payload = copy.deepcopy(worker)
+        payload.update({
+            "evidence_version": "paper2-joint-convergence-audit-v1",
+            "request": active_request,
+            "worker_evidence": worker_binding,
+            "independent_reproduction": True,
+            "independent_evaluation": {"passed": True},
+            "auditor_runtime_hashes": self.runtime_hashes(
+                supervisor.AUDITOR_RUNTIME_PATHS["joint_numerical_convergence"]
+            ),
+        })
+        verified, error = supervisor.audited_worker_payload(
+            payload,
+            action="joint_numerical_convergence",
+            audit_version="paper2-joint-convergence-audit-v1",
+            worker_version="paper2-joint-convergence-v2",
+            audit_fields={"independent_evaluation"},
+            auditor_runtime_paths=supervisor.AUDITOR_RUNTIME_PATHS[
+                "joint_numerical_convergence"
+            ],
+        )
+        self.assertEqual(verified, worker)
+        self.assertIsNone(error)
+
+        replay = copy.deepcopy(payload)
+        replay["request"] = {"request_id": "old-request", "attempt": 1}
+        self.assertIsNotNone(supervisor.audited_worker_payload(
+            replay,
+            action="joint_numerical_convergence",
+            audit_version="paper2-joint-convergence-audit-v1",
+            worker_version="paper2-joint-convergence-v2",
+            audit_fields={"independent_evaluation"},
+            auditor_runtime_paths=supervisor.AUDITOR_RUNTIME_PATHS[
+                "joint_numerical_convergence"
+            ],
+        )[1])
+
+        worker_path = self.root / worker_binding["path"]
+        original = worker_path.read_bytes()
+        worker_path.write_bytes(b"{}\n")
+        self.assertIsNotNone(supervisor.audited_worker_payload(
+            payload,
+            action="joint_numerical_convergence",
+            audit_version="paper2-joint-convergence-audit-v1",
+            worker_version="paper2-joint-convergence-v2",
+            audit_fields={"independent_evaluation"},
+            auditor_runtime_paths=supervisor.AUDITOR_RUNTIME_PATHS[
+                "joint_numerical_convergence"
+            ],
+        )[1])
+        worker_path.write_bytes(original)
+
+        runtime_tampered = copy.deepcopy(payload)
+        first_runtime = next(iter(runtime_tampered["auditor_runtime_hashes"]))
+        runtime_tampered["auditor_runtime_hashes"][first_runtime] = "0" * 64
+        self.assertIsNotNone(supervisor.audited_worker_payload(
+            runtime_tampered,
+            action="joint_numerical_convergence",
+            audit_version="paper2-joint-convergence-audit-v1",
+            worker_version="paper2-joint-convergence-v2",
+            audit_fields={"independent_evaluation"},
+            auditor_runtime_paths=supervisor.AUDITOR_RUNTIME_PATHS[
+                "joint_numerical_convergence"
+            ],
+        )[1])
+
     def test_reference_resolution_verifier_accepts_only_frozen_holdout_contract(self):
         candidate = {
             "requested_nG": 365,
@@ -299,11 +449,23 @@ class GatePayloadVerifierTests(unittest.TestCase):
             "approved_protocol_candidate": candidate,
             "pool_sha256": frozen_pool["sha256"],
             "sources": sources,
+            "worker_evidence": sources["holdout_evidence"],
+            "independent_reproduction": True,
+            "auditor_runtime_hashes": self.runtime_hashes(
+                supervisor.AUDITOR_RUNTIME_PATHS["reference_resolution"]
+            ),
             "independent_holdout_comparisons": self.comparison_set(24),
             "combined_32_supplemental_comparisons": self.comparison_set(32),
             "protected_files": self.protected_snapshot(),
         }
+        self.authorize("reference_resolution", payload["request"])
         self.assertEqual(supervisor.verify_reference_resolution_gate(payload, {}), (True, None))
+
+        tampered_rows = copy.deepcopy(payload)
+        tampered_rows["independent_holdout_comparisons"][
+            "frozen_candidate_to_final_reference"
+        ]["rows"][0]["dE00"] = 0.5
+        self.assertFalse(supervisor.verify_reference_resolution_gate(tampered_rows, {})[0])
 
         tampered = copy.deepcopy(payload)
         tampered["checks"]["undeclared_check"] = True
@@ -372,8 +534,25 @@ class GatePayloadVerifierTests(unittest.TestCase):
             "runtime_hashes": runtime,
             "protected_files": self.protected_snapshot(),
         }
+        payload = self.audited_payload(
+            payload,
+            action="replacement_pool_generation",
+            audit_version="paper2-replacement-pool-audit-v1",
+            independent={"independent_audit": copy.deepcopy(payload["audit"])},
+        )
+        self.authorize_failed_worker(payload)
         pool = {"sha256": pool_binding["sha256"], "passed": True, **payload["audit"]}
         self.assertEqual(supervisor.verify_replacement_pool_gate(payload, pool), (True, None))
+
+        missing_ack_binding = supervisor.load_json(supervisor.EXECUTOR_ACK)
+        missing_ack_binding["evidence"] = [self.binding("state/other-worker.json")]
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, missing_ack_binding)
+        self.assertFalse(supervisor.verify_replacement_pool_gate(payload, pool)[0])
+
+        retried = copy.deepcopy(payload)
+        retried["request"]["attempt"] = 2
+        self.authorize_failed_worker(retried)
+        self.assertEqual(supervisor.verify_replacement_pool_gate(retried, pool), (True, None))
 
         tampered = copy.deepcopy(payload)
         tampered["checkpoint"]["sha256"] = "0" * 64
@@ -467,6 +646,12 @@ class GatePayloadVerifierTests(unittest.TestCase):
             "runtime_hashes": runtime,
             "protected_files": self.protected_snapshot(),
         }
+        payload = self.audited_payload(
+            payload,
+            action="joint_numerical_convergence",
+            audit_version="paper2-joint-convergence-audit-v1",
+            independent={"independent_evaluation": copy.deepcopy(payload["evaluation"])},
+        )
         pool = {"sha256": pool_sha}
         self.assertEqual(supervisor.verify_joint_v2_gate(payload, pool), (True, None))
 
@@ -601,8 +786,23 @@ class GatePayloadVerifierTests(unittest.TestCase):
             "runtime_hashes": runtime,
             "protected_files": self.protected_snapshot(),
         }
+        payload = self.audited_payload(
+            payload,
+            action="cross_solver_spectrum_validation",
+            audit_version="paper2-cross-solver-audit-v1",
+            independent={
+                "independent_controls": copy.deepcopy(payload["controls"]),
+                "independent_evaluation": copy.deepcopy(payload["evaluation"]),
+            },
+        )
         pool = {"sha256": pool_sha}
         self.assertEqual(supervisor.verify_cross_solver_v2_gate(payload, pool), (True, None))
+
+        checkpoint_path = self.root / payload["raw_checkpoint"]["path"]
+        checkpoint_bytes = checkpoint_path.read_bytes()
+        checkpoint_path.write_bytes(checkpoint_bytes + b"tampered")
+        self.assertFalse(supervisor.verify_cross_solver_v2_gate(payload, pool)[0])
+        checkpoint_path.write_bytes(checkpoint_bytes)
 
         tampered = copy.deepcopy(payload)
         tampered["protocol"]["background"] = "substrate"
@@ -765,13 +965,25 @@ class ControllerTests(unittest.TestCase):
             stdout='{"active":true,"pool_sha256":"ABC"}\n',
             stderr="",
         )
+        audit_completed = supervisor.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=0,
+            stdout='{"passed":true,"pool_sha256":"ABC"}\n',
+            stderr="",
+        )
         controller["dispatch"]["action"] = "replacement_pool_generation"
         controller["dispatch"]["request_id"] = "replacement-request"
-        with patch.object(supervisor.subprocess, "run", return_value=activation) as run:
+        replacement_audit = supervisor.STATE / "replacement_pool_v1_audit.json"
+        replacement_audit.write_text("{}\n", encoding="ascii")
+        with patch.object(
+            supervisor.subprocess, "run", side_effect=[audit_completed, activation]
+        ) as run:
             result = supervisor.run_auto_transition(controller)
         self.assertEqual(result["transition"], "replacement_pool_activation")
         self.assertEqual(result["based_on_request_id"], "replacement-request")
-        self.assertIn("activate_replacement_pool.py", run.call_args.args[0][1])
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("audit_replacement_pool.py", run.call_args_list[0].args[0][1])
+        self.assertIn("activate_replacement_pool.py", run.call_args_list[1].args[0][1])
 
     def test_verified_replacement_activation_archives_failed_generation_and_advances(self):
         failed = {
@@ -983,7 +1195,7 @@ class ControllerTests(unittest.TestCase):
             evidence,
             {
                 "schema_version": 1,
-                "evidence_version": "paper2-replacement-pool-v1",
+                "evidence_version": "paper2-replacement-pool-audit-v1",
                 "passed": True,
                 "pool_sha256": replacement_sha,
                 "pool_spec": pool_spec,
@@ -1394,19 +1606,35 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(
             actions["joint_numerical_convergence"]["evidence_version"],
-            "paper2-joint-convergence-v2",
+            "paper2-joint-convergence-audit-v1",
         )
         self.assertIn(
             "run_joint_convergence_v2.py",
             actions["joint_numerical_convergence"]["runner"],
         )
+        self.assertIn(
+            "audit_joint_convergence_v2.py",
+            actions["joint_numerical_convergence"]["auditor"],
+        )
         self.assertEqual(
             actions["cross_solver_spectrum_validation"]["evidence_version"],
-            "paper2-cross-solver-v2",
+            "paper2-cross-solver-audit-v1",
         )
         self.assertIn(
             "run_cross_solver_validation_v2.py",
             actions["cross_solver_spectrum_validation"]["runner"],
+        )
+        self.assertIn(
+            "audit_cross_solver_v2.py",
+            actions["cross_solver_spectrum_validation"]["auditor"],
+        )
+        self.assertEqual(
+            actions["replacement_pool_generation"]["evidence_version"],
+            "paper2-replacement-pool-audit-v1",
+        )
+        self.assertIn(
+            "audit_replacement_pool.py",
+            actions["replacement_pool_generation"]["auditor"],
         )
         joint_instruction = supervisor.build_instruction(
             "joint_numerical_convergence", self.policy
@@ -1418,9 +1646,11 @@ class ControllerTests(unittest.TestCase):
             "cross_solver_spectrum_validation", self.policy
         )
         self.assertIn("run_joint_convergence_v2.py", joint_instruction)
+        self.assertIn("audit_joint_convergence_v2.py", joint_instruction)
         self.assertIn("activated replacement pool", joint_instruction)
         self.assertIn("launch_reference_resolution_holdout.py", reference_instruction)
         self.assertIn("run_cross_solver_validation_v2.py", cross_instruction)
+        self.assertIn("audit_cross_solver_v2.py", cross_instruction)
         self.assertIn("active pool", cross_instruction)
 
     def test_replacement_pool_is_auditor_activated(self):
