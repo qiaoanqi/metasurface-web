@@ -107,6 +107,34 @@ AUDITOR_RUNTIME_PATHS = {
         "paper2_colorimetry_fine.py",
         "color_utils.py",
     },
+    "circular_control": {
+        "pipeline_supervisor.py",
+        "scripts/audit_circular_control_v1.py",
+        "scripts/run_circular_control_v1.py",
+        "scripts/run_joint_convergence_v2.py",
+        "scripts/run_replacement_pool.py",
+        "rcwa_batch.py",
+        "paper2_colorimetry_fine.py",
+        "color_utils.py",
+    },
+    "geometry_split_freeze": {
+        "pipeline_supervisor.py",
+        "scripts/audit_geometry_split_v1.py",
+        "scripts/run_geometry_split_v1.py",
+        "scripts/run_joint_convergence_v2.py",
+        "scripts/run_replacement_pool.py",
+    },
+}
+
+BUILTIN_FINALIZATION_SPECS = {
+    "joint_numerical_convergence": {
+        "worker_evidence": ".state/reference_resolution_budget_v2.json",
+        "finalizer": "scripts/finalize_paper2_request.py",
+    },
+    "reference_resolution": {
+        "worker_evidence": ".state/reference_resolution_holdout_v2.json",
+        "finalizer": "scripts/finalize_paper2_request.py",
+    },
 }
 
 
@@ -149,6 +177,53 @@ def load_json(path: Path, default: Any = None) -> Any:
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def action_finalization_spec(
+    policy: dict[str, Any], action: str, dispatch: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    workflow = next(
+        (
+            item
+            for item in policy.get("workflow", {}).get("actions", [])
+            if item.get("action") == action
+        ),
+        {},
+    )
+    budget_diagnostic = bool(
+        action == "joint_numerical_convergence"
+        and isinstance(dispatch, dict)
+        and any(
+            isinstance(item, dict)
+            and str(item.get("path", "")).replace("\\", "/")
+            == ".state/reference_resolution_budget_v2_plan.json"
+            for item in dispatch.get("strategy_evidence", [])
+        )
+    )
+    workflow_has_finalizer = bool(
+        isinstance(workflow.get("worker_evidence"), str)
+        and isinstance(workflow.get("finalizer"), str)
+    )
+    use_builtin = (
+        action == "reference_resolution"
+        or budget_diagnostic
+        or (action in BUILTIN_FINALIZATION_SPECS and not workflow_has_finalizer)
+    )
+    spec = copy.deepcopy(BUILTIN_FINALIZATION_SPECS.get(action, {})) if use_builtin else {}
+    for key in ("worker_evidence", "finalizer"):
+        if use_builtin:
+            continue
+        if workflow.get(key):
+            spec[key] = workflow[key]
+    if not isinstance(spec.get("worker_evidence"), str) or not isinstance(
+        spec.get("finalizer"), str
+    ):
+        return None
+    if workspace_file(spec["worker_evidence"]) is None or workspace_file(
+        spec["finalizer"]
+    ) is None:
+        return None
+    return spec
 
 
 def file_digest(path: Path, algorithm: str = "sha256") -> str:
@@ -283,15 +358,17 @@ def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
     return result
 
 
-def executor_finalization_ready(dispatch: dict[str, Any], ack: dict[str, Any]) -> tuple[bool, str]:
+def executor_finalization_ready(
+    dispatch: dict[str, Any], ack: dict[str, Any], policy: dict[str, Any]
+) -> tuple[bool, str]:
     """Return whether a completed worker artifact is ready for independent finalization."""
     action = dispatch.get("action")
-    if action == "joint_numerical_convergence":
-        evidence_path = STATE / "reference_resolution_budget_v2.json"
-    elif action == "reference_resolution":
-        evidence_path = STATE / "reference_resolution_holdout_v2.json"
-    else:
+    spec = action_finalization_spec(policy, str(action or ""), dispatch)
+    if spec is None:
         return False, "unsupported_action"
+    evidence_path = workspace_file(spec["worker_evidence"])
+    if evidence_path is None:
+        return False, "worker_evidence_path_invalid"
     if not evidence_path.is_file():
         return False, "worker_evidence_missing"
     evidence = load_json(evidence_path, {}) or {}
@@ -318,9 +395,12 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
     """Finalize a dead, complete executor deterministically from the supervisor watch loop."""
     dispatch = load_json(DISPATCH_REQUEST, {}) or {}
     ack = load_json(EXECUTOR_ACK, {}) or {}
+    finalization_spec = action_finalization_spec(
+        policy, str(dispatch.get("action", "")), dispatch
+    )
     if (
         dispatch.get("status") != "in_progress"
-        or dispatch.get("action") not in {"joint_numerical_convergence", "reference_resolution"}
+        or finalization_spec is None
         or ack.get("request_id") != dispatch.get("request_id")
         or int(ack.get("attempt", 0)) != int(dispatch.get("attempt", 0))
         or ack.get("status") not in {"accepted", "claimed", "running", "in_progress"}
@@ -335,7 +415,7 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
             return {"status": "blocked", "reason": "active_ack_missing_worker_pid"}
     elif pid_alive(worker_pid):
         return None
-    ready, reason = executor_finalization_ready(dispatch, ack)
+    ready, reason = executor_finalization_ready(dispatch, ack, policy)
     if not ready:
         return {"status": "waiting", "reason": reason}
     grace_active, grace_until = (
@@ -348,7 +428,7 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
 
     command = [
         sys.executable,
-        str(ROOT / "scripts" / "finalize_paper2_request.py"),
+        str(workspace_file(finalization_spec["finalizer"])),
         "--dispatch",
         str(DISPATCH_REQUEST.relative_to(ROOT)),
         "--ack",
@@ -371,7 +451,7 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
             {
                 "schema_version": 1,
                 "controller_status": "finalizing",
-                "next_action": "finalize_paper2_request",
+                "next_action": finalization_spec["finalizer"],
                 "request_id": dispatch.get("request_id"),
                 "attempt": int(dispatch.get("attempt", 0)),
                 "training_allowed": False,
@@ -474,6 +554,8 @@ def load_policy(path: Path = POLICY) -> dict[str, Any]:
         raise ValueError(f"invalid or missing policy: {path}")
     if policy.get("schema_version") != 1:
         raise ValueError("unsupported pipeline policy schema")
+    if policy.get("workflow", {}).get("contract_enforced") is True:
+        validate_workflow_contract(policy)
     return policy
 
 
@@ -952,6 +1034,40 @@ def request_identity_authorized(request: Any, action: str) -> bool:
         archived_request.get("action") == action
         and archived_request.get("request_id") == request["request_id"]
         and int(archived_request.get("attempt", 0)) == int(request["attempt"])
+    )
+
+
+def completed_request_authorized(request: Any, action: str) -> bool:
+    """Require a matching durable completion before gate evidence becomes active."""
+    if not valid_request_identity(request):
+        return False
+
+    request_id = request["request_id"]
+    attempt = int(request["attempt"])
+    dispatch = load_json(DISPATCH_REQUEST, {}) or {}
+    ack = load_json(EXECUTOR_ACK, {}) or {}
+    if (
+        dispatch.get("action") == action
+        and dispatch.get("request_id") == request_id
+        and int(dispatch.get("attempt", 0)) == attempt
+        and ack.get("request_id") == request_id
+        and int(ack.get("attempt", 0)) == attempt
+        and ack.get("status") in {"completed", "succeeded"}
+    ):
+        return True
+
+    history = STATE / "dispatch_history" / f"{request_id}-attempt{attempt}.json"
+    archived = load_json(history, {}) or {}
+    archived_request = archived.get("request", {})
+    final_ack = archived.get("final_ack", {})
+    return bool(
+        archived_request.get("action") == action
+        and archived_request.get("request_id") == request_id
+        and int(archived_request.get("attempt", 0)) == attempt
+        and archived_request.get("status") == "acknowledged"
+        and final_ack.get("request_id") == request_id
+        and int(final_ack.get("attempt", 0)) == attempt
+        and final_ack.get("status") in {"completed", "succeeded"}
     )
 
 
@@ -1633,13 +1749,255 @@ def verify_cross_solver_v2_gate(
     return verify_protected_snapshot(payload.get("protected_files"))
 
 
+def verify_circular_control_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    worker, error = audited_worker_payload(
+        payload,
+        action="circular_control",
+        audit_version="paper2-circular-control-v1",
+        worker_version="paper2-circular-control-worker-v1",
+        audit_fields={"producer_request"},
+        auditor_runtime_paths=AUDITOR_RUNTIME_PATHS["circular_control"],
+    )
+    if error:
+        return False, error
+    assert worker is not None
+    if (
+        payload.get("passed") is not True
+        or payload.get("classification") != "circular_control_passed"
+        or payload.get("training_allowed") is not False
+        or str(payload.get("pool_sha256", "")).upper()
+        != str(pool.get("sha256", "")).upper()
+    ):
+        return False, "circular control classification, pool, or training lock is invalid"
+    valid, error = all_checks_true(
+        payload.get("checks"),
+        {
+            "exact_frozen_geometry_set",
+            "no_task_failures",
+            "pointwise_conservation",
+            "circular_polarization_spectrum_symmetry",
+            "circular_polarization_color_symmetry",
+        },
+    )
+    if not valid:
+        return False, error
+    protocol = payload.get("protocol", {})
+    if (
+        protocol.get("material") != "TiO2"
+        or protocol.get("substrate") != "SiO2"
+        or protocol.get("background") != "air"
+        or int(protocol.get("nG_requested", 0)) < 1
+        or int(protocol.get("nG_retained", 0)) < 1
+        or int(protocol.get("Nxy", 0)) < 64
+        or float(protocol.get("wavelength_step_nm", 0.0)) <= 0.0
+    ):
+        return False, "circular control protocol differs from the registered physical design"
+    thresholds = payload.get("thresholds", {})
+    if (
+        set(thresholds)
+        != {
+            "pointwise_conservation_lte",
+            "polarization_spectrum_max_abs_lte",
+            "polarization_dE00_lte",
+        }
+        or float(thresholds.get("pointwise_conservation_lte", float("inf"))) > 1e-6
+        or float(thresholds.get("polarization_spectrum_max_abs_lte", float("inf")))
+        != 1e-7
+        or float(thresholds.get("polarization_dE00_lte", float("inf"))) != 0.01
+    ):
+        return False, "circular control thresholds differ from the registered contract"
+    geometries = payload.get("selected_geometries")
+    metrics = payload.get("metrics")
+    if (
+        not isinstance(geometries, list)
+        or len(geometries) != 12
+        or len({item.get("control_id") for item in geometries if isinstance(item, dict)}) != 12
+        or not isinstance(metrics, list)
+        or len(metrics) != 12
+        or {item.get("id") for item in metrics if isinstance(item, dict)}
+        != {item.get("control_id") for item in geometries if isinstance(item, dict)}
+    ):
+        return False, "circular control geometry or metric set differs"
+    for item in geometries:
+        if (
+            not isinstance(item, dict)
+            or float(item.get("D", 0.0)) <= 0.0
+            or float(item.get("D", 0.0)) >= float(item.get("P", 0.0))
+            or float(item.get("H", 0.0)) <= 0.0
+        ):
+            return False, "circular control contains an invalid geometry"
+    for item in metrics:
+        if (
+            not isinstance(item, dict)
+            or item.get("valid") is not True
+            or float(item.get("max_pointwise_conservation_error", float("inf")))
+            > float(thresholds["pointwise_conservation_lte"])
+            or max(
+                float(item.get("polarization_R_max_abs", float("inf"))),
+                float(item.get("polarization_T_max_abs", float("inf"))),
+            )
+            > 1e-7
+            or float(item.get("polarization_dE00", float("inf"))) > 0.01
+        ):
+            return False, "circular control raw metric fails the registered contract"
+    valid, error = bindings_exist(payload.get("raw_checkpoint"), "circular checkpoint")
+    if not valid or int(payload.get("raw_checkpoint", {}).get("tasks", -1)) != 12:
+        return False, error or "circular checkpoint task count differs"
+    valid, error = runtime_hashes_match(
+        payload.get("runtime_hashes"),
+        {
+            "pipeline_supervisor.py",
+            "scripts/run_circular_control_v1.py",
+            "scripts/run_joint_convergence_v2.py",
+            "rcwa_batch.py",
+            "paper2_colorimetry_fine.py",
+            "color_utils.py",
+        },
+    )
+    return (valid, error)
+
+
+def verify_geometry_split_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    worker, error = audited_worker_payload(
+        payload,
+        action="geometry_split_freeze",
+        audit_version="paper2-geometry-split-v1",
+        worker_version="paper2-geometry-split-worker-v1",
+        audit_fields=set(),
+        auditor_runtime_paths=AUDITOR_RUNTIME_PATHS["geometry_split_freeze"],
+    )
+    if error:
+        return False, error
+    assert worker is not None
+    if (
+        payload.get("passed") is not True
+        or payload.get("classification") != "geometry_split_frozen"
+        or payload.get("training_allowed") is not False
+        or str(payload.get("pool_sha256", "")).upper()
+        != str(pool.get("sha256", "")).upper()
+        or payload.get("split_version") != "sha256-ranked-80-10-10-v1"
+        or payload.get("ratios") != {"train": 0.8, "validation": 0.1, "test": 0.1}
+    ):
+        return False, "geometry split identity or registered design is invalid"
+    valid, error = all_checks_true(
+        payload.get("checks"),
+        {
+            "active_pool_hash_verified",
+            "canonical_axes_verified",
+            "exact_dual_polarization_pairs",
+            "stable_geometry_ids_verified",
+            "geometry_level_no_leakage",
+            "split_counts_exact",
+        },
+    )
+    if not valid:
+        return False, error
+    assignments = payload.get("assignments")
+    geometry_count = int(payload.get("geometry_count", -1))
+    counts = payload.get("counts", {})
+    if (
+        geometry_count <= 0
+        or int(payload.get("record_count", -1)) != 2 * geometry_count
+        or not isinstance(assignments, list)
+        or len(assignments) != geometry_count
+        or supervisor_json_digest(assignments) != payload.get("assignments_sha256")
+    ):
+        return False, "geometry split assignment manifest is invalid"
+    identifiers = []
+    observed_counts = {"train": 0, "validation": 0, "test": 0}
+    for item in assignments:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"geometry_id", "split"}
+            or not isinstance(item.get("geometry_id"), str)
+            or not item["geometry_id"]
+            or item.get("split") not in observed_counts
+        ):
+            return False, "geometry split contains an invalid assignment"
+        identifiers.append(item["geometry_id"])
+        observed_counts[item["split"]] += 1
+    if (
+        len(set(identifiers)) != geometry_count
+        or observed_counts != counts
+        or counts.get("validation") != geometry_count // 10
+        or counts.get("test") != geometry_count // 10
+        or counts.get("train") != geometry_count - 2 * (geometry_count // 10)
+    ):
+        return False, "geometry split counts or leakage check failed"
+    return runtime_hashes_match(
+        payload.get("runtime_hashes"),
+        {
+            "pipeline_supervisor.py",
+            "scripts/run_geometry_split_v1.py",
+            "scripts/run_joint_convergence_v2.py",
+            "scripts/run_replacement_pool.py",
+        },
+    )
+
+
+def supervisor_json_digest(payload: Any) -> str:
+    return json_payload_digest(payload)
+
+
 GATE_PAYLOAD_VERIFIERS = {
     "d65_colorimetry": verify_d65_gate,
     "reference_resolution": verify_reference_resolution_gate,
     "replacement_pool_ready": verify_replacement_pool_gate,
     "joint_numerical_convergence": verify_joint_v2_gate,
     "cross_solver_spectrum_validation": verify_cross_solver_v2_gate,
+    "circular_control": verify_circular_control_gate,
+    "geometry_split_frozen": verify_geometry_split_gate,
 }
+
+
+def validate_workflow_contract(policy: dict[str, Any]) -> None:
+    workflow = policy.get("workflow", {})
+    actions = workflow.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("workflow actions are missing")
+    action_names = [item.get("action") for item in actions if isinstance(item, dict)]
+    gate_names = [item.get("gate") for item in actions if isinstance(item, dict)]
+    if (
+        len(action_names) != len(actions)
+        or len(set(action_names)) != len(action_names)
+        or len(set(gate_names)) != len(gate_names)
+        or any(not isinstance(name, str) or not name for name in action_names + gate_names)
+    ):
+        raise ValueError("workflow action or gate identities are invalid")
+    for item in actions:
+        state = item.get("implementation_state", "ready")
+        if state == "deferred_until_pretraining_complete":
+            if item.get("requires_training_allowed") is not True:
+                raise ValueError("only training-gated actions may defer implementation")
+            continue
+        if state != "ready":
+            raise ValueError(f"unknown workflow implementation state: {state}")
+        gate = item["gate"]
+        if gate != "pool_manifest_frozen" and gate not in GATE_PAYLOAD_VERIFIERS:
+            raise ValueError(f"ready workflow gate lacks an independent verifier: {gate}")
+        if item.get("auditor"):
+            mode = item.get("finalization_mode")
+            if mode not in {"builtin", "generic", "external_transition"}:
+                raise ValueError(f"audited workflow action lacks a finalization mode: {item['action']}")
+            required = {"runner", "auditor_script", "worker_evidence", "audit_evidence"}
+            if mode == "generic":
+                required.add("finalizer")
+            if not required <= set(item):
+                raise ValueError(f"ready audited workflow action is incomplete: {item['action']}")
+            if mode == "builtin" and item["action"] not in BUILTIN_FINALIZATION_SPECS:
+                raise ValueError(f"builtin finalizer is not registered: {item['action']}")
+            for key in ("runner", "auditor_script"):
+                value = item.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"workflow action has invalid {key}: {item['action']}")
+    required = workflow.get("required_before_training")
+    intrinsic_gates = {"pool_complete", "strict_pool_validation"}
+    if not isinstance(required, list) or not set(required) <= set(gate_names) | intrinsic_gates:
+        raise ValueError("required_before_training references an unknown gate")
 
 
 def verify_gate_payload(
@@ -1723,6 +2081,18 @@ def verify_gate_evidence(
                         if semantic_valid:
                             semantic_valid, semantic_error = verify_gate_payload(
                                 gate, payload, pool
+                            )
+                        action_spec = gate_specs.get(gate, {})
+                        if (
+                            semantic_valid
+                            and action_spec.get("auditor")
+                            and not completed_request_authorized(
+                                payload.get("request"), action_spec.get("action", "")
+                            )
+                        ):
+                            semantic_valid = False
+                            semantic_error = (
+                                "gate evidence has no matching completed request acknowledgement"
                             )
                     except Exception as exc:
                         semantic_valid = False
@@ -1892,14 +2262,6 @@ def build_recovery_plan(
 
 
 def active_executor_lease(ack: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str | None]:
-    worker_pid = ack.get("worker_pid")
-    if worker_pid:
-        # A running ack with an explicit worker must be tied to that process.
-        # Do not let an unexpired lease hide an early process exit; the next
-        # supervisor pass can then perform bounded checkpoint recovery.
-        if pid_alive(worker_pid):
-            return True, ack.get("lease_expires_at")
-        return False, None
     expires = parse_timestamp(ack.get("lease_expires_at"))
     if expires is None:
         observed = parse_timestamp(ack.get("heartbeat_at") or ack.get("observed_at"))
@@ -1907,6 +2269,14 @@ def active_executor_lease(ack: dict[str, Any], policy: dict[str, Any]) -> tuple[
             expires = observed + timedelta(
                 seconds=int(policy["dispatch"].get("lease_timeout_seconds", 1800))
             )
+    worker_pid = ack.get("worker_pid")
+    if worker_pid:
+        # A running ack with an explicit worker must be tied to that process.
+        # PID liveness alone is not a heartbeat: a hung process must not hold
+        # the lease forever, while a live stale process must never be retried
+        # concurrently against the same checkpoint.
+        if not pid_alive(worker_pid):
+            return False, None
     if expires is None:
         return False, None
     return datetime.now().astimezone() < expires, expires.isoformat(timespec="seconds")
@@ -2209,6 +2579,14 @@ def validate_completed_ack(
     if not isinstance(paper_hashes, list) or not paper_hashes:
         return False, "completed ack paper_hashes must be a non-empty object list"
     seen_paper_paths = set()
+    locked_paper_hashes = {}
+    if policy is not None:
+        locked_paper_hashes = {
+            str(item.get("path", "")).replace("\\", "/").casefold(): str(
+                item.get("md5", "")
+            ).upper()
+            for item in policy.get("protected_files", [])
+        }
     for item in paper_hashes:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             return False, "completed ack paper_hashes must contain path/md5 objects"
@@ -2221,7 +2599,12 @@ def validate_completed_ack(
         actual = file_digest(path, "md5")
         if actual != expected:
             return False, f"completed ack paper hash mismatch: {item.get('path')}"
-        seen_paper_paths.add(str(path.relative_to(ROOT)).replace("\\", "/").casefold())
+        relative = str(path.relative_to(ROOT)).replace("\\", "/").casefold()
+        if relative in seen_paper_paths:
+            return False, f"completed ack repeats paper hash path: {item.get('path')}"
+        if locked_paper_hashes and locked_paper_hashes.get(relative) != expected:
+            return False, f"completed ack paper hash differs from policy lock: {item.get('path')}"
+        seen_paper_paths.add(relative)
     if policy is not None and policy.get("protected_files"):
         required_paper_paths = {
             str(item.get("path", "")).replace("\\", "/").casefold()
@@ -2617,16 +3000,33 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
                 request["status"] = "in_progress"
                 request["claimed_at"] = ack.get("observed_at", request.get("claimed_at", now_iso()))
                 request["lease_expires_at"] = lease_expires_at
+                request.pop("worker_stalled_at", None)
+                request.pop("recovery_blocked", None)
             else:
-                grace_active, grace_until = executor_finalization_grace(ack, policy)
-                if grace_active:
+                live_stale_worker = bool(
+                    ack.get("worker_pid") and pid_alive(ack.get("worker_pid"))
+                )
+                if live_stale_worker:
                     request["status"] = "in_progress"
-                    request["worker_exit_detected_at"] = request.get(
-                        "worker_exit_detected_at", now_iso()
+                    request["worker_stalled_at"] = request.get(
+                        "worker_stalled_at", now_iso()
                     )
-                    request["finalization_grace_until"] = grace_until
+                    request["lease_expires_at"] = lease_expires_at
+                    request["recovery_blocked"] = True
+                    request["last_error"] = (
+                        "live worker lease expired; concurrent recovery is blocked until "
+                        "the original process exits or is independently quarantined"
+                    )
                 else:
-                    retry_or_fail(request, max_attempts, "executor lease expired")
+                    grace_active, grace_until = executor_finalization_grace(ack, policy)
+                    if grace_active:
+                        request["status"] = "in_progress"
+                        request["worker_exit_detected_at"] = request.get(
+                            "worker_exit_detected_at", now_iso()
+                        )
+                        request["finalization_grace_until"] = grace_until
+                    else:
+                        retry_or_fail(request, max_attempts, "executor lease expired")
         elif ack_status in {"completed", "succeeded"}:
             if action == "stop_and_report":
                 request["status"] = "acknowledged"

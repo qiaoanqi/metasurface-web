@@ -201,6 +201,7 @@
     "manifest_path": ".state/active_pool.json"
   },
   "workflow": {
+    "contract_enforced": true,
     "actions": [
       {
         "action": "pool_validation",
@@ -218,6 +219,10 @@
         "evidence_version": "paper2-reference-holdout-audit-v1",
         "runner": "python scripts/launch_reference_resolution_holdout.py --n-jobs 16",
         "auditor": "python scripts/audit_reference_resolution_holdout.py",
+        "auditor_script": "scripts/audit_reference_resolution_holdout.py",
+        "worker_evidence": ".state/reference_resolution_holdout_v2.json",
+        "audit_evidence": ".state/reference_resolution_holdout_v1_audit.json",
+        "finalization_mode": "builtin",
         "binding": "solver_protocol"
       },
       {
@@ -226,6 +231,10 @@
         "evidence_version": "paper2-replacement-pool-audit-v1",
         "runner": "python scripts/run_replacement_pool.py --approved-protocol .state/replacement_protocol_v1.json --n-jobs 16 --resume",
         "auditor": "python scripts/audit_replacement_pool.py",
+        "auditor_script": "scripts/audit_replacement_pool.py",
+        "worker_evidence": ".state/replacement_pool_v1.json",
+        "audit_evidence": ".state/replacement_pool_v1_audit.json",
+        "finalization_mode": "external_transition",
         "requires_new_versioned_pool": true,
         "diagnostic_only": true
       },
@@ -234,7 +243,16 @@
         "gate": "joint_numerical_convergence",
         "evidence_version": "paper2-joint-convergence-audit-v1",
         "runner": "python scripts/run_joint_convergence_v2.py",
-        "auditor": "python scripts/audit_joint_convergence_v2.py"
+        "auditor": "python scripts/audit_joint_convergence_v2.py",
+        "auditor_script": "scripts/audit_joint_convergence_v2.py",
+        "worker_evidence": ".state/joint_convergence_v2.json",
+        "audit_evidence": ".state/joint_convergence_v2_audit.json",
+        "finalizer": "scripts/finalize_audited_gate.py",
+        "finalization_mode": "generic",
+        "scientific_failure_classifications": [
+          "replacement_pool_numerical_mismatch"
+        ],
+        "permanent_failure_classifications": []
       },
       {
         "action": "cross_solver_spectrum_validation",
@@ -242,34 +260,74 @@
         "evidence_version": "paper2-cross-solver-audit-v1",
         "runner": "python scripts/run_cross_solver_validation_v2.py --n-jobs 8",
         "auditor": "python scripts/audit_cross_solver_v2.py",
-        "checkpoint": ".state/cross_solver_v2_checkpoint.pkl"
+        "auditor_script": "scripts/audit_cross_solver_v2.py",
+        "worker_evidence": ".state/cross_solver_v2.json",
+        "audit_evidence": ".state/cross_solver_v2_audit.json",
+        "checkpoint": ".state/cross_solver_v2_checkpoint.pkl",
+        "finalizer": "scripts/finalize_audited_gate.py",
+        "finalization_mode": "generic",
+        "scientific_failure_classifications": [
+          "solver_self_convergence_failed",
+          "converged_cross_solver_divergence"
+        ],
+        "permanent_failure_classifications": [
+          "thirdparty_or_runtime_unavailable",
+          "implementation_control_failure",
+          "runtime_provenance_failure"
+        ]
       },
       {
         "action": "circular_control",
         "gate": "circular_control",
-        "evidence_version": "paper2-circular-control-v1"
+        "evidence_version": "paper2-circular-control-v1",
+        "runner": "python scripts/run_circular_control_v1.py --n-jobs 8 --resume",
+        "auditor": "python scripts/audit_circular_control_v1.py",
+        "auditor_script": "scripts/audit_circular_control_v1.py",
+        "worker_evidence": ".state/circular_control_v1.json",
+        "audit_evidence": ".state/circular_control_v1_audit.json",
+        "checkpoint": ".state/circular_control_v1_checkpoint.pkl",
+        "finalizer": "scripts/finalize_audited_gate.py",
+        "finalization_mode": "generic",
+        "scientific_failure_classifications": [
+          "circular_control_failed"
+        ],
+        "permanent_failure_classifications": []
       },
       {
         "action": "geometry_split_freeze",
         "gate": "geometry_split_frozen",
-        "evidence_version": "paper2-geometry-split-v1"
+        "evidence_version": "paper2-geometry-split-v1",
+        "runner": "python scripts/run_geometry_split_v1.py",
+        "auditor": "python scripts/audit_geometry_split_v1.py",
+        "auditor_script": "scripts/audit_geometry_split_v1.py",
+        "worker_evidence": ".state/geometry_split_v1.json",
+        "audit_evidence": ".state/geometry_split_v1_audit.json",
+        "finalizer": "scripts/finalize_audited_gate.py",
+        "finalization_mode": "generic",
+        "scientific_failure_classifications": [],
+        "permanent_failure_classifications": [
+          "geometry_split_invalid"
+        ]
       },
       {
         "action": "training_pilot",
         "gate": "training_pilot_passed",
         "evidence_version": "paper2-training-pilot-v1",
+        "implementation_state": "deferred_until_pretraining_complete",
         "requires_training_allowed": true
       },
       {
         "action": "closed_loop_evaluation",
         "gate": "closed_loop_evaluation_passed",
         "evidence_version": "paper2-closed-loop-v1",
+        "implementation_state": "deferred_until_pretraining_complete",
         "requires_training_allowed": true
       },
       {
         "action": "paper2_result_audit",
         "gate": "paper2_result_audit_passed",
         "evidence_version": "paper2-result-audit-v1",
+        "implementation_state": "deferred_until_pretraining_complete",
         "requires_training_allowed": true
       }
     ],

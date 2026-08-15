@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
 from scripts import run_reference_resolution_escalation as v1  # noqa: E402
+from scripts.policy_integrity_transaction import recover_policy_integrity_transaction  # noqa: E402
 from scripts.reference_v1_outcome import validate_worker_evidence  # noqa: E402
 
 
@@ -126,7 +127,10 @@ def main() -> int:
     parser.add_argument("--v1-checkpoint", default=None)
     parser.add_argument("--v1-plan", default=None)
     parser.add_argument("--output", default=".state/reference_resolution_budget_v2_plan.json")
+    parser.add_argument("--policy", default="pipeline_policy.json")
+    parser.add_argument("--integrity", default=".state/pipeline_integrity.json")
     args = parser.parse_args()
+    recover_policy_integrity_transaction(ROOT / args.policy, ROOT / args.integrity)
     audit_path = ROOT / args.v1_audit
     payload = build_plan(
         audit_path,

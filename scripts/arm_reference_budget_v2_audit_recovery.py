@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pipeline_supervisor as supervisor  # noqa: E402
+from scripts.policy_integrity_transaction import (  # noqa: E402
+    apply_policy_integrity_transaction,
+    json_file_sha256,
+    recover_policy_integrity_transaction,
+)
 from scripts.reference_budget_v2_lineage import (  # noqa: E402
     validate_raw_results,
     validate_source_diagnostic,
@@ -35,12 +40,14 @@ STATIC_EVIDENCE_PATHS = (
     "scripts/reference_budget_v2_lineage.py",
     "scripts/freeze_reference_budget_v2_audit_recovery.py",
     "scripts/arm_reference_budget_v2_audit_recovery.py",
+    "scripts/policy_integrity_transaction.py",
     "pipeline_supervisor.py",
     "tests/test_reference_resolution_budget_v2.py",
     "tests/test_reference_budget_v2_retry.py",
     "tests/test_finalize_paper2_request.py",
     "tests/test_paper2_auto_transition.py",
     "tests/test_reference_budget_v2_audit_recovery.py",
+    "tests/test_policy_integrity_transaction.py",
     "tests/test_pipeline_supervisor.py",
 )
 
@@ -86,6 +93,7 @@ def validate_terminal_source(
         "request_id": dispatch.get("request_id"),
         "attempt": int(dispatch.get("attempt", 0)),
     }
+    diagnostic_source = source | {"action": dispatch.get("action")}
     if (
         dispatch.get("action") != ACTION
         or dispatch.get("status") != "failed"
@@ -109,6 +117,7 @@ def validate_terminal_source(
         recovery.get("evidence_version") != RECOVERY_VERSION
         or recovery.get("source_request", {}).get("request_id") != source["request_id"]
         or int(recovery.get("source_request", {}).get("attempt", 0)) != source["attempt"]
+        or recovery.get("source_request", {}).get("action") != diagnostic_source["action"]
         or recovery.get("observation_only") is not True
         or recovery.get("scientific_outcome_authorized") is not False
         or recovery.get("training_allowed") is not False
@@ -157,7 +166,7 @@ def validate_terminal_source(
         if payload.get("classification") == "execution_integrity_failure":
             if str(item.get("sha256", "")).upper() != supervisor.file_digest(path):
                 raise ValueError("finalization diagnostic hash mismatch")
-            validate_source_diagnostic(payload, source)
+            validate_source_diagnostic(payload, diagnostic_source)
             diagnostic_items.append(item)
     if len(diagnostic_items) != 1:
         raise ValueError("source final ack must bind exactly one integrity diagnostic")
@@ -171,6 +180,7 @@ def create_seal(
     evidence_path: Path,
     history_path: Path,
     revision: int,
+    max_attempts: int,
 ) -> dict:
     pool_sha = str(dispatch.get("payload", {}).get("pool_sha256", "")).upper()
     target_request_id = supervisor.make_dispatch_id(
@@ -188,6 +198,7 @@ def create_seal(
         "target_request": {
             "request_id": target_request_id,
             "attempt": 1,
+            "max_attempts": max_attempts,
             "strategy_revision": revision,
         },
         "source_dispatch_history": binding(history_path),
@@ -207,7 +218,15 @@ def create_seal(
     }
 
 
-def apply(policy_path: Path, integrity_path: Path, dispatch_path: Path, ack_path: Path) -> dict:
+def apply(
+    policy_path: Path,
+    integrity_path: Path,
+    dispatch_path: Path,
+    ack_path: Path,
+    *,
+    fault_injector=None,
+) -> dict:
+    recover_policy_integrity_transaction(policy_path, integrity_path)
     policy = supervisor.load_json(policy_path, {}) or {}
     lock = supervisor.load_json(integrity_path, {}) or {}
     dispatch = supervisor.load_json(dispatch_path, {}) or {}
@@ -227,6 +246,9 @@ def apply(policy_path: Path, integrity_path: Path, dispatch_path: Path, ack_path
         raise ValueError("failed source request could not be archived")
 
     current = policy.get("strategy_override", {})
+    max_attempts = int(policy.get("dispatch", {}).get("max_attempts", 0))
+    if max_attempts < 1:
+        raise ValueError("audit recovery strategy requires a positive max_attempts")
     if current.get("based_on_request_id") == dispatch["request_id"]:
         revision = int(current.get("revision", 0))
     else:
@@ -235,7 +257,14 @@ def apply(policy_path: Path, integrity_path: Path, dispatch_path: Path, ack_path
         ) + 1
     seal_path = ROOT / SEAL_PATH
     seal = create_seal(
-        dispatch, ack, recovery_path, checkpoint_path, evidence_path, history_path, revision
+        dispatch,
+        ack,
+        recovery_path,
+        checkpoint_path,
+        evidence_path,
+        history_path,
+        revision,
+        max_attempts,
     )
     if seal_path.is_file():
         if (supervisor.load_json(seal_path, {}) or {}) != seal:
@@ -273,15 +302,22 @@ def apply(policy_path: Path, integrity_path: Path, dispatch_path: Path, ack_path
 
     updated = copy.deepcopy(policy)
     updated["strategy_override"] = strategy
-    supervisor.atomic_json(policy_path, updated)
     new_lock = {
         "schema_version": 1,
-        "policy_sha256": supervisor.file_digest(policy_path),
+        "policy_sha256": json_file_sha256(updated),
         "supervisor_sha256": supervisor.file_digest(supervisor_path),
         "protected_assets_revision": int(lock.get("protected_assets_revision", 0)) + 1,
         "note": lock.get("note", "Intentional policy and supervisor integrity revision."),
     }
-    supervisor.atomic_json(integrity_path, new_lock)
+    transaction = apply_policy_integrity_transaction(
+        policy_path,
+        integrity_path,
+        policy,
+        lock,
+        updated,
+        new_lock,
+        fault_injector=fault_injector,
+    )
     return {
         "status": "armed",
         "strategy_revision": revision,
@@ -290,6 +326,7 @@ def apply(policy_path: Path, integrity_path: Path, dispatch_path: Path, ack_path
         "integrity_revision": new_lock["protected_assets_revision"],
         "policy_sha256": new_lock["policy_sha256"],
         "supervisor_sha256": new_lock["supervisor_sha256"],
+        "transaction_journal": transaction["journal"],
     }
 
 

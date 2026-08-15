@@ -75,6 +75,13 @@ class WatchdogTests(unittest.TestCase):
                 watchdog.controller_state_healthy(100.0, 180.0, now=431.0)
             )
 
+    def test_stale_budget_outlives_blocking_transition(self):
+        watchdog = load_watchdog()
+        self.assertEqual(watchdog.controller_stale_after(15, child_timeout=600), 900)
+        self.assertGreater(
+            watchdog.controller_stale_after(15, child_timeout=600), 600
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

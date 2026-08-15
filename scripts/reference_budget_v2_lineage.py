@@ -111,16 +111,22 @@ def validate_raw_results(checkpoint: dict[str, Any]) -> None:
 
 
 def validate_source_diagnostic(payload: dict[str, Any], source: dict[str, Any]) -> None:
-    expected_request = {
-        "request_id": source.get("request_id"),
-        "attempt": int(source.get("attempt", 0)),
-        "action": ACTION,
-    }
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"request_id", "attempt", "action"}
+        or not isinstance(source.get("request_id"), str)
+        or not source["request_id"]
+        or not isinstance(source.get("attempt"), int)
+        or isinstance(source.get("attempt"), bool)
+        or source["attempt"] < 1
+        or source.get("action") != ACTION
+    ):
+        raise ValueError("source diagnostic identity is invalid")
     if (
         payload.get("schema_version") != 1
         or payload.get("evidence_version") != DIAGNOSTIC_VERSION
         or payload.get("classification") != "execution_integrity_failure"
-        or payload.get("request") != expected_request
+        or payload.get("request") != source
         or payload.get("training_allowed") is not False
     ):
         raise ValueError("source finalization diagnostic identity is invalid")
@@ -170,10 +176,19 @@ def validate_lineage(
     seal_path, seal = find_seal(root, dispatch)
     target = seal.get("target_request")
     source = seal.get("source_request")
+    try:
+        first_attempt = int(target.get("attempt", 0)) if isinstance(target, dict) else 0
+        max_attempts = int(target.get("max_attempts", 0)) if isinstance(target, dict) else 0
+        dispatch_max_attempts = int(dispatch.get("max_attempts", 0))
+    except (TypeError, ValueError):
+        first_attempt = max_attempts = dispatch_max_attempts = 0
     if (
         not isinstance(target, dict)
         or target.get("request_id") != active["request_id"]
-        or int(target.get("attempt", 0)) != active["attempt"]
+        or first_attempt != 1
+        or max_attempts < first_attempt
+        or dispatch_max_attempts != max_attempts
+        or not first_attempt <= active["attempt"] <= max_attempts
         or int(target.get("strategy_revision", 0))
         != int(dispatch.get("strategy_revision", 0))
         or not isinstance(source, dict)
@@ -193,6 +208,7 @@ def validate_lineage(
         not isinstance(source_dispatch, dict)
         or source_dispatch.get("request_id") != source["request_id"]
         or int(source_dispatch.get("attempt", 0)) != int(source["attempt"])
+        or source_dispatch.get("action") != ACTION
         or source_dispatch.get("status") != "failed"
         or source_dispatch.get("terminal_failure") is not True
         or str(source_dispatch.get("failure_class", "")).lower() != "permanent"
@@ -263,7 +279,14 @@ def validate_lineage(
         payload = load_json(path)
         if payload.get("classification") == "execution_integrity_failure":
             require_binding(root, item, "source finalization diagnostic")
-            validate_source_diagnostic(payload, source)
+            validate_source_diagnostic(
+                payload,
+                {
+                    "request_id": source["request_id"],
+                    "attempt": int(source["attempt"]),
+                    "action": source_dispatch["action"],
+                },
+            )
             diagnostic_count += 1
     if diagnostic_count != 1:
         raise ValueError("source final ack lacks one exact integrity diagnostic")

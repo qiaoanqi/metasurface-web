@@ -9,7 +9,12 @@ import pipeline_supervisor as supervisor
 from scripts import arm_reference_budget_v2_audit_recovery as arm
 from scripts import prepare_reference_budget_v2_retry as retry
 from scripts import run_reference_resolution_budget_v2 as budget
-from scripts.reference_budget_v2_lineage import binding, file_digest, validate_lineage
+from scripts.reference_budget_v2_lineage import (
+    binding,
+    file_digest,
+    validate_lineage,
+    validate_source_diagnostic,
+)
 
 
 def cases():
@@ -91,7 +96,7 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             self.recovery,
             {
                 "evidence_version": "paper2-reference-budget-v2-audit-recovery-v1",
-                "source_request": self.source,
+                "source_request": self.source | {"action": "joint_numerical_convergence"},
                 "observation_only": True,
                 "checkpoint_reuse_authorized": False,
                 "scientific_outcome_authorized": False,
@@ -146,7 +151,8 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             {
                 "evidence_version": "paper2-reference-budget-v2-post-terminal-seal-v1",
                 "source_request": self.source,
-                "target_request": self.active | {"strategy_revision": 9},
+                "target_request": self.active
+                | {"max_attempts": 3, "strategy_revision": 9},
                 "source_dispatch_history": binding(self.root, self.history),
                 "source_final_ack": self.source_ack,
                 "live_recovery_observation": binding(self.root, self.recovery),
@@ -166,6 +172,7 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             "action": "joint_numerical_convergence",
             "status": "in_progress",
             "strategy_revision": 9,
+            "max_attempts": 3,
             "strategy_based_on": self.source["request_id"],
             "strategy_evidence": [
                 binding(self.root, self.seal),
@@ -216,6 +223,78 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
         self.assertEqual(result["producer_request"], self.source)
         self.assertEqual(result["active_request"], self.active)
 
+    def test_same_target_attempts_two_and_three_preserve_sealed_bytes(self):
+        checkpoint_before = self.checkpoint.read_bytes()
+        evidence_before = self.evidence.read_bytes()
+        for attempt in (2, 3):
+            with self.subTest(attempt=attempt):
+                dispatch = self.dispatch | {"attempt": attempt}
+                ack = self.ack | {"attempt": attempt}
+                result = validate_lineage(
+                    self.root, dispatch, ack, self.checkpoint, self.evidence
+                )
+                self.assertEqual(
+                    result["active_request"],
+                    {"request_id": self.active["request_id"], "attempt": attempt},
+                )
+                self.assertEqual(self.checkpoint.read_bytes(), checkpoint_before)
+                self.assertEqual(self.evidence.read_bytes(), evidence_before)
+
+    def test_attempt_bounds_request_and_revision_fail_closed(self):
+        cases = (
+            (self.dispatch | {"attempt": 4}, self.ack | {"attempt": 4}),
+            (
+                self.dispatch | {"request_id": "different-target-request"},
+                self.ack | {"request_id": "different-target-request"},
+            ),
+            (self.dispatch | {"strategy_revision": 10}, self.ack),
+        )
+        for dispatch, ack in cases:
+            with self.subTest(dispatch=dispatch):
+                with self.assertRaisesRegex(ValueError, "seal request identity"):
+                    validate_lineage(
+                        self.root, dispatch, ack, self.checkpoint, self.evidence
+                    )
+
+    def test_each_attempt_requires_exact_checkpoint_and_evidence_bytes(self):
+        checkpoint_before = self.checkpoint.read_bytes()
+        evidence_before = self.evidence.read_bytes()
+        dispatch = self.dispatch | {"attempt": 2}
+        ack = self.ack | {"attempt": 2}
+        self.checkpoint.write_bytes(checkpoint_before + b"changed")
+        with self.assertRaisesRegex(ValueError, "sealed checkpoint binding mismatch"):
+            validate_lineage(self.root, dispatch, ack, self.checkpoint, self.evidence)
+        self.checkpoint.write_bytes(checkpoint_before)
+        self.evidence.write_bytes(evidence_before + b" ")
+        with self.assertRaisesRegex(ValueError, "sealed worker evidence binding mismatch"):
+            validate_lineage(self.root, dispatch, ack, self.checkpoint, self.evidence)
+
+    def test_source_diagnostic_requires_exact_version_identity_and_training_lock(self):
+        source = self.source | {"action": "joint_numerical_convergence"}
+        valid = supervisor.load_json(self.diagnostic)
+        validate_source_diagnostic(valid, source)
+        invalid_payloads = []
+        for key, value in (
+            ("evidence_version", "wrong-version"),
+            ("training_allowed", True),
+        ):
+            payload = dict(valid)
+            payload[key] = value
+            invalid_payloads.append(payload)
+        for key, value in (
+            ("request_id", "other-request"),
+            ("attempt", 2),
+            ("action", "other-action"),
+        ):
+            payload = dict(valid)
+            payload["request"] = dict(valid["request"])
+            payload["request"][key] = value
+            invalid_payloads.append(payload)
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, "diagnostic identity"):
+                    validate_source_diagnostic(payload, source)
+
     def test_terminal_source_accepts_complete_bound_evidence(self):
         self.use_temp_arm_root()
         arm.validate_terminal_source(
@@ -240,6 +319,7 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
 
         policy_path = self.root / "pipeline_policy.json"
         policy = {
+            "dispatch": {"max_attempts": 3},
             "strategy_override": {
                 "enabled": True,
                 "decision": "retry_same_gate",
@@ -286,8 +366,24 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
         self.addCleanup(setattr, supervisor, "ROOT", old_supervisor_root)
         self.addCleanup(setattr, supervisor, "STATE", old_supervisor_state)
 
+        def crash_after_policy(stage):
+            if stage == "after_policy_replace":
+                raise RuntimeError("injected crash after policy replace")
+
+        with self.assertRaisesRegex(RuntimeError, "injected crash"):
+            arm.apply(
+                policy_path,
+                integrity_path,
+                dispatch_path,
+                ack_path,
+                fault_injector=crash_after_policy,
+            )
+        self.assertNotEqual(
+            supervisor.file_digest(policy_path),
+            str(supervisor.load_json(integrity_path)["policy_sha256"]).upper(),
+        )
         result = arm.apply(policy_path, integrity_path, dispatch_path, ack_path)
-        self.assertEqual(result["status"], "armed")
+        self.assertEqual(result["status"], "already_armed")
         self.assertEqual(result["strategy_revision"], 3)
         self.assertEqual(result["integrity_revision"], 27)
         repeated = arm.apply(policy_path, integrity_path, dispatch_path, ack_path)
@@ -298,6 +394,7 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
         seal = supervisor.load_json(self.seal)
         self.assertEqual(seal["source_request"], self.source)
         self.assertEqual(seal["target_request"]["strategy_revision"], 3)
+        self.assertEqual(seal["target_request"]["max_attempts"], 3)
         self.assertEqual(strategy["revision"], 3)
         self.assertEqual(strategy["based_on_request_id"], self.source["request_id"])
         history = supervisor.load_json(self.history)
@@ -311,6 +408,7 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             "action": "joint_numerical_convergence",
             "status": "in_progress",
             "strategy_revision": target["strategy_revision"],
+            "max_attempts": target["max_attempts"],
             "strategy_based_on": self.source["request_id"],
             "strategy_evidence": strategy["evidence"],
         }

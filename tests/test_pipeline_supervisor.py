@@ -809,6 +809,112 @@ class GatePayloadVerifierTests(unittest.TestCase):
         self.assertFalse(supervisor.verify_cross_solver_v2_gate(tampered, pool)[0])
 
 
+class NewGateContractTests(unittest.TestCase):
+    def test_geometry_split_verifier_rejects_duplicate_geometry(self):
+        assignments = [
+            {"geometry_id": f"g-{index}", "split": "train" if index < 8 else "validation" if index == 8 else "test"}
+            for index in range(10)
+        ]
+        payload = {
+            "passed": True,
+            "classification": "geometry_split_frozen",
+            "training_allowed": False,
+            "pool_sha256": "A" * 64,
+            "split_version": "sha256-ranked-80-10-10-v1",
+            "ratios": {"train": 0.8, "validation": 0.1, "test": 0.1},
+            "checks": {
+                "active_pool_hash_verified": True,
+                "canonical_axes_verified": True,
+                "exact_dual_polarization_pairs": True,
+                "stable_geometry_ids_verified": True,
+                "geometry_level_no_leakage": True,
+                "split_counts_exact": True,
+            },
+            "geometry_count": 10,
+            "record_count": 20,
+            "counts": {"train": 8, "validation": 1, "test": 1},
+            "assignments": assignments,
+            "assignments_sha256": supervisor.json_payload_digest(assignments),
+            "runtime_hashes": {},
+        }
+        with patch.object(
+            supervisor, "audited_worker_payload", return_value=({}, None)
+        ), patch.object(supervisor, "runtime_hashes_match", return_value=(True, None)):
+            self.assertEqual(
+                supervisor.verify_geometry_split_gate(payload, {"sha256": "A" * 64}),
+                (True, None),
+            )
+            tampered = copy.deepcopy(payload)
+            tampered["assignments"][1]["geometry_id"] = tampered["assignments"][0]["geometry_id"]
+            tampered["assignments_sha256"] = supervisor.json_payload_digest(
+                tampered["assignments"]
+            )
+            self.assertFalse(
+                supervisor.verify_geometry_split_gate(tampered, {"sha256": "A" * 64})[0]
+            )
+
+    def test_circular_verifier_enforces_registered_symmetry_threshold(self):
+        geometries = [
+            {"control_id": f"c-{index}", "D": 120.0, "H": 200.0, "P": 400.0}
+            for index in range(12)
+        ]
+        metrics = [
+            {
+                "id": f"c-{index}",
+                "valid": True,
+                "max_pointwise_conservation_error": 1e-10,
+                "polarization_R_max_abs": 1e-10,
+                "polarization_T_max_abs": 1e-10,
+                "polarization_dE00": 1e-5,
+            }
+            for index in range(12)
+        ]
+        payload = {
+            "passed": True,
+            "classification": "circular_control_passed",
+            "training_allowed": False,
+            "pool_sha256": "B" * 64,
+            "checks": {
+                "exact_frozen_geometry_set": True,
+                "no_task_failures": True,
+                "pointwise_conservation": True,
+                "circular_polarization_spectrum_symmetry": True,
+                "circular_polarization_color_symmetry": True,
+            },
+            "protocol": {
+                "material": "TiO2",
+                "substrate": "SiO2",
+                "background": "air",
+                "nG_requested": 131,
+                "nG_retained": 121,
+                "Nxy": 256,
+                "wavelength_step_nm": 5.0,
+            },
+            "thresholds": {
+                "pointwise_conservation_lte": 1e-6,
+                "polarization_spectrum_max_abs_lte": 1e-7,
+                "polarization_dE00_lte": 0.01,
+            },
+            "selected_geometries": geometries,
+            "metrics": metrics,
+            "raw_checkpoint": {"tasks": 12},
+            "runtime_hashes": {},
+        }
+        with patch.object(
+            supervisor, "audited_worker_payload", return_value=({}, None)
+        ), patch.object(supervisor, "bindings_exist", return_value=(True, None)), patch.object(
+            supervisor, "runtime_hashes_match", return_value=(True, None)
+        ):
+            self.assertEqual(
+                supervisor.verify_circular_control_gate(payload, {"sha256": "B" * 64}),
+                (True, None),
+            )
+            payload["metrics"][0]["polarization_R_max_abs"] = 1e-6
+            self.assertFalse(
+                supervisor.verify_circular_control_gate(payload, {"sha256": "B" * 64})[0]
+            )
+
+
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1060,6 +1166,9 @@ class ControllerTests(unittest.TestCase):
             "action": "joint_numerical_convergence",
             "status": "in_progress",
             "payload": {"pool_sha256": pool_sha},
+            "strategy_evidence": [
+                {"path": ".state/reference_resolution_budget_v2_plan.json"}
+            ],
         }
         supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
         checkpoint = self.root / "checkpoint.pkl"
@@ -1123,6 +1232,9 @@ class ControllerTests(unittest.TestCase):
             "action": "joint_numerical_convergence",
             "status": "in_progress",
             "payload": {"pool_sha256": pool_sha},
+            "strategy_evidence": [
+                {"path": ".state/reference_resolution_budget_v2_plan.json"}
+            ],
         }
         supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
         checkpoint = self.root / "checkpoint.pkl"
@@ -1176,6 +1288,9 @@ class ControllerTests(unittest.TestCase):
             "status": "in_progress",
             "strategy_based_on": "source-request",
             "payload": {"pool_sha256": pool_sha},
+            "strategy_evidence": [
+                {"path": ".state/reference_resolution_budget_v2_plan.json"}
+            ],
         }
         supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
         checkpoint = self.root / "checkpoint.pkl"
@@ -1336,11 +1451,166 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("immutable asset", error)
 
+    def test_completed_ack_requires_exact_policy_paper_hash(self):
+        output = self.root / "evidence.json"
+        output.write_text("{}\n", encoding="ascii")
+        paper = self.root / "paper.tex"
+        paper.write_text("locked paper\n", encoding="ascii")
+        locked_md5 = supervisor.file_digest(paper, "md5")
+        self.policy["protected_files"] = [{"path": "paper.tex", "md5": locked_md5}]
+        ack = {
+            "checks": {"pool_sha256": "ABC"},
+            "outputs": [
+                {
+                    "path": "evidence.json",
+                    "material": "audit",
+                    "sha256": supervisor.file_digest(output),
+                }
+            ],
+            "paper_hashes": [{"path": "paper.tex", "md5": locked_md5}],
+        }
+        self.assertEqual(
+            supervisor.validate_completed_ack(ack, "ABC", self.policy), (True, None)
+        )
+
+        paper.write_text("changed paper\n", encoding="ascii")
+        changed_md5 = supervisor.file_digest(paper, "md5")
+        ack["paper_hashes"] = [{"path": "paper.tex", "md5": changed_md5}]
+        valid, error = supervisor.validate_completed_ack(ack, "ABC", self.policy)
+        self.assertFalse(valid)
+        self.assertIn("policy lock", error)
+
+    def test_audited_gate_is_provisional_until_completed_ack(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        request = {"request_id": "gate-request", "attempt": 1}
+        evidence = self.root / "gate-evidence.json"
+        supervisor.atomic_json(
+            evidence,
+            {
+                "schema_version": 1,
+                "evidence_version": "transactional-gate-v1",
+                "passed": True,
+                "pool_sha256": pool_sha,
+                "request": request,
+            },
+        )
+        supervisor.atomic_json(
+            supervisor.GATE_STATE,
+            {
+                "schema_version": 1,
+                "gates": {
+                    "transactional_gate": {
+                        "passed": True,
+                        "evidence": [
+                            {
+                                "path": "gate-evidence.json",
+                                "sha256": supervisor.file_digest(evidence),
+                            }
+                        ],
+                    }
+                },
+            },
+        )
+        supervisor.atomic_json(
+            supervisor.DISPATCH_REQUEST,
+            {
+                **request,
+                "action": "transactional_action",
+                "status": "in_progress",
+            },
+        )
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {**request, "status": "running"},
+        )
+        policy = copy.deepcopy(self.policy)
+        policy["workflow"] = {
+            "actions": [
+                {
+                    "action": "transactional_action",
+                    "gate": "transactional_gate",
+                    "evidence_version": "transactional-gate-v1",
+                    "auditor": "python independent_auditor.py",
+                }
+            ],
+            "required_before_training": ["transactional_gate"],
+        }
+        with patch.dict(
+            supervisor.GATE_PAYLOAD_VERIFIERS,
+            {"transactional_gate": lambda _payload, _pool: (True, None)},
+        ):
+            gates, _details = supervisor.verify_gate_evidence(
+                policy, {"passed": True, "sha256": pool_sha}
+            )
+            self.assertFalse(gates["transactional_gate"])
+            supervisor.atomic_json(
+                supervisor.EXECUTOR_ACK,
+                {**request, "status": "completed"},
+            )
+            gates, _details = supervisor.verify_gate_evidence(
+                policy, {"passed": True, "sha256": pool_sha}
+            )
+            self.assertTrue(gates["transactional_gate"])
+
     def test_policy_integrity_lock_is_required_when_enabled(self):
         self.policy["integrity"]["enforce"] = True
         result = supervisor.verify_policy_integrity(self.policy)
         self.assertFalse(result["passed"])
         self.assertIn("lock", result["error"])
+
+    def test_workflow_contract_rejects_unknown_ready_gate_but_allows_deferred_training(self):
+        policy = {
+            "workflow": {
+                "actions": [
+                    {"action": "unknown", "gate": "unknown_gate"},
+                    {
+                        "action": "future_training",
+                        "gate": "future_training_gate",
+                        "implementation_state": "deferred_until_pretraining_complete",
+                        "requires_training_allowed": True,
+                    },
+                ],
+                "required_before_training": [],
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "lacks an independent verifier"):
+            supervisor.validate_workflow_contract(policy)
+        policy["workflow"]["actions"] = [policy["workflow"]["actions"][1]]
+        supervisor.validate_workflow_contract(policy)
+
+    def test_joint_finalizer_profile_is_frozen_by_dispatch_evidence(self):
+        policy = {
+            "workflow": {
+                "actions": [
+                    {
+                        "action": "joint_numerical_convergence",
+                        "worker_evidence": ".state/joint_convergence_v2.json",
+                        "finalizer": "scripts/finalize_audited_gate.py",
+                    }
+                ]
+            }
+        }
+        normal = supervisor.action_finalization_spec(
+            policy, "joint_numerical_convergence", {"strategy_evidence": []}
+        )
+        self.assertEqual(normal["worker_evidence"], ".state/joint_convergence_v2.json")
+        diagnostic = supervisor.action_finalization_spec(
+            policy,
+            "joint_numerical_convergence",
+            {
+                "strategy_evidence": [
+                    {
+                        "path": ".state/reference_resolution_budget_v2_plan.json",
+                        "sha256": "A" * 64,
+                    }
+                ]
+            },
+        )
+        self.assertEqual(
+            diagnostic["worker_evidence"],
+            ".state/reference_resolution_budget_v2.json",
+        )
+        self.assertEqual(diagnostic["finalizer"], "scripts/finalize_paper2_request.py")
 
     def write_valid_active_pool_chain(self, pool_spec_updates=None):
         replacement_dir = self.root / "data" / "replacement"
@@ -2002,6 +2272,35 @@ class ControllerTests(unittest.TestCase):
             second = supervisor.evaluate_once(self.policy)
         self.assertEqual(second["dispatch"]["status"], "pending")
         self.assertEqual(second["dispatch"]["attempt"], 2)
+
+    def test_live_worker_with_expired_lease_blocks_concurrent_retry(self):
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            first = supervisor.evaluate_once(self.policy)
+        request = first["dispatch"]
+        lease = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat(
+            timespec="seconds"
+        )
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {
+                "request_id": request["request_id"],
+                "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
+                "status": "running",
+                "observed_at": supervisor.now_iso(),
+                "lease_expires_at": lease,
+                "worker_pid": 4242,
+            },
+        )
+        with patch.object(
+            supervisor, "pid_alive", side_effect=lambda pid: int(pid) == 4242
+        ):
+            second = supervisor.evaluate_once(self.policy)
+        self.assertEqual(second["dispatch"]["status"], "in_progress")
+        self.assertEqual(second["dispatch"]["attempt"], 1)
+        self.assertTrue(second["dispatch"]["recovery_blocked"])
+        self.assertIn("concurrent recovery is blocked", second["dispatch"]["last_error"])
 
     def test_dead_worker_does_not_hide_behind_future_lease(self):
         self.write_status({"status": "running", "pid": 999999})

@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pipeline_supervisor import atomic_json, file_digest, load_json  # noqa: E402
+from scripts.policy_integrity_transaction import (  # noqa: E402
+    apply_policy_integrity_transaction,
+    json_file_sha256,
+    recover_policy_integrity_transaction,
+)
 from scripts.reference_v1_outcome import validate_audit as validate_v1_audit  # noqa: E402
 
 
@@ -26,12 +31,14 @@ EVIDENCE_PATHS = (
     "scripts/audit_reference_resolution_budget_v2.py",
     "scripts/freeze_reference_budget_v2.py",
     "scripts/advance_reference_budget_v2_strategy.py",
+    "scripts/policy_integrity_transaction.py",
     "scripts/paper2_auto_transition.py",
     "scripts/freeze_reference_holdout_plan.py",
     "scripts/advance_reference_holdout_strategy.py",
     "scripts/reference_v1_outcome.py",
     "tests/test_reference_resolution_budget_v2.py",
     "tests/test_reference_budget_v2_retry.py",
+    "tests/test_policy_integrity_transaction.py",
     "tests/test_paper2_auto_transition.py",
 )
 
@@ -108,7 +115,14 @@ def build_strategy(policy: dict, dispatch: dict, evidence: list[dict]) -> dict:
     }
 
 
-def apply_strategy(policy_path: Path, integrity_path: Path, dispatch_path: Path) -> dict:
+def apply_strategy(
+    policy_path: Path,
+    integrity_path: Path,
+    dispatch_path: Path,
+    *,
+    fault_injector=None,
+) -> dict:
+    recover_policy_integrity_transaction(policy_path, integrity_path)
     policy = load_json(policy_path, {}) or {}
     integrity = load_json(integrity_path, {}) or {}
     dispatch = load_json(dispatch_path, {}) or {}
@@ -151,11 +165,10 @@ def apply_strategy(policy_path: Path, integrity_path: Path, dispatch_path: Path)
         raise ValueError("existing strategy for this failed request differs")
     updated = copy.deepcopy(policy)
     updated["strategy_override"] = build_strategy(policy, dispatch, evidence)
-    atomic_json(policy_path, updated)
     new_revision = int(integrity.get("protected_assets_revision", 0)) + 1
     new_lock = {
         "schema_version": 1,
-        "policy_sha256": file_digest(policy_path),
+        "policy_sha256": json_file_sha256(updated),
         "supervisor_sha256": file_digest(supervisor_path),
         "protected_assets_revision": new_revision,
         "note": integrity.get(
@@ -163,7 +176,15 @@ def apply_strategy(policy_path: Path, integrity_path: Path, dispatch_path: Path)
             "Update this lock atomically with an intentional policy or supervisor revision; a mismatch blocks dispatch.",
         ),
     }
-    atomic_json(integrity_path, new_lock)
+    transaction = apply_policy_integrity_transaction(
+        policy_path,
+        integrity_path,
+        policy,
+        integrity,
+        updated,
+        new_lock,
+        fault_injector=fault_injector,
+    )
     return {
         "status": "updated",
         "strategy_revision": updated["strategy_override"]["revision"],
@@ -172,6 +193,7 @@ def apply_strategy(policy_path: Path, integrity_path: Path, dispatch_path: Path)
         "policy_sha256": new_lock["policy_sha256"],
         "supervisor_sha256": new_lock["supervisor_sha256"],
         "evidence": evidence,
+        "transaction_journal": transaction["journal"],
     }
 
 

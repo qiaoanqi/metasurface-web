@@ -81,6 +81,11 @@ def controller_state_healthy(
     return current_time - max(started_at, state_mtime) < stale_after
 
 
+def controller_stale_after(interval: int, child_timeout: int = 600) -> int:
+    """Outlive the controller's longest registered blocking child process."""
+    return max(900, int(child_timeout) + 300, int(interval) * 10)
+
+
 def start_controller(interval: int) -> subprocess.Popen:
     STATE.mkdir(parents=True, exist_ok=True)
     stdout = STDOUT_PATH.open("ab")
@@ -111,7 +116,7 @@ def run(interval: int, restart_delay: int, max_restarts_per_hour: int) -> int:
     child_started_at = 0.0
     restart_times: list[float] = []
     stopping = False
-    stale_after = max(180, interval * 10)
+    stale_after = controller_stale_after(interval)
 
     def stop(_signum=None, _frame=None):
         nonlocal stopping
