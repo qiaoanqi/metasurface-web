@@ -73,7 +73,8 @@
         "action": "reference_resolution",
         "gate": "reference_resolution",
         "evidence_version": "paper2-reference-holdout-audit-v1",
-        "runner": "python scripts/audit_reference_resolution_holdout.py",
+        "runner": "python scripts/launch_reference_resolution_holdout.py --n-jobs 16",
+        "auditor": "python scripts/audit_reference_resolution_holdout.py",
         "binding": "solver_protocol"
       },
       {

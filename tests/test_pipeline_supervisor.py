@@ -567,6 +567,14 @@ class ControllerTests(unittest.TestCase):
             actions["reference_resolution"]["evidence_version"],
             "paper2-reference-holdout-audit-v1",
         )
+        self.assertIn(
+            "launch_reference_resolution_holdout.py",
+            actions["reference_resolution"]["runner"],
+        )
+        self.assertIn(
+            "audit_reference_resolution_holdout.py",
+            actions["reference_resolution"]["auditor"],
+        )
         self.assertEqual(
             actions["joint_numerical_convergence"]["evidence_version"],
             "paper2-joint-convergence-v2",
@@ -586,11 +594,15 @@ class ControllerTests(unittest.TestCase):
         joint_instruction = supervisor.build_instruction(
             "joint_numerical_convergence", self.policy
         )
+        reference_instruction = supervisor.build_instruction(
+            "reference_resolution", self.policy
+        )
         cross_instruction = supervisor.build_instruction(
             "cross_solver_spectrum_validation", self.policy
         )
         self.assertIn("run_joint_convergence_v2.py", joint_instruction)
         self.assertIn("activated replacement pool", joint_instruction)
+        self.assertIn("launch_reference_resolution_holdout.py", reference_instruction)
         self.assertIn("run_cross_solver_validation_v2.py", cross_instruction)
         self.assertIn("active pool", cross_instruction)
 
