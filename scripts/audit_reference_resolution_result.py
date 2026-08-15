@@ -64,6 +64,12 @@ AXIS_SPECS = {
     "grid": (GRID_384, 1.0, ORDER_19, 1.0),
     "spectral": (FINE_CONFIG, 1.0, FINE_CONFIG, 0.5),
 }
+REFERENCE_RESULT_SCHEMA = "reference_resolution_v1"
+JOINT_V1_1_RESULT_SCHEMA = "joint_convergence_v1_1"
+RESULT_SCHEMA_FIELDS = {
+    REFERENCE_RESULT_SCHEMA: {"status", "R", "T", "time_s"},
+    JOINT_V1_1_RESULT_SCHEMA: {"status", "R", "T"},
+}
 
 
 def load_pickle(path: Path) -> dict:
@@ -92,10 +98,16 @@ def validate_runtime_hashes(runtime_hashes: dict) -> None:
             raise ValueError(f"runtime hash mismatch: {name}")
 
 
-def validate_result(result: dict, expected: dict) -> None:
+def validate_result(
+    result: dict,
+    expected: dict,
+    schema: str = REFERENCE_RESULT_SCHEMA,
+) -> None:
     if not isinstance(result, dict) or result.get("status") != "ok":
         raise ValueError(f"task failed or malformed: {expected['id']}")
-    expected_fields = set(expected) | {"status", "R", "T", "time_s"}
+    if schema not in RESULT_SCHEMA_FIELDS:
+        raise ValueError(f"unknown result schema: {schema}")
+    expected_fields = set(expected) | RESULT_SCHEMA_FIELDS[schema]
     if set(result) != expected_fields:
         raise ValueError(f"task field set mismatch: {expected['id']}")
     for name in ("id", "geometry_index", "pol", "requested_nG", "retained_nG", "Nxy"):
@@ -123,9 +135,10 @@ def validate_result(result: dict, expected: dict) -> None:
         raise ValueError(f"task spectrum is outside physical bounds: {expected['id']}")
     if np.max(np.abs(reflectance + transmittance - 1.0)) > POINTWISE_CONSERVATION_LIMIT:
         raise ValueError(f"task violates energy conservation: {expected['id']}")
-    time_s = float(result.get("time_s", -1.0))
-    if not np.isfinite(time_s) or time_s < 0.0:
-        raise ValueError(f"task runtime is invalid: {expected['id']}")
+    if schema == REFERENCE_RESULT_SCHEMA:
+        time_s = float(result.get("time_s", -1.0))
+        if not np.isfinite(time_s) or time_s < 0.0:
+            raise ValueError(f"task runtime is invalid: {expected['id']}")
 
 
 def validate_reference_checkpoint(
@@ -254,7 +267,9 @@ def production_results(v1_checkpoint: dict, selected: list[dict]) -> dict:
             }
             if identifier not in results:
                 raise ValueError(f"v1.1 production task missing: {identifier}")
-            validate_result(results[identifier], expected)
+            validate_result(
+                results[identifier], expected, schema=JOINT_V1_1_RESULT_SCHEMA
+            )
             output[(index, pol)] = results[identifier]
     return output
 
@@ -469,6 +484,22 @@ def build_audit(
     }
 
 
+def persist_audit(output: Path, audit: dict) -> None:
+    if not output.exists():
+        atomic_json(output, audit)
+        return
+    existing = load_json(output, {}) or {}
+    replace_execution_failure = bool(
+        existing.get("passed") is False
+        and existing.get("classification") == "execution_integrity_failure"
+        and audit.get("classification") != "execution_integrity_failure"
+    )
+    if existing != audit and not replace_execution_failure:
+        raise ValueError("existing reference audit differs; bump the evidence version")
+    if replace_execution_failure:
+        atomic_json(output, audit)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reference-evidence", default=".state/reference_resolution_v1.json")
@@ -509,12 +540,10 @@ def main() -> int:
             },
         }
     output = ROOT / args.output
-    if output.exists():
-        existing = load_json(output, {}) or {}
-        if existing != audit:
-            raise SystemExit("existing reference audit differs; bump the evidence version")
-    else:
-        atomic_json(output, audit)
+    try:
+        persist_audit(output, audit)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps({"passed": audit["passed"], "classification": audit["classification"]}))
     return 0 if audit["passed"] else 2
 

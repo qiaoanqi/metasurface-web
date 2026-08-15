@@ -44,6 +44,27 @@ class ReferenceResolutionAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Nxy"):
             validate_result(result, expected)
 
+    def test_versioned_result_schemas_are_strict(self):
+        result, expected = self.result_pair()
+        historical = dict(result)
+        historical.pop("time_s")
+        validate_result(
+            historical,
+            expected,
+            schema=audit.JOINT_V1_1_RESULT_SCHEMA,
+        )
+
+        with self.assertRaisesRegex(ValueError, "field set mismatch"):
+            validate_result(historical, expected)
+
+        historical["unknown"] = "rejected"
+        with self.assertRaisesRegex(ValueError, "field set mismatch"):
+            validate_result(
+                historical,
+                expected,
+                schema=audit.JOINT_V1_1_RESULT_SCHEMA,
+            )
+
     def test_physics_controls_are_all_required(self):
         payload = {
             "solver_verdict": "pass",
@@ -63,6 +84,29 @@ class ReferenceResolutionAuditTests(unittest.TestCase):
         self.assertEqual(classify(True, False, False), "implementation_control_failure")
         self.assertEqual(classify(True, True, False), "historical_production_budget_rejected")
         self.assertEqual(classify(True, True, True), "historical_5nm_sampling_rejected")
+
+    def test_only_execution_failure_can_be_replaced(self):
+        with tempfile.TemporaryDirectory(dir=audit.ROOT) as temporary:
+            output = Path(temporary) / "audit.json"
+            execution_failure = {
+                "passed": False,
+                "classification": "execution_integrity_failure",
+            }
+            scientific_result = {
+                "passed": False,
+                "classification": "reference_spatial_budget_insufficient_order",
+            }
+            audit.persist_audit(output, execution_failure)
+            audit.persist_audit(output, scientific_result)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")), scientific_result
+            )
+
+            with self.assertRaisesRegex(ValueError, "bump the evidence version"):
+                audit.persist_audit(
+                    output,
+                    {"passed": True, "classification": "unexpected_rewrite"},
+                )
 
 
 class ReferenceResolutionEndToEndAuditTests(unittest.TestCase):
@@ -137,6 +181,7 @@ class ReferenceResolutionEndToEndAuditTests(unittest.TestCase):
                     "wavelength_nm": production_wavelength,
                 }
                 production_results[identifier] = self.record(expected)
+                production_results[identifier].pop("time_s")
         v1_checkpoint = {
             "meta": {"selected_geometries": selected},
             "results": production_results,
