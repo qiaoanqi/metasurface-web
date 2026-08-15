@@ -114,16 +114,24 @@ def production_reference_audit_approved(audit: Any) -> bool:
 
 
 def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
-    """Run only the deterministic post-failure transition helper."""
+    """Run a registered, deterministic post-failure transition helper."""
     dispatch = controller.get("dispatch")
-    if not isinstance(dispatch, dict) or not (
-        dispatch.get("action") == "joint_numerical_convergence"
+    terminal_scientific = bool(
+        isinstance(dispatch, dict)
         and dispatch.get("status") == "failed"
         and dispatch.get("terminal_failure") is True
         and str(dispatch.get("failure_class", "")).lower() == "scientific"
-    ):
+    )
+    if not terminal_scientific:
         return None
-    script = ROOT / "scripts" / "paper2_auto_transition.py"
+    scripts = {
+        "joint_numerical_convergence": "paper2_auto_transition.py",
+        "replacement_pool_generation": "activate_replacement_pool.py",
+    }
+    script_name = scripts.get(dispatch.get("action"))
+    if script_name is None:
+        return None
+    script = ROOT / "scripts" / script_name
     completed = subprocess.run(
         [sys.executable, str(script)],
         cwd=str(ROOT),
@@ -141,6 +149,15 @@ def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
     result = json.loads(lines[-1])
     if not isinstance(result, dict):
         raise RuntimeError("paper2 auto-transition returned invalid status")
+    if script_name == "activate_replacement_pool.py":
+        if result.get("active") is not True or not result.get("pool_sha256"):
+            raise RuntimeError("replacement activation did not return a hash-bound active pool")
+        return {
+            "status": "advanced",
+            "transition": "replacement_pool_activation",
+            "based_on_request_id": dispatch.get("request_id"),
+            **result,
+        }
     return result
 
 
@@ -564,8 +581,636 @@ def verify_d65_gate(payload: dict[str, Any], pool: dict[str, Any]) -> tuple[bool
     return True, None
 
 
+def all_checks_true(
+    checks: Any, required: set[str] | None = None
+) -> tuple[bool, str | None]:
+    if not isinstance(checks, dict) or not checks:
+        return False, "checks must be a non-empty object"
+    if required is not None and set(checks) != required:
+        return False, "check set differs from the registered contract"
+    failed = [name for name, value in checks.items() if value is not True]
+    if failed:
+        return False, f"checks are not all true: {failed}"
+    return True, None
+
+
+def bindings_exist(bindings: Any, label: str) -> tuple[bool, str | None]:
+    if isinstance(bindings, dict) and {"path", "sha256"} <= set(bindings):
+        bindings = [bindings]
+    if not isinstance(bindings, list) or not bindings:
+        return False, f"{label} bindings are missing"
+    for index, binding in enumerate(bindings):
+        valid, error = verify_file_binding(binding, f"{label}[{index}]")
+        if not valid:
+            return False, error
+    return True, None
+
+
+def runtime_hashes_match(
+    runtime_hashes: Any, required: set[str] | None = None
+) -> tuple[bool, str | None]:
+    if not isinstance(runtime_hashes, dict) or not runtime_hashes:
+        return False, "runtime hashes are missing"
+    if required is not None and set(runtime_hashes) != required:
+        return False, "runtime hash set differs from the registered contract"
+    for name, expected in runtime_hashes.items():
+        path = workspace_file(name)
+        if path is None or not path.is_file():
+            return False, f"runtime path is missing or outside workspace: {name}"
+        if file_digest(path) != str(expected).upper():
+            return False, f"runtime SHA256 mismatch: {name}"
+    return True, None
+
+
+def bound_json(binding: Any, label: str) -> tuple[dict[str, Any] | None, str | None]:
+    valid, error = verify_file_binding(binding, label)
+    if not valid:
+        return None, error
+    path = workspace_file(binding["path"])
+    try:
+        payload = load_json(path, {}) or {}
+    except Exception as exc:
+        return None, f"{label} is not valid JSON: {type(exc).__name__}: {exc}"
+    if not isinstance(payload, dict):
+        return None, f"{label} must contain a JSON object"
+    return payload, None
+
+
+def valid_request_identity(request: Any) -> bool:
+    return bool(
+        isinstance(request, dict)
+        and set(request) == {"request_id", "attempt"}
+        and isinstance(request.get("request_id"), str)
+        and request["request_id"]
+        and isinstance(request.get("attempt"), int)
+        and request["attempt"] >= 1
+    )
+
+
+def verify_protected_snapshot(snapshot: Any) -> tuple[bool, str | None]:
+    if not isinstance(snapshot, list) or not snapshot:
+        return False, "protected-file snapshot is missing"
+    seen = set()
+    for item in snapshot:
+        if not isinstance(item, dict) or item.get("passed") is not True:
+            return False, "protected-file snapshot contains a failed item"
+        name = item.get("path")
+        path = workspace_file(name)
+        expected = str(item.get("expected_md5", "")).upper()
+        actual = str(item.get("actual_md5", "")).upper()
+        if path is None or not path.is_file() or not expected or expected != actual:
+            return False, f"protected-file binding is invalid: {name}"
+        if name in seen or file_digest(path, "md5") != expected:
+            return False, f"protected-file digest mismatch or duplicate: {name}"
+        seen.add(name)
+    return True, None
+
+
+def finite_values(values: Any, count: int) -> np.ndarray | None:
+    try:
+        array = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if array.shape != (count,) or not np.isfinite(array).all():
+        return None
+    return array
+
+
+REFERENCE_COMPARISON_NAMES = {
+    "order_365x768_to_450x768_0p5nm",
+    "grid_450x512_to_450x768_0p5nm",
+    "corner_365x512_to_450x768_0p5nm",
+    "spectral_450x768_1nm_to_0p5nm",
+    "frozen_candidate_to_final_reference",
+}
+
+
+def verify_reference_comparisons(
+    comparisons: Any, count: int, require_pass: bool
+) -> tuple[bool, str | None]:
+    if not isinstance(comparisons, dict) or set(comparisons) != REFERENCE_COMPARISON_NAMES:
+        return False, "reference comparison set differs from the registered contract"
+    for name, comparison in comparisons.items():
+        if not isinstance(comparison, dict) or int(comparison.get("count", -1)) != count:
+            return False, f"reference comparison count is invalid: {name}"
+        values = finite_values(comparison.get("joint_max_by_geometry"), count)
+        rows = comparison.get("rows")
+        if values is None or np.any(values < 0) or not isinstance(rows, list) or len(rows) != count * 2:
+            return False, f"reference comparison raw values are invalid: {name}"
+        mean = float(np.mean(values))
+        maximum = float(np.max(values))
+        if (
+            not math.isclose(float(comparison.get("mean", float("nan"))), mean, rel_tol=0.0, abs_tol=1e-12)
+            or not math.isclose(float(comparison.get("max", float("nan"))), maximum, rel_tol=0.0, abs_tol=1e-12)
+        ):
+            return False, f"reference comparison statistics are inconsistent: {name}"
+        mean_passed = mean < 1.15
+        all_passed = maximum < 2.3
+        if (
+            comparison.get("mean_lt_1_15") is not mean_passed
+            or comparison.get("all_lt_2_3") is not all_passed
+            or comparison.get("passed") is not (mean_passed and all_passed)
+            or (require_pass and comparison.get("passed") is not True)
+        ):
+            return False, f"reference comparison verdict is inconsistent: {name}"
+    return True, None
+
+
+def verify_active_protocol_bindings(
+    active_binding: Any, protocol_binding: Any, pool_sha256: str
+) -> tuple[bool, str | None]:
+    active, error = bound_json(active_binding, "active pool")
+    if error:
+        return False, error
+    protocol, error = bound_json(protocol_binding, "approved protocol")
+    if error:
+        return False, error
+    if (
+        active.get("schema_version") != 1
+        or active.get("evidence_version") != "paper2-active-pool-v1"
+        or active.get("active") is not True
+        or active.get("training_allowed") is not False
+        or str(active.get("pool_sha256", "")).upper() != pool_sha256
+        or active.get("approved_protocol") != protocol_binding
+    ):
+        return False, "active-pool binding is invalid"
+    if (
+        protocol.get("schema_version") != 1
+        or protocol.get("evidence_version") != "paper2-replacement-protocol-v1"
+        or protocol.get("protocol_revision") != "v2_bound_holdout"
+        or protocol.get("approved") is not True
+        or protocol.get("automatic_launch_authorized") is not True
+        or active.get("pool_spec") != protocol.get("pool_spec")
+    ):
+        return False, "approved protocol binding is invalid"
+    return True, None
+
+
+def verify_cross_checkpoint(
+    binding: Any, payload: dict[str, Any]
+) -> tuple[bool, str | None]:
+    valid, error = verify_file_binding(binding, "cross-solver checkpoint")
+    if not valid:
+        return False, error
+    if not isinstance(binding.get("tasks"), int) or binding["tasks"] <= 0:
+        return False, "cross-solver checkpoint task count is invalid"
+    path = workspace_file(binding["path"])
+    try:
+        with path.open("rb") as handle:
+            checkpoint = pickle.load(handle)
+    except Exception as exc:
+        return False, f"cross-solver checkpoint is unreadable: {type(exc).__name__}: {exc}"
+    if not isinstance(checkpoint, dict):
+        return False, "cross-solver checkpoint must be an object"
+    meta = checkpoint.get("meta")
+    results = checkpoint.get("results")
+    if not isinstance(meta, dict) or not isinstance(results, dict):
+        return False, "cross-solver checkpoint lacks meta or results"
+    expected_tasks = int(meta.get("expected_tasks", -1))
+    registered_tasks = 12 * 2 + 4 * 2 * len(payload.get("protocol", {}).get("stress_configs", []))
+    if (
+        expected_tasks != registered_tasks
+        or expected_tasks != binding["tasks"]
+        or len(results) != expected_tasks
+    ):
+        return False, "cross-solver checkpoint task set is incomplete"
+    protocol = payload.get("protocol", {})
+    if (
+        meta.get("version") != "paper2-cross-solver-v2"
+        or str(meta.get("pool_sha256", "")).upper() != str(payload.get("pool_sha256", "")).upper()
+        or meta.get("production") != protocol.get("production")
+        or meta.get("stress_configs") != protocol.get("stress_configs")
+        or meta.get("selected_geometries") != payload.get("selected_geometries")
+        or meta.get("runtime_hashes") != payload.get("runtime_hashes")
+        or meta.get("thresholds") != payload.get("thresholds")
+        or str(meta.get("approved_protocol_sha256", "")).upper()
+        != str(payload.get("approved_protocol", {}).get("sha256", "")).upper()
+    ):
+        return False, "cross-solver checkpoint metadata differs from the evidence"
+    scientific_keys = set()
+    wavelength = np.arange(380.0, 785.0, 5.0)
+    for key, result in results.items():
+        if not isinstance(result, dict) or key != result.get("id") or result.get("status") != "ok":
+            return False, "cross-solver checkpoint result key or status is invalid"
+        identity = (result.get("geometry_index"), result.get("pol"), result.get("mode"))
+        if identity in scientific_keys or result.get("pol") not in {"p", "s"}:
+            return False, "cross-solver checkpoint contains a duplicate scientific task"
+        scientific_keys.add(identity)
+        try:
+            stored_wavelength = np.asarray(result.get("wavelength_nm"), dtype=float)
+        except (TypeError, ValueError):
+            return False, "cross-solver checkpoint wavelength grid is invalid"
+        if stored_wavelength.shape != wavelength.shape or not np.array_equal(stored_wavelength, wavelength):
+            return False, "cross-solver checkpoint wavelength grid differs"
+        for field in ("grcwa_R", "grcwa_T", "thirdparty_R", "thirdparty_T"):
+            values = finite_values(result.get(field), wavelength.size)
+            if values is None or np.any(values < -1e-8) or np.any(values > 1.0 + 1e-8):
+                return False, f"cross-solver checkpoint spectrum is invalid: {field}"
+    return True, None
+
+
+def verify_reference_resolution_gate(
+    payload: dict[str, Any], _pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    if payload.get("schema_version") != 1 or not production_reference_audit_approved(payload):
+        return False, "reference audit is not the registered v2 holdout pass"
+    if not valid_request_identity(payload.get("request")):
+        return False, "reference audit request identity is invalid"
+    if payload.get("training_allowed") is not False:
+        return False, "reference evidence must keep training disabled"
+    if payload.get("primary_gate_population") != "24_new_holdout_geometries_only":
+        return False, "reference gate population is not the frozen 24-case holdout"
+    if payload.get("combined_32_population_scope") != "supplemental_reporting_only":
+        return False, "combined 32-case population is not supplemental only"
+    valid, error = all_checks_true(
+        payload.get("checks"),
+        {
+            "policy_integrity",
+            "paper1_and_legacy_assets_unchanged",
+            "v2_plan_and_all_source_hashes_verified",
+            "candidate_independently_refrozen_on_initial_eight",
+            "holdout_did_not_reselect_candidate",
+            "exact_extension_task_set",
+            "worker_evidence_exactly_reproduced",
+            "production_reference_approved",
+        },
+    )
+    if not valid:
+        return False, error
+    if payload.get("thresholds") != {
+        "mean_joint_dE00_lt": 1.15,
+        "all_joint_dE00_lt": 2.3,
+        "pointwise_conservation_lte": 1e-6,
+    }:
+        return False, "reference thresholds differ from the registered contract"
+    candidate = payload.get("approved_protocol_candidate")
+    if not isinstance(candidate, dict) or candidate.get("passed") is not True:
+        return False, "reference audit lacks the frozen passed candidate"
+    for field in ("requested_nG", "Nxy", "wavelength_step_nm"):
+        if field not in candidate:
+            return False, f"reference candidate lacks {field}"
+    sources = payload.get("sources")
+    required_sources = {
+        "plan",
+        "source_v2_plan",
+        "source_v2_checkpoint",
+        "source_v2_worker_evidence",
+        "source_v2_independent_audit",
+        "source_base_checkpoint",
+        "holdout_evidence",
+        "holdout_checkpoint",
+    }
+    if not isinstance(sources, dict) or set(sources) != required_sources:
+        return False, "reference source binding set differs from the registered contract"
+    valid, error = bindings_exist(list(sources.values()), "reference source")
+    if not valid:
+        return False, error
+    plan, error = bound_json(sources["plan"], "reference holdout plan")
+    if error:
+        return False, error
+    if (
+        plan.get("final_reference") != REFERENCE_HOLDOUT_FINAL_REFERENCE
+        or plan.get("frozen_candidate") != candidate
+        or plan.get("thresholds") != payload.get("thresholds")
+        or str(plan.get("pool", {}).get("sha256", "")).upper()
+        != str(payload.get("pool_sha256", "")).upper()
+        or plan.get("primary_gate_population") != payload.get("primary_gate_population")
+        or plan.get("combined_32_population_scope")
+        != payload.get("combined_32_population_scope")
+    ):
+        return False, "reference audit differs from its frozen holdout plan"
+    valid, error = verify_file_binding(plan.get("pool"), "reference holdout pool")
+    if not valid:
+        return False, error
+    for name in (
+        "source_v2_plan",
+        "source_v2_checkpoint",
+        "source_v2_worker_evidence",
+        "source_v2_independent_audit",
+        "source_base_checkpoint",
+    ):
+        if sources[name] != plan.get(name):
+            return False, f"reference source differs from the frozen plan: {name}"
+    valid, error = verify_reference_comparisons(
+        payload.get("independent_holdout_comparisons"), 24, True
+    )
+    if not valid:
+        return False, error
+    valid, error = verify_reference_comparisons(
+        payload.get("combined_32_supplemental_comparisons"), 32, False
+    )
+    if not valid:
+        return False, error
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
+def verify_replacement_pool_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    if payload.get("schema_version") != 1 or payload.get("training_allowed") is not False:
+        return False, "replacement evidence schema or training lock is invalid"
+    pool_sha = str(payload.get("pool_sha256", "")).upper()
+    if not pool_sha or pool_sha != str(pool.get("sha256", "")).upper():
+        return False, "replacement evidence does not match the active pool"
+    spec = payload.get("pool_spec")
+    if not isinstance(spec, dict) or int(spec.get("expected_records", 0)) <= 0:
+        return False, "replacement pool_spec is invalid"
+    pool_path = workspace_file(spec.get("path"))
+    if pool_path is None or not pool_path.is_file() or file_digest(pool_path) != pool_sha:
+        return False, "replacement pool file or SHA256 is invalid"
+    approved = payload.get("approved_protocol")
+    protocol, error = bound_json(approved, "approved protocol")
+    if error:
+        return False, error
+    if (
+        protocol.get("schema_version") != 1
+        or protocol.get("evidence_version") != "paper2-replacement-protocol-v1"
+        or protocol.get("protocol_revision") != "v2_bound_holdout"
+        or protocol.get("approved") is not True
+        or protocol.get("automatic_launch_authorized") is not True
+        or protocol.get("pool_spec") != spec
+    ):
+        return False, "approved replacement protocol is invalid"
+    reference = payload.get("reference_gate_evidence")
+    if reference != protocol.get("source_reference_gate"):
+        return False, "replacement reference binding differs from its protocol"
+    reference_payload, error = bound_json(reference, "replacement reference gate")
+    if error or not production_reference_audit_approved(reference_payload):
+        return False, error or "replacement reference gate is not approved"
+    activation_id = hashlib.sha256(
+        f"{str(approved['sha256']).upper()}|{pool_sha}".encode("ascii")
+    ).hexdigest()[:24]
+    if payload.get("activation_id") != activation_id:
+        return False, "replacement activation_id is not hash-bound"
+    audit = payload.get("audit")
+    audit_fields = {
+        "records", "expected_records", "geometries", "complete_pairs",
+        "duplicate_keys", "R_plus_T_mean", "R_plus_T_min", "R_plus_T_max",
+        "pointwise_conservation_error_max", "R_min", "R_max", "T_min", "T_max",
+    }
+    if not isinstance(audit, dict) or set(audit) != audit_fields:
+        return False, "replacement strict audit is missing"
+    if pool.get("passed") is not True or any(audit.get(name) != pool.get(name) for name in audit_fields):
+        return False, "replacement strict audit metrics are invalid"
+    if (
+        payload.get("pool_md5") != file_digest(pool_path, "md5")
+        or payload.get("size_bytes") != pool_path.stat().st_size
+    ):
+        return False, "replacement pool size or MD5 mismatch"
+    checkpoint = payload.get("checkpoint")
+    valid, error = bindings_exist(checkpoint, "replacement checkpoint")
+    if not valid:
+        return False, error
+    if not isinstance(checkpoint.get("failure_events"), int) or checkpoint["failure_events"] < 0:
+        return False, "replacement checkpoint failure ledger is invalid"
+    valid, error = runtime_hashes_match(
+        payload.get("runtime_hashes"),
+        {"rcwa_batch.py", "paper2_colorimetry_fine.py", "scripts/run_replacement_pool.py"},
+    )
+    if not valid:
+        return False, error
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
+def verify_joint_v2_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    if payload.get("classification") != "passed" or payload.get("training_allowed") is not False:
+        return False, "joint-v2 classification or training lock is invalid"
+    if str(payload.get("pool_sha256", "")).upper() != str(pool.get("sha256", "")).upper():
+        return False, "joint-v2 pool SHA256 mismatch"
+    valid, error = all_checks_true(
+        payload.get("checks"),
+        {
+            "active_pool_strict_audit",
+            "paper1_and_legacy_assets_unchanged",
+            "replacement_vs_reference",
+        },
+    )
+    if not valid:
+        return False, error
+    if payload.get("thresholds") != {
+        "mean_joint_dE00_lt": 1.15,
+        "all_joint_dE00_lt": 2.3,
+        "pointwise_conservation_lte": 1e-6,
+        "stored_label_atol": 1e-10,
+    }:
+        return False, "joint-v2 thresholds differ from the registered contract"
+    evaluation = payload.get("evaluation", {})
+    valid, error = all_checks_true(
+        evaluation.get("checks"),
+        {
+            "exact_32_complete_p_s_geometries",
+            "derived_labels_exact",
+            "pool_conservation",
+            "reference_conservation",
+            "mean_joint_dE00",
+            "all_joint_dE00",
+        },
+    )
+    if not valid or evaluation.get("passed") is not True:
+        return False, error or "joint-v2 independent evaluation failed"
+    joint = evaluation.get("joint_dE00", {})
+    values = finite_values(joint.get("values"), 32)
+    if int(joint.get("count", -1)) != 32 or values is None or np.any(values < 0):
+        return False, "joint-v2 does not contain the frozen 32 geometries"
+    expected_stats = {
+        "mean": float(np.mean(values)),
+        "median": float(np.median(values)),
+        "max": float(np.max(values)),
+    }
+    if any(
+        not math.isclose(float(joint.get(name, float("nan"))), expected, rel_tol=0.0, abs_tol=1e-12)
+        for name, expected in expected_stats.items()
+    ):
+        return False, "joint-v2 summary statistics do not match raw values"
+    if expected_stats["mean"] >= 1.15 or expected_stats["max"] >= 2.3:
+        return False, "joint-v2 raw values fail the registered thresholds"
+    if (
+        float(evaluation.get("pointwise_conservation_error_max", float("inf"))) > 1e-6
+        or float(evaluation.get("reference_pointwise_conservation_error_max", float("inf"))) > 1e-6
+    ):
+        return False, "joint-v2 raw conservation metrics fail"
+    if evaluation.get("missing") or evaluation.get("label_failures"):
+        return False, "joint-v2 contains missing spectra or label failures"
+    for name in ("active_pool", "approved_protocol", "reference_gate"):
+        valid, error = bindings_exist(payload.get(name), name)
+        if not valid:
+            return False, error
+    valid, error = verify_active_protocol_bindings(
+        payload.get("active_pool"), payload.get("approved_protocol"),
+        str(payload.get("pool_sha256", "")).upper(),
+    )
+    if not valid:
+        return False, error
+    valid, error = runtime_hashes_match(
+        payload.get("runtime_hashes"),
+        {"paper2_colorimetry_fine.py", "scripts/run_joint_convergence_v2.py"},
+    )
+    if not valid:
+        return False, error
+    reference, error = bound_json(payload.get("reference_gate"), "joint-v2 reference gate")
+    if error or not production_reference_audit_approved(reference):
+        return False, error or "joint-v2 reference gate is not approved"
+    raw = payload.get("reference_raw_spectra")
+    sources = reference.get("sources", {})
+    expected_raw = {
+        "base_checkpoint_sha256": str(sources.get("source_base_checkpoint", {}).get("sha256", "")).upper(),
+        "budget_v2_checkpoint_sha256": str(sources.get("source_v2_checkpoint", {}).get("sha256", "")).upper(),
+        "holdout_checkpoint_sha256": str(sources.get("holdout_checkpoint", {}).get("sha256", "")).upper(),
+    }
+    if raw != expected_raw:
+        return False, "joint-v2 raw reference hashes differ from the approved gate"
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
+def verify_cross_solver_v2_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    if payload.get("classification") != "passed" or payload.get("training_allowed") is not False:
+        return False, "cross-solver classification or training lock is invalid"
+    if str(payload.get("pool_sha256", "")).upper() != str(pool.get("sha256", "")).upper():
+        return False, "cross-solver pool SHA256 mismatch"
+    valid, error = all_checks_true(
+        payload.get("checks"),
+        {
+            "controls",
+            "matched_results",
+            "runtime_hashes_verified",
+            "paper1_and_legacy_assets_unchanged",
+        },
+    )
+    if not valid:
+        return False, error
+    controls = payload.get("controls", {})
+    control_names = {
+        f"{solver}_{metric}"
+        for solver in ("grcwa", "thirdparty")
+        for metric in (
+            "fresnel_error", "empty_energy_error", "circle_max_difference",
+            "rotation_max_difference",
+        )
+    }
+    valid, error = all_checks_true(controls.get("checks"), control_names)
+    if not valid or controls.get("passed") is not True:
+        return False, error or "cross-solver controls failed"
+    evaluation = payload.get("evaluation", {})
+    valid, error = all_checks_true(
+        evaluation.get("checks"),
+        {"no_task_failures", "production_cross_solver", "all_stress_cross_solver", "both_solvers_converged"},
+    )
+    if not valid or evaluation.get("passed") is not True:
+        return False, error or "cross-solver evaluation failed"
+    protocol = payload.get("protocol", {})
+    production = protocol.get("production")
+    stress = protocol.get("stress_configs")
+    selected = payload.get("selected_geometries")
+    if (
+        int(protocol.get("geometry_count", -1)) != 12
+        or int(protocol.get("stress_geometry_count", -1)) != 4
+        or protocol.get("polarizations") != ["p", "s"]
+        or protocol.get("background") != "air"
+        or protocol.get("incident") != "air"
+        or protocol.get("transmission_halfspace") != "SiO2"
+        or protocol.get("wavelength_nm") != np.arange(380.0, 785.0, 5.0).tolist()
+        or not isinstance(production, dict)
+        or set(production) != {"nG_requested", "nG_retained", "Nxy"}
+        or int(production.get("nG_requested", 0)) < 1
+        or int(production.get("nG_retained", 0)) < 1
+        or int(round(math.sqrt(int(production.get("nG_retained", 0))))) ** 2
+        != int(production.get("nG_retained", 0))
+        or int(round(math.sqrt(int(production.get("nG_retained", 0))))) % 2 != 1
+        or int(production.get("Nxy", 0)) < 64
+        or not isinstance(stress, list)
+        or not stress
+        or not isinstance(selected, list)
+        or len(selected) != 12
+        or sum(item.get("stress") is True for item in selected if isinstance(item, dict)) != 4
+    ):
+        return False, "cross-solver protocol differs from the registered design"
+    production_nG = int(production["nG_requested"])
+    production_Nxy = int(production["Nxy"])
+    expected_stress = []
+    if production_nG < 365:
+        expected_stress.append({"name": "order_axis", "nG_requested": 365, "Nxy": production_Nxy})
+    if production_Nxy < 512:
+        expected_stress.append({"name": "grid_axis", "nG_requested": production_nG, "Nxy": 512})
+    if production_nG < 365 or production_Nxy < 512:
+        expected_stress.append({"name": "reference_corner", "nG_requested": 365, "Nxy": 512})
+    else:
+        expected_stress.extend([
+            {"name": "order_axis", "nG_requested": 450, "Nxy": production_Nxy},
+            {"name": "grid_axis", "nG_requested": production_nG, "Nxy": 768},
+            {"name": "higher_corner", "nG_requested": 450, "Nxy": 768},
+        ])
+    unique_stress = []
+    seen_configs = set()
+    for config in expected_stress:
+        key = (config["nG_requested"], config["Nxy"])
+        if key not in seen_configs and key != (production_nG, production_Nxy):
+            unique_stress.append(config)
+            seen_configs.add(key)
+    if stress != unique_stress:
+        return False, "cross-solver stress configuration differs from the registered design"
+    stress_names = []
+    for config in stress:
+        if (
+            not isinstance(config, dict)
+            or set(config) != {"name", "nG_requested", "Nxy"}
+            or not isinstance(config.get("name"), str)
+            or not config["name"]
+            or config["name"] == "production"
+            or int(config.get("nG_requested", 0)) < int(production["nG_requested"])
+            or int(config.get("Nxy", 0)) < int(production["Nxy"])
+        ):
+            return False, "cross-solver stress configuration is invalid"
+        stress_names.append(config["name"])
+    if len(stress_names) != len(set(stress_names)):
+        return False, "cross-solver stress configuration names are duplicated"
+    if payload.get("thresholds") != {
+        "per_spectrum_R_T_rmse_lte": 0.05,
+        "mean_spectrum_R_T_rmse_lte": 0.03,
+        "mean_joint_dE00_lt": 1.15,
+        "per_geometry_joint_dE00_lt": 2.3,
+        "energy_error_lte": 1e-6,
+        "analytic_and_symmetry_error_lte": 1e-7,
+    }:
+        return False, "cross-solver thresholds differ from the registered contract"
+    for name in ("raw_checkpoint", "active_pool", "approved_protocol"):
+        valid, error = bindings_exist(payload.get(name), name)
+        if not valid:
+            return False, error
+    valid, error = verify_active_protocol_bindings(
+        payload.get("active_pool"), payload.get("approved_protocol"),
+        str(payload.get("pool_sha256", "")).upper(),
+    )
+    if not valid:
+        return False, error
+    valid, error = runtime_hashes_match(
+        payload.get("runtime_hashes"),
+        {
+            "rcwa_batch.py",
+            "paper2_colorimetry_fine.py",
+            "scripts/run_cross_solver_validation.py",
+            "scripts/run_cross_solver_validation_v2.py",
+        },
+    )
+    if not valid:
+        return False, error
+    if evaluation.get("classification") != "passed" or evaluation.get("failures"):
+        return False, "cross-solver evaluation classification is invalid"
+    valid, error = verify_cross_checkpoint(payload.get("raw_checkpoint"), payload)
+    if not valid:
+        return False, error
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
 GATE_PAYLOAD_VERIFIERS = {
     "d65_colorimetry": verify_d65_gate,
+    "reference_resolution": verify_reference_resolution_gate,
+    "replacement_pool_ready": verify_replacement_pool_gate,
+    "joint_numerical_convergence": verify_joint_v2_gate,
+    "cross_solver_spectrum_validation": verify_cross_solver_v2_gate,
 }
 
 
@@ -1392,6 +2037,13 @@ def strategy_override(
 def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) -> dict[str, Any]:
     existing = load_json(DISPATCH_REQUEST, {}) or {}
     ack = load_json(EXECUTOR_ACK, {}) or {}
+    replacement_gate_activated = bool(
+        existing.get("status") == "failed"
+        and existing.get("action") == "replacement_pool_generation"
+        and existing.get("terminal_failure") is True
+        and str(existing.get("failure_class", "")).lower() == "scientific"
+        and audit.get("training_gates", {}).get("replacement_pool_ready") is True
+    )
     ack_is_terminal_for_existing = (
         ack.get("request_id") == existing.get("request_id")
         and int(ack.get("attempt", 0)) == int(existing.get("attempt", 0))
@@ -1427,7 +2079,11 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         strategy = strategy_override(strategy_action, policy, existing)
         if strategy is not None:
             action = strategy_action
-        if existing.get("status") == "failed" and strategy is None:
+        if (
+            existing.get("status") == "failed"
+            and strategy is None
+            and not replacement_gate_activated
+        ):
             # Scientific, safety, policy, permanent, and exhausted transient
             # failures remain terminal until an evidence-backed strategy names
             # the exact failed request. Never advance to another gate merely

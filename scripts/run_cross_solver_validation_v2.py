@@ -208,6 +208,49 @@ def run_task(task: dict) -> dict:
         }
 
 
+def validate_checkpoint_results(
+    checkpoint: dict, tasks: list[dict], *, require_complete: bool = False
+) -> None:
+    if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get("results"), dict):
+        raise ValueError("cross-solver v2 checkpoint lacks a results object")
+    expected = {task["id"]: task for task in tasks}
+    results = checkpoint["results"]
+    if not set(results) <= set(expected):
+        raise ValueError("cross-solver v2 checkpoint contains an unknown task id")
+    if require_complete and set(results) != set(expected):
+        raise ValueError("cross-solver v2 checkpoint task set is incomplete")
+    scientific_keys = set()
+    for key, result in results.items():
+        task = expected[key]
+        if not isinstance(result, dict) or result.get("id") != key:
+            raise ValueError("cross-solver v2 checkpoint key differs from its internal id")
+        for field in ("mode", "geometry_index", "geometry", "pol", "nG_requested", "Nxy"):
+            if result.get(field) != task[field]:
+                raise ValueError(f"cross-solver v2 checkpoint task field differs: {field}")
+        identity = (result["geometry_index"], result["pol"], result["mode"])
+        if identity in scientific_keys:
+            raise ValueError("cross-solver v2 checkpoint contains a duplicate scientific task")
+        scientific_keys.add(identity)
+        if result.get("status") == "failed":
+            if not isinstance(result.get("error"), str) or not result["error"]:
+                raise ValueError("cross-solver v2 failed task lacks an error ledger")
+            continue
+        if result.get("status") != "ok":
+            raise ValueError("cross-solver v2 checkpoint task status is invalid")
+        wavelength = np.asarray(result.get("wavelength_nm"), dtype=float)
+        if wavelength.shape != WAVELENGTHS_NM.shape or not np.array_equal(wavelength, WAVELENGTHS_NM):
+            raise ValueError("cross-solver v2 checkpoint wavelength grid differs")
+        for field in ("grcwa_R", "grcwa_T", "thirdparty_R", "thirdparty_T"):
+            values = np.asarray(result.get(field), dtype=float)
+            if (
+                values.shape != WAVELENGTHS_NM.shape
+                or not np.isfinite(values).all()
+                or np.any(values < -1e-8)
+                or np.any(values > 1.0 + 1e-8)
+            ):
+                raise ValueError(f"cross-solver v2 checkpoint spectrum is invalid: {field}")
+
+
 def spectrum_metrics(left_R, left_T, right_R, right_T) -> dict:
     arrays = [np.asarray(value, dtype=float) for value in (left_R, left_T, right_R, right_T)]
     valid = all(
@@ -394,23 +437,9 @@ def run_controls(production_nG: int, production_Nxy: int) -> dict:
     return {"passed": all(checks.values()), "checks": checks, "values": controls}
 
 
-def joint_v2_ready(pool_sha256: str) -> bool:
-    gate_state = supervisor.load_json(supervisor.GATE_STATE, {}) or {}
-    gate = gate_state.get("gates", {}).get("joint_numerical_convergence", {})
-    if gate.get("passed") is not True:
-        return False
-    for item in gate.get("evidence", []):
-        path = replacement.canonical_workspace_path(str(item.get("path", "")))
-        if not path.is_file() or supervisor.file_digest(path) != str(item.get("sha256", "")).upper():
-            continue
-        payload = supervisor.load_json(path, {}) or {}
-        if (
-            payload.get("evidence_version") == joint_v2.VERSION
-            and payload.get("passed") is True
-            and payload.get("pool_sha256") == pool_sha256
-        ):
-            return True
-    return False
+def joint_v2_ready(context: dict) -> bool:
+    gates, _ = supervisor.verify_gate_evidence(context["policy"], context["pool_audit"])
+    return gates.get("joint_numerical_convergence") is True
 
 
 def summarize(context: dict, meta: dict, checkpoint: dict, checkpoint_path: Path) -> dict:
@@ -524,7 +553,7 @@ def main() -> int:
     if args.plan_only:
         print(json.dumps(meta, indent=2, sort_keys=True))
         return 0
-    if not joint_v2_ready(context["pool_sha256"]):
+    if not joint_v2_ready(context):
         raise SystemExit("joint numerical convergence v2 is not registered for the active pool")
     checkpoint_path = ROOT / args.checkpoint
     evidence_path = ROOT / args.evidence
@@ -534,6 +563,10 @@ def main() -> int:
                 checkpoint = pickle.load(handle)
             if checkpoint.get("meta") != meta:
                 raise SystemExit("cross-solver v2 checkpoint protocol mismatch")
+            try:
+                validate_checkpoint_results(checkpoint, tasks)
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(str(exc)) from exc
         else:
             checkpoint = {"meta": meta, "results": {}}
             legacy.atomic_pickle(checkpoint_path, checkpoint)
@@ -542,6 +575,10 @@ def main() -> int:
             for result in workers.imap_unordered(run_task, pending, chunksize=1):
                 checkpoint["results"][result["id"]] = result
                 legacy.atomic_pickle(checkpoint_path, checkpoint)
+        try:
+            validate_checkpoint_results(checkpoint, tasks, require_complete=True)
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
         evidence = summarize(context, meta, checkpoint, checkpoint_path)
         if evidence_path.exists():
             existing = json.loads(evidence_path.read_text(encoding="utf-8"))

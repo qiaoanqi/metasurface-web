@@ -110,6 +110,505 @@ class PoolAuditTests(unittest.TestCase):
             self.assertTrue(result["healthy_checkpoint"])
 
 
+class GatePayloadVerifierTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.old_root = supervisor.ROOT
+        supervisor.ROOT = self.root
+
+    def tearDown(self):
+        supervisor.ROOT = self.old_root
+        self.tmp.cleanup()
+
+    def binding(self, name: str, content: bytes = b"bound evidence\n"):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return {"path": name.replace("\\", "/"), "sha256": supervisor.file_digest(path)}
+
+    def json_binding(self, name: str, payload: dict):
+        return self.binding(
+            name,
+            (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("ascii"),
+        )
+
+    def pickle_binding(self, name: str, payload):
+        return self.binding(name, pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+
+    def protected_snapshot(self):
+        item = self.binding("paper1.locked", b"immutable paper 1\n")
+        md5 = supervisor.file_digest(self.root / item["path"], "md5")
+        return [{
+            "path": item["path"],
+            "expected_md5": md5,
+            "actual_md5": md5,
+            "passed": True,
+        }]
+
+    def runtime_hashes(self, names):
+        return {
+            name: self.binding(name, f"# {name}\n".encode("ascii"))["sha256"]
+            for name in names
+        }
+
+    def comparison_set(self, count: int):
+        names = (
+            "order_365x768_to_450x768_0p5nm",
+            "grid_450x512_to_450x768_0p5nm",
+            "corner_365x512_to_450x768_0p5nm",
+            "spectral_450x768_1nm_to_0p5nm",
+            "frozen_candidate_to_final_reference",
+        )
+        return {
+            name: {
+                "count": count,
+                "mean": 0.0,
+                "max": 0.0,
+                "mean_lt_1_15": True,
+                "all_lt_2_3": True,
+                "passed": True,
+                "joint_max_by_geometry": [0.0] * count,
+                "rows": [{}] * (count * 2),
+            }
+            for name in names
+        }
+
+    def test_minimal_forged_payloads_are_rejected_by_every_registered_gate(self):
+        bound = self.binding("state/decoy.bin")
+        pool = {"sha256": "A" * 64, "passed": True}
+        cases = (
+            (supervisor.verify_reference_resolution_gate, {
+                "schema_version": 1,
+                "evidence_version": "paper2-reference-holdout-audit-v1",
+                "protocol_revision": "v2_bound_holdout",
+                "classification": "reference_holdout_passed",
+                "passed": True,
+                "production_reference_approved": True,
+                "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+                "training_allowed": False,
+                "checks": {},
+                "sources": {"decoy": bound},
+            }),
+            (supervisor.verify_replacement_pool_gate, {
+                "schema_version": 1,
+                "passed": True,
+                "training_allowed": False,
+                "pool_sha256": pool["sha256"],
+                "pool_spec": {"path": bound["path"], "expected_records": 1},
+                "approved_protocol": bound,
+                "checkpoint": bound,
+                "runtime_hashes": {bound["path"]: bound["sha256"]},
+                "audit": {},
+            }),
+            (supervisor.verify_joint_v2_gate, {
+                "passed": True,
+                "classification": "passed",
+                "training_allowed": False,
+                "pool_sha256": pool["sha256"],
+                "checks": {
+                    "active_pool_strict_audit": True,
+                    "paper1_and_legacy_assets_unchanged": True,
+                    "replacement_vs_reference": True,
+                },
+                "thresholds": {
+                    "mean_joint_dE00_lt": 1.15,
+                    "all_joint_dE00_lt": 2.3,
+                    "pointwise_conservation_lte": 1e-6,
+                    "stored_label_atol": 1e-10,
+                },
+                "evaluation": {"passed": True, "checks": {}, "joint_dE00": {"count": 32}},
+            }),
+            (supervisor.verify_cross_solver_v2_gate, {
+                "passed": True,
+                "classification": "passed",
+                "training_allowed": False,
+                "pool_sha256": pool["sha256"],
+                "checks": {
+                    "controls": True,
+                    "matched_results": True,
+                    "runtime_hashes_verified": True,
+                    "paper1_and_legacy_assets_unchanged": True,
+                },
+                "controls": {"passed": True, "checks": {}},
+                "evaluation": {"passed": True, "checks": {}},
+            }),
+        )
+        for verifier, payload in cases:
+            with self.subTest(verifier=verifier.__name__):
+                self.assertFalse(verifier(payload, pool)[0])
+
+    def test_reference_resolution_verifier_accepts_only_frozen_holdout_contract(self):
+        candidate = {
+            "requested_nG": 365,
+            "Nxy": 512,
+            "wavelength_step_nm": 1.0,
+            "passed": True,
+        }
+        thresholds = {
+            "mean_joint_dE00_lt": 1.15,
+            "all_joint_dE00_lt": 2.3,
+            "pointwise_conservation_lte": 1e-6,
+        }
+        frozen_pool = self.binding("data/frozen-pool.pkl")
+        sources = {}
+        for name in (
+            "source_v2_plan", "source_v2_checkpoint", "source_v2_worker_evidence",
+            "source_v2_independent_audit", "source_base_checkpoint",
+            "holdout_evidence", "holdout_checkpoint",
+        ):
+            sources[name] = self.binding(f"state/{name}.bin")
+        plan_payload = {
+            "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+            "frozen_candidate": candidate,
+            "thresholds": thresholds,
+            "pool": frozen_pool,
+            "primary_gate_population": "24_new_holdout_geometries_only",
+            "combined_32_population_scope": "supplemental_reporting_only",
+        }
+        for name in (
+            "source_v2_plan", "source_v2_checkpoint", "source_v2_worker_evidence",
+            "source_v2_independent_audit", "source_base_checkpoint",
+        ):
+            plan_payload[name] = sources[name]
+        plan = self.json_binding("state/holdout-plan.json", plan_payload)
+        sources = {"plan": plan, **sources}
+        payload = {
+            "schema_version": 1,
+            "evidence_version": "paper2-reference-holdout-audit-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "passed": True,
+            "production_reference_approved": True,
+            "classification": "reference_holdout_passed",
+            "request": {"request_id": "reference-request", "attempt": 1},
+            "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+            "training_allowed": False,
+            "primary_gate_population": "24_new_holdout_geometries_only",
+            "combined_32_population_scope": "supplemental_reporting_only",
+            "checks": {
+                "policy_integrity": True,
+                "paper1_and_legacy_assets_unchanged": True,
+                "v2_plan_and_all_source_hashes_verified": True,
+                "candidate_independently_refrozen_on_initial_eight": True,
+                "holdout_did_not_reselect_candidate": True,
+                "exact_extension_task_set": True,
+                "worker_evidence_exactly_reproduced": True,
+                "production_reference_approved": True,
+            },
+            "thresholds": thresholds,
+            "approved_protocol_candidate": candidate,
+            "pool_sha256": frozen_pool["sha256"],
+            "sources": sources,
+            "independent_holdout_comparisons": self.comparison_set(24),
+            "combined_32_supplemental_comparisons": self.comparison_set(32),
+            "protected_files": self.protected_snapshot(),
+        }
+        self.assertEqual(supervisor.verify_reference_resolution_gate(payload, {}), (True, None))
+
+        tampered = copy.deepcopy(payload)
+        tampered["checks"]["undeclared_check"] = True
+        self.assertFalse(supervisor.verify_reference_resolution_gate(tampered, {})[0])
+
+    def test_replacement_pool_verifier_recomputes_all_disk_bindings(self):
+        pool_binding = self.binding("data/replacement/pool.pkl", b"replacement-pool")
+        reference_payload = {
+            "evidence_version": "paper2-reference-holdout-audit-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "classification": "reference_holdout_passed",
+            "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+            "passed": True,
+            "production_reference_approved": True,
+        }
+        reference = self.json_binding("state/reference-gate.json", reference_payload)
+        pool_spec = {
+            "path": pool_binding["path"],
+            "expected_records": 6000,
+            "pointwise_conservation_tolerance": 1e-6,
+        }
+        protocol = self.json_binding("state/replacement-protocol.json", {
+            "schema_version": 1,
+            "evidence_version": "paper2-replacement-protocol-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "approved": True,
+            "automatic_launch_authorized": True,
+            "pool_spec": pool_spec,
+            "source_reference_gate": reference,
+        })
+        checkpoint = self.binding("state/replacement-checkpoint.sqlite")
+        runtime = self.runtime_hashes({
+            "rcwa_batch.py", "paper2_colorimetry_fine.py", "scripts/run_replacement_pool.py"
+        })
+        activation_id = hashlib.sha256(
+            f"{protocol['sha256']}|{pool_binding['sha256']}".encode("ascii")
+        ).hexdigest()[:24]
+        payload = {
+            "schema_version": 1,
+            "evidence_version": "paper2-replacement-pool-v1",
+            "passed": True,
+            "training_allowed": False,
+            "pool_sha256": pool_binding["sha256"],
+            "pool_md5": supervisor.file_digest(self.root / pool_binding["path"], "md5"),
+            "size_bytes": (self.root / pool_binding["path"]).stat().st_size,
+            "pool_spec": pool_spec,
+            "approved_protocol": protocol,
+            "reference_gate_evidence": reference,
+            "activation_id": activation_id,
+            "audit": {
+                "records": 6000,
+                "expected_records": 6000,
+                "geometries": 3000,
+                "complete_pairs": 3000,
+                "duplicate_keys": 0,
+                "R_plus_T_mean": 1.0,
+                "R_plus_T_min": 1.0,
+                "R_plus_T_max": 1.0,
+                "pointwise_conservation_error_max": 1e-9,
+                "R_min": 0.0,
+                "R_max": 1.0,
+                "T_min": 0.0,
+                "T_max": 1.0,
+            },
+            "checkpoint": checkpoint | {"failure_events": 0},
+            "runtime_hashes": runtime,
+            "protected_files": self.protected_snapshot(),
+        }
+        pool = {"sha256": pool_binding["sha256"], "passed": True, **payload["audit"]}
+        self.assertEqual(supervisor.verify_replacement_pool_gate(payload, pool), (True, None))
+
+        tampered = copy.deepcopy(payload)
+        tampered["checkpoint"]["sha256"] = "0" * 64
+        self.assertFalse(supervisor.verify_replacement_pool_gate(tampered, pool)[0])
+
+    def test_joint_v2_verifier_enforces_exact_thresholds_and_bindings(self):
+        pool_sha = "A" * 64
+        pool_spec = {"path": "data/replacement/pool.pkl", "expected_records": 6000}
+        protocol = self.json_binding("state/approved-protocol.json", {
+            "schema_version": 1,
+            "evidence_version": "paper2-replacement-protocol-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "approved": True,
+            "automatic_launch_authorized": True,
+            "pool_spec": pool_spec,
+        })
+        active = self.json_binding("state/active-pool.json", {
+            "schema_version": 1,
+            "evidence_version": "paper2-active-pool-v1",
+            "active": True,
+            "training_allowed": False,
+            "pool_sha256": pool_sha,
+            "approved_protocol": protocol,
+            "pool_spec": pool_spec,
+        })
+        runtime = self.runtime_hashes({
+            "paper2_colorimetry_fine.py", "scripts/run_joint_convergence_v2.py"
+        })
+        raw_hashes = {
+            "base_checkpoint_sha256": "1" * 64,
+            "budget_v2_checkpoint_sha256": "2" * 64,
+            "holdout_checkpoint_sha256": "3" * 64,
+        }
+        reference = self.json_binding("state/reference-gate.json", {
+            "evidence_version": "paper2-reference-holdout-audit-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "classification": "reference_holdout_passed",
+            "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+            "passed": True,
+            "production_reference_approved": True,
+            "sources": {
+                "source_base_checkpoint": {"sha256": raw_hashes["base_checkpoint_sha256"]},
+                "source_v2_checkpoint": {"sha256": raw_hashes["budget_v2_checkpoint_sha256"]},
+                "holdout_checkpoint": {"sha256": raw_hashes["holdout_checkpoint_sha256"]},
+            },
+        })
+        payload = {
+            "schema_version": 1,
+            "evidence_version": "paper2-joint-convergence-v2",
+            "passed": True,
+            "classification": "passed",
+            "training_allowed": False,
+            "pool_sha256": pool_sha,
+            "checks": {
+                "active_pool_strict_audit": True,
+                "paper1_and_legacy_assets_unchanged": True,
+                "replacement_vs_reference": True,
+            },
+            "thresholds": {
+                "mean_joint_dE00_lt": 1.15,
+                "all_joint_dE00_lt": 2.3,
+                "pointwise_conservation_lte": 1e-6,
+                "stored_label_atol": 1e-10,
+            },
+            "evaluation": {
+                "passed": True,
+                "checks": {
+                    "exact_32_complete_p_s_geometries": True,
+                    "derived_labels_exact": True,
+                    "pool_conservation": True,
+                    "reference_conservation": True,
+                    "mean_joint_dE00": True,
+                    "all_joint_dE00": True,
+                },
+                "joint_dE00": {
+                    "count": 32,
+                    "mean": 0.0,
+                    "median": 0.0,
+                    "max": 0.0,
+                    "values": [0.0] * 32,
+                },
+                "pointwise_conservation_error_max": 0.0,
+                "reference_pointwise_conservation_error_max": 0.0,
+                "missing": [],
+                "label_failures": [],
+            },
+            "active_pool": active,
+            "approved_protocol": protocol,
+            "reference_gate": reference,
+            "reference_raw_spectra": raw_hashes,
+            "runtime_hashes": runtime,
+            "protected_files": self.protected_snapshot(),
+        }
+        pool = {"sha256": pool_sha}
+        self.assertEqual(supervisor.verify_joint_v2_gate(payload, pool), (True, None))
+
+        tampered = copy.deepcopy(payload)
+        tampered["thresholds"]["stored_label_atol"] = 1e-9
+        self.assertFalse(supervisor.verify_joint_v2_gate(tampered, pool)[0])
+
+    def test_cross_solver_verifier_enforces_protocol_and_checkpoint_binding(self):
+        pool_sha = "B" * 64
+        production = {"nG_requested": 365, "nG_retained": 361, "Nxy": 512}
+        stress = [
+            {"name": "order_axis", "nG_requested": 450, "Nxy": 512},
+            {"name": "grid_axis", "nG_requested": 365, "Nxy": 768},
+            {"name": "higher_corner", "nG_requested": 450, "Nxy": 768},
+        ]
+        pool_spec = {"path": "data/replacement/pool.pkl", "expected_records": 6000}
+        protocol = self.json_binding("state/approved-protocol.json", {
+            "schema_version": 1,
+            "evidence_version": "paper2-replacement-protocol-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "approved": True,
+            "automatic_launch_authorized": True,
+            "pool_spec": pool_spec,
+        })
+        active = self.json_binding("state/active-pool.json", {
+            "schema_version": 1,
+            "evidence_version": "paper2-active-pool-v1",
+            "active": True,
+            "training_allowed": False,
+            "pool_sha256": pool_sha,
+            "approved_protocol": protocol,
+            "pool_spec": pool_spec,
+        })
+        runtime = self.runtime_hashes({
+            "rcwa_batch.py", "paper2_colorimetry_fine.py",
+            "scripts/run_cross_solver_validation.py", "scripts/run_cross_solver_validation_v2.py",
+        })
+        control_checks = {
+            f"{solver}_{metric}": True
+            for solver in ("grcwa", "thirdparty")
+            for metric in (
+                "fresnel_error", "empty_energy_error", "circle_max_difference",
+                "rotation_max_difference",
+            )
+        }
+        selected = [
+            {"L": 200.0 + index, "W": 150.0, "H": 300.0, "P": 400.0, "stress": index < 4}
+            for index in range(12)
+        ]
+        thresholds = {
+            "per_spectrum_R_T_rmse_lte": 0.05,
+            "mean_spectrum_R_T_rmse_lte": 0.03,
+            "mean_joint_dE00_lt": 1.15,
+            "per_geometry_joint_dE00_lt": 2.3,
+            "energy_error_lte": 1e-6,
+            "analytic_and_symmetry_error_lte": 1e-7,
+        }
+        wavelength = np.arange(380.0, 785.0, 5.0)
+        results = {}
+        for index in range(12):
+            modes = ["production"] + ([item["name"] for item in stress] if index < 4 else [])
+            for pol in ("p", "s"):
+                for mode in modes:
+                    task_id = f"crossv2-g{index:02d}-{pol}-{mode}"
+                    results[task_id] = {
+                        "id": task_id,
+                        "status": "ok",
+                        "geometry_index": index,
+                        "pol": pol,
+                        "mode": mode,
+                        "wavelength_nm": wavelength,
+                        "grcwa_R": np.full(wavelength.size, 0.2),
+                        "grcwa_T": np.full(wavelength.size, 0.8),
+                        "thirdparty_R": np.full(wavelength.size, 0.2),
+                        "thirdparty_T": np.full(wavelength.size, 0.8),
+                    }
+        checkpoint_meta = {
+            "version": "paper2-cross-solver-v2",
+            "pool_sha256": pool_sha,
+            "approved_protocol_sha256": protocol["sha256"],
+            "selected_geometries": selected,
+            "production": production,
+            "stress_configs": stress,
+            "expected_tasks": len(results),
+            "runtime_hashes": runtime,
+            "thresholds": thresholds,
+        }
+        checkpoint = self.pickle_binding(
+            "state/cross-checkpoint.pkl", {"meta": checkpoint_meta, "results": results}
+        ) | {"tasks": len(results)}
+        payload = {
+            "schema_version": 1,
+            "evidence_version": "paper2-cross-solver-v2",
+            "passed": True,
+            "classification": "passed",
+            "training_allowed": False,
+            "pool_sha256": pool_sha,
+            "checks": {
+                "controls": True,
+                "matched_results": True,
+                "runtime_hashes_verified": True,
+                "paper1_and_legacy_assets_unchanged": True,
+            },
+            "controls": {"passed": True, "checks": control_checks},
+            "evaluation": {
+                "passed": True,
+                "classification": "passed",
+                "checks": {
+                    "no_task_failures": True,
+                    "production_cross_solver": True,
+                    "all_stress_cross_solver": True,
+                    "both_solvers_converged": True,
+                },
+                "failures": [],
+            },
+            "protocol": {
+                "production": production,
+                "stress_configs": stress,
+                "geometry_count": 12,
+                "stress_geometry_count": 4,
+                "polarizations": ["p", "s"],
+                "wavelength_nm": wavelength.tolist(),
+                "background": "air",
+                "incident": "air",
+                "transmission_halfspace": "SiO2",
+            },
+            "thresholds": thresholds,
+            "selected_geometries": selected,
+            "raw_checkpoint": checkpoint,
+            "active_pool": active,
+            "approved_protocol": protocol,
+            "runtime_hashes": runtime,
+            "protected_files": self.protected_snapshot(),
+        }
+        pool = {"sha256": pool_sha}
+        self.assertEqual(supervisor.verify_cross_solver_v2_gate(payload, pool), (True, None))
+
+        tampered = copy.deepcopy(payload)
+        tampered["protocol"]["background"] = "substrate"
+        self.assertFalse(supervisor.verify_cross_solver_v2_gate(tampered, pool)[0])
+
+
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -259,6 +758,75 @@ class ControllerTests(unittest.TestCase):
             result = supervisor.run_auto_transition(controller)
         self.assertEqual(result["status"], "advanced")
         self.assertIn("paper2_auto_transition.py", run.call_args.args[0][1])
+
+        activation = supervisor.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=0,
+            stdout='{"active":true,"pool_sha256":"ABC"}\n',
+            stderr="",
+        )
+        controller["dispatch"]["action"] = "replacement_pool_generation"
+        controller["dispatch"]["request_id"] = "replacement-request"
+        with patch.object(supervisor.subprocess, "run", return_value=activation) as run:
+            result = supervisor.run_auto_transition(controller)
+        self.assertEqual(result["transition"], "replacement_pool_activation")
+        self.assertEqual(result["based_on_request_id"], "replacement-request")
+        self.assertIn("activate_replacement_pool.py", run.call_args.args[0][1])
+
+    def test_verified_replacement_activation_archives_failed_generation_and_advances(self):
+        failed = {
+            "schema_version": 1,
+            "protocol_version": 2,
+            "request_id": "abcdef123456",
+            "target_thread_id": self.policy["executor_thread_id"],
+            "stage": "paper2_pipeline",
+            "action": "replacement_pool_generation",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "created_at": supervisor.now_iso(),
+            "updated_at": supervisor.now_iso(),
+            "ack_required": True,
+            "terminal_failure": True,
+            "failure_class": "scientific",
+            "last_error": "generation completed; independent activation required",
+            "payload": {"pool_sha256": "OLD-POOL"},
+            "instruction": "generate only",
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, failed)
+        audit = {
+            "pool": {"sha256": "NEW-POOL"},
+            "training_gates": {"replacement_pool_ready": True},
+        }
+        request = supervisor.update_dispatch("joint_numerical_convergence", self.policy, audit)
+        self.assertEqual(request["action"], "joint_numerical_convergence")
+        self.assertEqual(request["status"], "pending")
+        self.assertEqual(request["payload"]["pool_sha256"], "NEW-POOL")
+        history = supervisor.STATE / "dispatch_history" / "abcdef123456-attempt1.json"
+        archived = supervisor.load_json(history)
+        self.assertEqual(archived["request"]["status"], "failed")
+        self.assertEqual(archived["request"]["failure_class"], "scientific")
+
+    def test_unverified_replacement_failure_remains_terminal(self):
+        failed = {
+            "request_id": "abcdef654321",
+            "action": "replacement_pool_generation",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "terminal_failure": True,
+            "failure_class": "scientific",
+            "payload": {"pool_sha256": "OLD-POOL"},
+            "instruction": "generate only",
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, failed)
+        audit = {
+            "pool": {"sha256": "OLD-POOL"},
+            "training_gates": {"replacement_pool_ready": False},
+        }
+        request = supervisor.update_dispatch("joint_numerical_convergence", self.policy, audit)
+        self.assertEqual(request["request_id"], failed["request_id"])
+        self.assertEqual(request["status"], "failed")
 
     def test_auto_transition_failure_is_fail_closed(self):
         completed = supervisor.subprocess.CompletedProcess(
