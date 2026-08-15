@@ -620,6 +620,16 @@ class ControllerTests(unittest.TestCase):
             second = supervisor.evaluate_once(self.policy)
         self.assertEqual(second["dispatch"]["status"], "in_progress")
         self.assertEqual(second["dispatch"]["attempt"], 1)
+        self.assertEqual(second["effective_status"], "completed")
+        self.assertEqual(second["controller_status"], "running")
+        self.assertEqual(second["pipeline_status"], "running")
+        self.assertFalse(second["pipeline_complete"])
+        self.assertEqual(second["next_action"], request["action"])
+        audit = supervisor.load_json(supervisor.AUDIT_RESULT)
+        plan = supervisor.load_json(supervisor.NEXT_PLAN)
+        self.assertEqual(audit["pipeline_status"], "running")
+        self.assertFalse(audit["pipeline_complete"])
+        self.assertEqual(plan["recommended_next"], request["action"])
 
     def test_nonterminal_dispatch_survives_workflow_reordering(self):
         pool_sha = supervisor.file_digest(self.root / "pool.pkl")
@@ -658,6 +668,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["action"], "joint_numerical_convergence")
         self.assertEqual(result["status"], "in_progress")
         self.assertEqual(result["payload"]["pool_sha256"], pool_sha)
+        self.assertEqual(result["instruction"], "frozen active request")
 
     def test_expired_running_lease_retries(self):
         self.write_status({"status": "running", "pid": 999999})
@@ -847,7 +858,7 @@ class ControllerTests(unittest.TestCase):
         strategy = supervisor.strategy_override(failed["action"], self.policy, failed)
         self.assertIsNotNone(strategy)
 
-    def test_active_strategy_revalidates_and_refreshes_evidence(self):
+    def test_active_strategy_request_freezes_evidence_and_instruction(self):
         repair = self.root / "repair_evidence.json"
         repair.write_text('{"passed": true, "revision": 1}\n', encoding="ascii")
         failed = {
@@ -873,13 +884,17 @@ class ControllerTests(unittest.TestCase):
         audit = {"pool": {"sha256": "ABC"}}
         first = supervisor.update_dispatch(failed["action"], self.policy, audit)
         first_id = first["request_id"]
+        first_instruction = first["instruction"]
+        first_evidence = copy.deepcopy(first["strategy_evidence"])
 
         repair.write_text('{"passed": true, "revision": 2}\n', encoding="ascii")
         new_hash = supervisor.file_digest(repair)
         self.policy["strategy_override"]["evidence"][0]["sha256"] = new_hash
         second = supervisor.update_dispatch(failed["action"], self.policy, audit)
         self.assertEqual(second["request_id"], first_id)
-        self.assertEqual(second["strategy_evidence"][0]["sha256"], new_hash)
+        self.assertEqual(second["strategy_evidence"], first_evidence)
+        self.assertNotEqual(second["strategy_evidence"][0]["sha256"], new_hash)
+        self.assertEqual(second["instruction"], first_instruction)
 
 
 if __name__ == "__main__":

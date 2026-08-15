@@ -1079,31 +1079,35 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         and int(ack.get("attempt", 0)) == int(existing.get("attempt", 0))
         and ack.get("status") in {"completed", "succeeded", "failed"}
     )
-    if (
+    live_request_immutable = bool(
         existing.get("status") in {"pending", "in_progress"}
         and existing.get("action")
         and not ack_is_terminal_for_existing
-    ):
+    )
+    if live_request_immutable:
         # A durable non-terminal request is immutable until it is acknowledged
         # or fails. Workflow, policy, and active-pool revisions apply only to
         # the next request and must never orphan a live worker/ack pair.
         action = str(existing["action"])
-    pool_sha = (
-        existing.get("payload", {}).get("pool_sha256")
-        if existing.get("status") in {"pending", "in_progress"} and not ack_is_terminal_for_existing
-        else None
-    ) or audit.get("pool", {}).get("sha256")
-    strategy = strategy_override(action, policy, existing)
-    strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
-    request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
-    max_attempts = int(policy["dispatch"]["max_attempts"])
+        request = existing
+        request_id = str(existing["request_id"])
+        pool_sha = existing.get("payload", {}).get("pool_sha256") or audit.get("pool", {}).get("sha256")
+        max_attempts = int(existing.get("max_attempts", policy["dispatch"]["max_attempts"]))
+    else:
+        pool_sha = audit.get("pool", {}).get("sha256")
+        strategy = strategy_override(action, policy, existing)
+        strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
+        request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
+        max_attempts = int(policy["dispatch"]["max_attempts"])
     timeout_seconds = int(
         policy["dispatch"].get(
             "pickup_timeout_seconds", policy["dispatch"].get("ack_timeout_seconds", 1800)
         )
     )
 
-    if existing.get("request_id") == request_id:
+    if live_request_immutable:
+        pass
+    elif existing.get("request_id") == request_id:
         request = existing
         request["protocol_version"] = 2
         instruction = build_instruction(action, policy)
@@ -1336,16 +1340,36 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         active_stage = "pool_generation_complete"
     else:
         active_stage = "pool_generation"
+
+    dispatch_status = dispatch.get("status") if isinstance(dispatch, dict) else None
+    pipeline_action = action
+    if action == "stop_and_report":
+        pipeline_status = "blocked"
+        pipeline_action = "stop_and_report"
+    elif dispatch_status in {"pending", "in_progress"}:
+        pipeline_status = "running" if dispatch_status == "in_progress" else "pending"
+        pipeline_action = dispatch.get("action") or action
+    elif dispatch_status == "failed":
+        pipeline_status = "blocked"
+        pipeline_action = "stop_and_report"
+    else:
+        pipeline_status = effective_status
+    pipeline_complete = pipeline_status == "completed" and pipeline_action is None
+
     audit["active_stage"] = active_stage
     audit["dispatch"] = dispatch
     audit["recovery_plan"] = recovery_plan
+    audit["pipeline_status"] = pipeline_status
+    audit["pipeline_complete"] = pipeline_complete
     atomic_json(AUDIT_RESULT, audit)
     next_plan = {
         "schema_version": 2,
         "audit_passed": stage_passed,
-        "recommended_next": action or "monitor_existing_pool",
+        "pipeline_status": pipeline_status,
+        "pipeline_complete": pipeline_complete,
+        "recommended_next": pipeline_action or "monitor_existing_pool",
         "dispatch_request": str(DISPATCH_REQUEST.relative_to(ROOT)) if dispatch else None,
-        "dispatch_status": dispatch.get("status") if dispatch else None,
+        "dispatch_status": dispatch_status,
         "training_allowed": training_gates["training_allowed"],
         "scientific_blockers": [key for key, value in training_gates.items() if not value and key != "training_allowed"],
         "recovery": recovery_plan,
@@ -1355,13 +1379,15 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     controller = {
         "schema_version": 1,
         "project": runtime_policy["project"],
-        "controller_status": "blocked" if action == "stop_and_report" else effective_status,
+        "controller_status": pipeline_status,
         "producer_status": producer_status,
         "effective_status": effective_status,
+        "pipeline_status": pipeline_status,
+        "pipeline_complete": pipeline_complete,
         "status_reconciled": reconciled,
         "current_stage": active_stage,
         "active_stage": active_stage,
-        "next_action": action,
+        "next_action": pipeline_action,
         "dispatch": dispatch,
         "recovery_plan": recovery_plan,
         "training_allowed": training_gates["training_allowed"],
