@@ -440,6 +440,22 @@ def build_audit(
     }
 
 
+def persist_audit(output: Path, audit: dict) -> None:
+    if not output.exists():
+        atomic_json(output, audit)
+        return
+    existing = load_json(output, {}) or {}
+    replace_execution_failure = bool(
+        existing.get("passed") is False
+        and existing.get("classification") == "execution_integrity_failure"
+        and audit.get("classification") != "execution_integrity_failure"
+    )
+    if existing != audit and not replace_execution_failure:
+        raise ValueError("existing v2 audit differs; use a new evidence version")
+    if replace_execution_failure:
+        atomic_json(output, audit)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", default=".state/reference_resolution_budget_v2_plan.json")
@@ -472,12 +488,10 @@ def main() -> int:
             "training_allowed": False,
         }
     output = ROOT / args.output
-    if output.exists():
-        existing = load_json(output, {}) or {}
-        if existing != audit:
-            raise SystemExit("existing v2 audit differs; use a new evidence version")
-    else:
-        atomic_json(output, audit)
+    try:
+        persist_audit(output, audit)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps({"passed": audit["passed"], "classification": audit["classification"]}, sort_keys=True))
     return 0 if audit["passed"] else 2
 

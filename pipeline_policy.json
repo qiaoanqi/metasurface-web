@@ -304,7 +304,7 @@
   "strategy_override": {
     "enabled": true,
     "decision": "retry_same_gate",
-    "revision": 2,
+    "revision": 3,
     "action": "joint_numerical_convergence",
     "based_on_request_id": "000786ba2cb4154777b8",
     "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. Preserve its independent checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python scripts/audit_reference_resolution_budget_v2.py and close this historical joint request as failed with failure_class=scientific even when the independent budget-v2 audit passes; attach that audit as evidence for the next strategy transition. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
@@ -323,7 +323,7 @@
       },
       {
         "path": "scripts/audit_reference_resolution_budget_v2.py",
-        "sha256": "830BE838C98E4ABE6787B1E0E30CA3CA9EFC483739865533365A795FB2D7EED6"
+        "sha256": "957FD58FC69ADB7CF3C0F498D25EC42CCE67CCB78738C87CC892A1450C7FFB5E"
       },
       {
         "path": "scripts/freeze_reference_budget_v2.py",
@@ -343,7 +343,7 @@
       },
       {
         "path": "tests/test_reference_resolution_budget_v2.py",
-        "sha256": "D372D270B436C66EE968DAB65536C8C7B94EDBAF9110C8653C0DEC3615FBB66D"
+        "sha256": "D51F26DF28DFAC7CA45A1F0D341476E1C27A843D78F6C9E617733BC56DBD1924"
       }
     ]
   },

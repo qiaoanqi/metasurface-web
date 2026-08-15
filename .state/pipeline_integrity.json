@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "74CA698892B95E3D15C49F0BE2D3DB0D422077E793252E446FD4C6D9B96AC32D",
+  "policy_sha256": "0AEAB4A77D14CDF2454B1871DADA3A92C9866BE3F7853AB81541B9CEE340D16E",
   "supervisor_sha256": "2F07E39610EABC5AA187AE5B92E0AFC6531D098442A2C9D408AB46042B4E4C25",
-  "protected_assets_revision": 19,
+  "protected_assets_revision": 20,
   "note": "Update this lock atomically with an intentional policy or supervisor revision; a mismatch blocks dispatch."
 }

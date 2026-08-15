@@ -177,6 +177,29 @@ class BudgetV2IntegrityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             v1_outcome.validate_worker_evidence(audit_payload, evidence)
 
+    def test_v2_audit_replaces_only_execution_integrity_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "reference_resolution_budget_v2_audit.json"
+            execution_failure = {
+                "passed": False,
+                "classification": "execution_integrity_failure",
+            }
+            scientific_result = {
+                "passed": False,
+                "classification": "budget_v2_still_insufficient",
+            }
+            audit.persist_audit(output, execution_failure)
+            audit.persist_audit(output, scientific_result)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")), scientific_result
+            )
+
+            with self.assertRaisesRegex(ValueError, "new evidence version"):
+                audit.persist_audit(
+                    output,
+                    {"passed": True, "classification": "budget_v2_converged"},
+                )
+
     def test_task_id_tamper_fails_in_runner_and_auditor(self):
         task = budget.build_tasks(cases())[0]
         result = valid_result(task)
