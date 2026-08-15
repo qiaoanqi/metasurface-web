@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -165,6 +167,77 @@ class BudgetV2IntegrityTests(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             advance.build_strategy({}, dispatch, [])
+
+    def test_strategy_application_is_idempotent(self):
+        original_root = advance.ROOT
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            advance.ROOT = root
+            try:
+                for name in advance.EVIDENCE_PATHS:
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("evidence\n", encoding="ascii")
+                checks = {
+                    key: True for key in (
+                        "frozen_plan_sha256_and_content",
+                        "checkpoint_meta_and_runtime_hashes",
+                        "reference_checkpoint_exact_80",
+                        "worker_claim_matches_independent_recomputation",
+                        "physics_controls_passed",
+                    )
+                }
+                v1_audit_path = root / advance.EVIDENCE_PATHS[0]
+                advance.atomic_json(v1_audit_path, {
+                    "evidence_version": advance.V1_AUDIT_VERSION,
+                    "passed": False,
+                    "classification": "reference_spatial_budget_insufficient_order_and_grid",
+                    "checks": checks,
+                })
+                v2_plan_path = root / advance.EVIDENCE_PATHS[1]
+                advance.atomic_json(v2_plan_path, {
+                    "evidence_version": advance.V2_PLAN_VERSION,
+                    "plan_valid": True,
+                    "source_failed_action": advance.ACTION,
+                    "source_v1_audit": advance.binding(v1_audit_path),
+                    "expected_new_tasks": 96,
+                    "thresholds": {
+                        "mean_joint_dE00_lt": 1.15,
+                        "all_joint_dE00_lt": 2.3,
+                        "pointwise_conservation_lte": 1e-6,
+                    },
+                })
+                supervisor = root / "pipeline_supervisor.py"
+                supervisor.write_text("# frozen\n", encoding="ascii")
+                policy_path = root / "pipeline_policy.json"
+                advance.atomic_json(policy_path, {"strategy_override": {"revision": 1}})
+                integrity_path = root / ".state/pipeline_integrity.json"
+                advance.atomic_json(integrity_path, {
+                    "schema_version": 1,
+                    "policy_sha256": advance.file_digest(policy_path),
+                    "supervisor_sha256": advance.file_digest(supervisor),
+                    "protected_assets_revision": 14,
+                    "note": "test",
+                })
+                dispatch_path = root / ".state/dispatch_request.json"
+                advance.atomic_json(dispatch_path, {
+                    "request_id": "failed-request",
+                    "action": advance.ACTION,
+                    "status": "failed",
+                    "failure_class": "scientific",
+                    "terminal_failure": True,
+                    "strategy_revision": 1,
+                })
+                first = advance.apply_strategy(policy_path, integrity_path, dispatch_path)
+                second = advance.apply_strategy(policy_path, integrity_path, dispatch_path)
+                self.assertEqual(first["status"], "updated")
+                self.assertEqual(second["status"], "already_applied")
+                self.assertEqual(first["strategy_revision"], 2)
+                self.assertEqual(second["strategy_revision"], 2)
+                self.assertEqual(first["integrity_revision"], 15)
+                self.assertEqual(second["integrity_revision"], 15)
+            finally:
+                advance.ROOT = original_root
 
 
 if __name__ == "__main__":
