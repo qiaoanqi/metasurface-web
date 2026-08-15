@@ -615,14 +615,16 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
     if action == "resume_pool_generation":
         return (
             f"Resume exactly: {policy['pool']['resume_command']}. Do not create a new pool or start training. "
-            "Write an atomic executor ack."
+            "Write an atomic executor ack. On completed, use outputs=[{path,material}], "
+            "paper_hashes=[{path,md5}], and checks.pool_sha256 matching the audited pool."
         )
     if action == "pool_validation":
         return (
             "Re-run strict validation, create an immutable manifest with pool hash/provenance, and atomically "
             "acknowledge this request. Do not edit the pool or start training. D65 colorimetry, joint numerical "
             "convergence, cross-solver spectra, circular control, and geometry split remain mandatory. "
-            f"Protected files: {protected}."
+            f"Protected files: {protected}. On completed, use outputs=[{{path,material}}], "
+            "paper_hashes=[{path,md5}], and checks.pool_sha256 matching the audited pool."
         )
     if action == "stop_and_report":
         return "Stop all downstream work and report the first failing check."
@@ -675,6 +677,8 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
         "with its SHA256, then atomically write executor_ack.json with the matching request_id and attempt. "
         "The gate evidence manifest must be JSON, declare passed=true, and bind to the requested pool SHA256. "
         "Before long-running work, write a running ack with a renewable lease and optional worker_pid. "
+        "On completed, use outputs=[{path,material}], paper_hashes=[{path,md5}], and "
+        "checks.pool_sha256 matching the audited pool; the supervisor recomputes every file hash. "
         "On scientific failure, do not mark the gate passed; write a failed ack with evidence."
     )
 
