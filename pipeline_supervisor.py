@@ -993,6 +993,35 @@ def make_dispatch_id(
     return hashlib.sha256(raw).hexdigest()[:20]
 
 
+def archive_dispatch(request: dict[str, Any], ack: dict[str, Any], next_action: str) -> Path | None:
+    """Write one durable terminal handoff snapshot before replacing a request."""
+    request_id = str(request.get("request_id", ""))
+    if not request_id or any(char not in "0123456789abcdefABCDEF-" for char in request_id):
+        return None
+    attempt = int(request.get("attempt", 0))
+    history = STATE / "dispatch_history"
+    path = history / f"{request_id}-attempt{attempt}.json"
+    matching_ack = (
+        ack
+        if ack.get("request_id") == request_id
+        and int(ack.get("attempt", 0)) == attempt
+        else None
+    )
+    payload = {
+        "schema_version": 1,
+        "request": request,
+        "final_ack": matching_ack,
+        "next_action": next_action,
+    }
+    if path.exists():
+        existing = load_json(path, {}) or {}
+        if existing != payload:
+            raise ValueError(f"dispatch history collision: {path}")
+    else:
+        atomic_json(path, payload)
+    return path
+
+
 def strategy_override(
     action: str, policy: dict[str, Any], existing: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -1082,6 +1111,11 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             request["strategy_evidence"] = strategy["evidence"]
         request["instruction"] = instruction
     else:
+        if existing.get("request_id") and (
+            ack_is_terminal_for_existing
+            or existing.get("status") in {"acknowledged", "failed"}
+        ):
+            archive_dispatch(existing, ack, action)
         timestamp = now_iso()
         instruction = build_instruction(action, policy)
         if strategy:

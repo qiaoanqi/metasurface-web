@@ -320,6 +320,14 @@ class ControllerTests(unittest.TestCase):
             second = supervisor.evaluate_once(self.policy)
         self.assertNotEqual(second["dispatch"]["request_id"], request["request_id"])
         self.assertEqual(second["dispatch"]["action"], "d65_colorimetry")
+        history = (
+            supervisor.STATE / "dispatch_history"
+            / f"{request['request_id']}-attempt{request['attempt']}.json"
+        )
+        archived = supervisor.load_json(history)
+        self.assertEqual(archived["request"]["request_id"], request["request_id"])
+        self.assertEqual(archived["final_ack"]["status"], "completed")
+        self.assertEqual(archived["next_action"], "d65_colorimetry")
         self.assertEqual(second["dispatch"]["attempt"], 1)
 
     def test_completed_ack_with_wrong_paper_hash_does_not_advance(self):
