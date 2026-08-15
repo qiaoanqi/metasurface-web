@@ -108,11 +108,13 @@ class Paper2AutoTransitionTests(unittest.TestCase):
 
     def test_v2_pass_is_bound_before_holdout_transition(self):
         dispatch = self.dispatch(revision=2)
+        produced_request = transition.request_identity(dispatch)
+        produced_request["attempt"] = 1
         atomic_json(
             transition.V2_AUDIT,
             {
                 "evidence_version": "paper2-reference-resolution-budget-v2-audit",
-                "request": transition.request_identity(dispatch),
+                "request": produced_request,
                 "passed": True,
                 "classification": "budget_v2_converged",
                 "training_allowed": False,
@@ -124,6 +126,21 @@ class Paper2AutoTransitionTests(unittest.TestCase):
             result = transition.advance_once()
         self.assertEqual(result["transition"], "reference_resolution_holdout")
         self.assertEqual(run.call_count, 2)
+
+    def test_v2_newer_attempt_evidence_fails_closed(self):
+        dispatch = self.dispatch(revision=2)
+        atomic_json(
+            transition.V2_AUDIT,
+            {
+                "evidence_version": "paper2-reference-resolution-budget-v2-audit",
+                "request": {"request_id": dispatch["request_id"], "attempt": 3},
+                "passed": True,
+                "classification": "budget_v2_converged",
+                "training_allowed": False,
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "terminal request attempt"):
+            transition.advance_once()
 
     def test_v2_request_mismatch_fails_closed(self):
         self.dispatch(revision=2)

@@ -47,6 +47,14 @@ def request_identity(dispatch: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def reusable_request(previous: object, active: dict[str, Any]) -> bool:
+    return bool(
+        isinstance(previous, dict)
+        and previous.get("request_id") == active.get("request_id")
+        and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+    )
+
+
 def run_command(script: str) -> dict[str, Any]:
     completed = subprocess.run(
         [sys.executable, str(ROOT / script)],
@@ -79,8 +87,8 @@ def v2_transition_decision(
         return "waiting_for_v2_audit"
     if audit.get("evidence_version") != "paper2-reference-resolution-budget-v2-audit":
         raise ValueError("unexpected v2 audit version")
-    if audit.get("request") != request_identity(dispatch):
-        raise ValueError("v2 audit is not bound to the terminal request")
+    if not reusable_request(audit.get("request"), request_identity(dispatch)):
+        raise ValueError("v2 audit is not reusable by the terminal request attempt")
     if (
         audit.get("passed") is True
         and audit.get("classification") == "budget_v2_converged"

@@ -36,6 +36,7 @@ EVIDENCE_PATHS = (
     ".state/reference_resolution_budget_v2_plan.json",
     ".state/reference_resolution_holdout_v2_plan.json",
     ".state/reference_resolution_holdout_v1_plan.json",
+    "scripts/prepare_reference_budget_v2_retry.py",
     "scripts/freeze_reference_holdout_plan.py",
     "scripts/reference_protocol_selection.py",
     "scripts/launch_reference_resolution_holdout.py",
@@ -44,6 +45,7 @@ EVIDENCE_PATHS = (
     "scripts/advance_reference_holdout_strategy.py",
     "scripts/paper2_auto_transition.py",
     "tests/test_reference_resolution_budget_v2.py",
+    "tests/test_reference_budget_v2_retry.py",
     "tests/test_reference_holdout_launcher.py",
     "tests/test_reference_holdout.py",
 )
@@ -86,6 +88,14 @@ def validate_terminal_dispatch(dispatch: dict) -> None:
 def require_binding(item: object, path: Path, label: str) -> None:
     if item != binding(path):
         raise ValueError(f"{label} binding mismatch")
+
+
+def reusable_request(previous: object, active: dict) -> bool:
+    return bool(
+        isinstance(previous, dict)
+        and previous.get("request_id") == active.get("request_id")
+        and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+    )
 
 
 def selection_sha256(selection: list[dict]) -> str:
@@ -134,7 +144,7 @@ def validate_v2_pass(
         or audit.get("training_allowed") is not False
         or str(audit.get("pool_sha256", "")).upper() != pool_sha
         or audit.get("thresholds") != THRESHOLDS
-        or audit.get("request") != request
+        or not reusable_request(audit.get("request"), request)
     ):
         raise ValueError("independent budget-v2 audit is not an approved diagnostic pass")
     for name in REQUIRED_AUDIT_CHECKS:
@@ -159,7 +169,7 @@ def validate_v2_pass(
         or evidence.get("training_allowed") is not False
         or str(evidence.get("pool_sha256", "")).upper() != pool_sha
         or evidence.get("thresholds") != THRESHOLDS
-        or evidence.get("request") != request
+        or evidence.get("request") != audit.get("request")
     ):
         raise ValueError("budget-v2 worker evidence is not a hash-bound pass")
     require_binding(evidence.get("plan"), plan_path, "budget-v2 evidence plan")

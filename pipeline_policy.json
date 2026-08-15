@@ -304,10 +304,10 @@
   "strategy_override": {
     "enabled": true,
     "decision": "retry_same_gate",
-    "revision": 3,
+    "revision": 4,
     "action": "joint_numerical_convergence",
     "based_on_request_id": "000786ba2cb4154777b8",
-    "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. Preserve its independent checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python scripts/audit_reference_resolution_budget_v2.py and close this historical joint request as failed with failure_class=scientific even when the independent budget-v2 audit passes; attach that audit as evidence for the next strategy transition. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
+    "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before starting any worker; if it reports audit_existing_evidence, skip the worker and run only the independent auditor. Preserve the independent checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python scripts/audit_reference_resolution_budget_v2.py and close this historical joint request as failed with failure_class=scientific even when the independent budget-v2 audit passes; attach that audit as evidence for the next strategy transition. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
     "evidence": [
       {
         "path": ".state/reference_resolution_v1_audit.json",
@@ -322,8 +322,12 @@
         "sha256": "EE65FFF89E39998D4003F47EDDA209B5196D123B89FD8572945A280003DF6422"
       },
       {
+        "path": "scripts/prepare_reference_budget_v2_retry.py",
+        "sha256": "2395755D22249AA8B67BE7ABF46B47FB2C0DCB01D70349900C6B4F45469E21F7"
+      },
+      {
         "path": "scripts/audit_reference_resolution_budget_v2.py",
-        "sha256": "957FD58FC69ADB7CF3C0F498D25EC42CCE67CCB78738C87CC892A1450C7FFB5E"
+        "sha256": "34F7946B6419D5BDCFD7915ECAD623A1B7075B175C4A30C5E94ED3E44B433FA0"
       },
       {
         "path": "scripts/freeze_reference_budget_v2.py",
@@ -331,11 +335,19 @@
       },
       {
         "path": "scripts/advance_reference_budget_v2_strategy.py",
-        "sha256": "CDFF8A31643C160289CBB43E5E1DFD75C3810B9AC5FB5B984961FD5515F2FF79"
+        "sha256": "997AFED4A70AF3DE83CB9761CFAA58BF103AC6F1DC2B7CE3D8747C5BFF2AE364"
       },
       {
         "path": "scripts/paper2_auto_transition.py",
-        "sha256": "B4BA4806104A77714470164BE5777AC1C086780543D223353DA0EDAA2207C2CF"
+        "sha256": "8FDB29DA4D542F05EAD8B15AE9CB831E2B5747A1C0EC6C6CDA58F9BE9F90AE5C"
+      },
+      {
+        "path": "scripts/freeze_reference_holdout_plan.py",
+        "sha256": "65CF24AC885AB00C9FA058BE6267FE7F838FFFF021A7B0BB8278D9C12173EB87"
+      },
+      {
+        "path": "scripts/advance_reference_holdout_strategy.py",
+        "sha256": "183AFD864DEAB134E0B089E959FD5FE0A3BCAA1216353EBC1D44210C16939675"
       },
       {
         "path": "scripts/reference_v1_outcome.py",
@@ -343,7 +355,15 @@
       },
       {
         "path": "tests/test_reference_resolution_budget_v2.py",
-        "sha256": "D51F26DF28DFAC7CA45A1F0D341476E1C27A843D78F6C9E617733BC56DBD1924"
+        "sha256": "3F9EBAA13531D8D75BC275EA3E359686337C4F7CCB94A7936F0E7C423107B5A2"
+      },
+      {
+        "path": "tests/test_reference_budget_v2_retry.py",
+        "sha256": "2E6ED2A42AF891B1BDB08A3C2DD6B34EB777C5CCED8AAFA6304638D89312A8CC"
+      },
+      {
+        "path": "tests/test_paper2_auto_transition.py",
+        "sha256": "939AA6873D767E27692F9A2035F19AB362F3AE09D7966236BD89ED371580DC85"
       }
     ]
   },

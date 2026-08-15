@@ -61,6 +61,14 @@ def dispatch_identity(path: Path) -> dict:
     }
 
 
+def reusable_request(previous: object, active: dict) -> bool:
+    return bool(
+        isinstance(previous, dict)
+        and previous.get("request_id") == active.get("request_id")
+        and 1 <= int(previous.get("attempt", 0)) <= int(active.get("attempt", 0))
+    )
+
+
 def spatial_axis_specs() -> list[tuple[str, tuple[int, int], float]]:
     return [
         (f"{axis}_365x512_to_{config[0]}x{config[1]}_{'0p5nm' if step == 0.5 else '1nm'}", config, step)
@@ -329,8 +337,9 @@ def build_audit(
     evidence = load_json(evidence_path, {}) or {}
     if evidence.get("evidence_version") != "paper2-reference-resolution-budget-v2":
         raise ValueError("unexpected v2 worker evidence version")
-    if evidence.get("request") != request:
-        raise ValueError("v2 worker evidence request identity mismatch")
+    worker_request = evidence.get("request")
+    if not reusable_request(worker_request, request):
+        raise ValueError("v2 worker evidence is not reusable by the active request attempt")
     require_binding(evidence.get("plan"), plan_path, "v2 evidence plan")
     require_binding(evidence.get("checkpoint"), checkpoint_path, "v2 evidence checkpoint")
     if evidence.get("pool_sha256") != plan.get("pool_sha256"):
@@ -346,7 +355,7 @@ def build_audit(
     tasks = build_tasks(plan["selection"])
     expected_meta = {
         "version": "paper2-reference-resolution-budget-v2",
-        "request": request,
+        "request": worker_request,
         "plan_sha256": file_digest(plan_path),
         "pool_sha256": plan["pool_sha256"],
         "selected_geometries": plan["selection"],
@@ -421,7 +430,7 @@ def build_audit(
     return {
         "schema_version": 1,
         "evidence_version": VERSION,
-        "request": request,
+        "request": worker_request,
         "passed": passed,
         "classification": "budget_v2_converged" if passed else "budget_v2_still_insufficient",
         "pool_sha256": plan["pool_sha256"],

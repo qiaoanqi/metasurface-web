@@ -255,6 +255,24 @@ class BudgetV2IntegrityTests(unittest.TestCase):
         self.assertFalse(audit.worker_claim_matches(False, True))
         self.assertTrue(audit.worker_claim_matches(False, False))
 
+    def test_v2_retry_identity_is_monotonic_and_request_bound(self):
+        active = {"request_id": "stable-request", "attempt": 2}
+        self.assertTrue(
+            audit.reusable_request(
+                {"request_id": "stable-request", "attempt": 1}, active
+            )
+        )
+        self.assertFalse(
+            audit.reusable_request(
+                {"request_id": "stable-request", "attempt": 3}, active
+            )
+        )
+        self.assertFalse(
+            audit.reusable_request(
+                {"request_id": "other-request", "attempt": 1}, active
+            )
+        )
+
     def test_strategy_advances_exact_failed_request_once(self):
         policy = {"strategy_override": {"revision": 1}}
         dispatch = {
@@ -565,7 +583,9 @@ class HoldoutTransitionTests(unittest.TestCase):
                     "note": "test",
                 })
                 dispatch_path = root / ".state/dispatch_request.json"
-                advance_holdout.atomic_json(dispatch_path, self.failed_v2_dispatch())
+                retry_dispatch = self.failed_v2_dispatch()
+                retry_dispatch["attempt"] = 2
+                advance_holdout.atomic_json(dispatch_path, retry_dispatch)
 
                 first = advance_holdout.apply_strategy(
                     policy_path, integrity_path, dispatch_path
@@ -587,7 +607,7 @@ class HoldoutTransitionTests(unittest.TestCase):
                 )
 
                 tampered = advance_holdout.load_json(audit_path)
-                tampered["request"]["attempt"] = 2
+                tampered["request"]["attempt"] = 3
                 advance_holdout.atomic_json(audit_path, tampered)
                 current_policy = advance_holdout.load_json(policy_path)
                 current_policy["strategy_override"] = {"revision": 2}

@@ -22,12 +22,17 @@ EVIDENCE_PATHS = (
     ".state/reference_resolution_v1_audit.json",
     ".state/reference_resolution_budget_v2_plan.json",
     "scripts/run_reference_resolution_budget_v2.py",
+    "scripts/prepare_reference_budget_v2_retry.py",
     "scripts/audit_reference_resolution_budget_v2.py",
     "scripts/freeze_reference_budget_v2.py",
     "scripts/advance_reference_budget_v2_strategy.py",
     "scripts/paper2_auto_transition.py",
+    "scripts/freeze_reference_holdout_plan.py",
+    "scripts/advance_reference_holdout_strategy.py",
     "scripts/reference_v1_outcome.py",
     "tests/test_reference_resolution_budget_v2.py",
+    "tests/test_reference_budget_v2_retry.py",
+    "tests/test_paper2_auto_transition.py",
 )
 
 
@@ -72,7 +77,10 @@ def validate_scientific_inputs(v1_audit: dict, v2_plan: dict) -> None:
 def strategy_instruction() -> str:
     return (
         "Run only the hash-bound numerical-budget v2 diagnostic: python "
-        "scripts/run_reference_resolution_budget_v2.py --n-jobs 16. Preserve its independent "
+        "scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first "
+        "run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before "
+        "starting any worker; if it reports audit_existing_evidence, skip the worker and run only the "
+        "independent auditor. Preserve the independent "
         "checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python "
         "scripts/audit_reference_resolution_budget_v2.py and close this historical joint request as "
         "failed with failure_class=scientific even when the independent budget-v2 audit passes; attach "
