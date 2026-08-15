@@ -71,8 +71,8 @@ def load_reference(context: dict) -> dict:
     if supervisor.file_digest(audit_path) != str(source["sha256"]).upper():
         raise ValueError("approved reference gate evidence hash mismatch")
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
-    if audit.get("evidence_version") != "paper2-reference-holdout-audit-v1" or audit.get("passed") is not True:
-        raise ValueError("approved reference gate is not the 32-case audit")
+    if not supervisor.production_reference_audit_approved(audit):
+        raise ValueError("approved reference gate is not the v2-bound 32-case audit")
     sources = audit.get("sources", {})
 
     def source_path(name: str) -> Path:
@@ -83,23 +83,58 @@ def load_reference(context: dict) -> dict:
         return path
 
     plan_path = source_path("plan")
-    candidate_path = source_path("candidate_checkpoint")
+    base_path = source_path("source_base_checkpoint")
+    v2_path = source_path("source_v2_checkpoint")
     extension_path = source_path("holdout_checkpoint")
     plan = holdout.load_plan(plan_path)
-    with candidate_path.open("rb") as handle:
-        candidate = pickle.load(handle)
+    if plan.get("final_reference") != {
+        "requested_nG": 450,
+        "Nxy": 768,
+        "wavelength_step_nm": 0.5,
+    }:
+        raise ValueError("approved holdout plan final reference changed")
+    if audit.get("approved_protocol_candidate") != plan.get("frozen_candidate"):
+        raise ValueError("approved production candidate differs from the holdout plan")
+    selected = audit["approved_protocol_candidate"]
+    expected_protocol = (
+        int(selected["requested_nG"]),
+        int(selected["Nxy"]),
+        float(selected["wavelength_step_nm"]),
+    )
+    actual_protocol = (
+        int(context["protocol"].get("nG_requested", -1)),
+        int(context["protocol"].get("Nxy", -1)),
+        float(context["protocol"].get("wavelength_step_nm", -1.0)),
+    )
+    if (
+        context["protocol"].get("protocol_revision") != "v2_bound_holdout"
+        or actual_protocol != expected_protocol
+    ):
+        raise ValueError("active replacement protocol differs from the frozen candidate")
+    with base_path.open("rb") as handle:
+        base_checkpoint = pickle.load(handle)
+    with v2_path.open("rb") as handle:
+        v2_checkpoint = pickle.load(handle)
     with extension_path.open("rb") as handle:
         extension = pickle.load(handle)
-    results = dict(candidate.get("results", {}))
-    results.update(extension.get("results", {}))
-    if len(results) != 320:
-        raise ValueError("approved reference does not contain exact 320 raw spectra")
+    all_results = dict(base_checkpoint.get("results", {}))
+    all_results.update(v2_checkpoint.get("results", {}))
+    all_results.update(extension.get("results", {}))
+    expected_tasks = holdout.build_combined_tasks(plan)
+    try:
+        results = {task["id"]: all_results[task["id"]] for task in expected_tasks}
+    except KeyError as exc:
+        raise ValueError(f"approved reference is missing a bound raw spectrum: {exc}") from exc
+    validation = holdout.validate_results(results, expected_tasks)
+    if not validation.get("passed") or len(results) != int(plan["expected_combined_tasks"]):
+        raise ValueError("approved reference raw spectra do not match the v2 holdout manifest")
     return {
         "audit": audit,
         "audit_path": audit_path,
         "plan": plan,
         "plan_path": plan_path,
-        "candidate_path": candidate_path,
+        "base_path": base_path,
+        "v2_path": v2_path,
         "extension_path": extension_path,
         "results": results,
     }
@@ -131,7 +166,7 @@ def load_pool_records(path: Path) -> dict[tuple[tuple[float, ...], str], dict]:
 
 def reference_result(reference: dict, index: int, pol: str, axes_swapped: bool) -> dict:
     source_pol = ({"p": "s", "s": "p"}[pol]) if axes_swapped else pol
-    identifier = holdout.result_id(index, source_pol, base.FINE_CONFIG, 0.5)
+    identifier = holdout.result_id(index, source_pol, (450, 768), 0.5)
     result = reference["results"].get(identifier)
     if not isinstance(result, dict) or result.get("status") != "ok":
         raise ValueError(f"missing approved reference result: {identifier}")
@@ -267,7 +302,8 @@ def build_evidence(context: dict, reference: dict) -> dict:
         "approved_protocol": {"path": str(context["protocol_path"].relative_to(ROOT)).replace("\\", "/"), "sha256": supervisor.file_digest(context["protocol_path"])},
         "reference_gate": {"path": str(reference["audit_path"].relative_to(ROOT)).replace("\\", "/"), "sha256": supervisor.file_digest(reference["audit_path"])},
         "reference_raw_spectra": {
-            "candidate_checkpoint_sha256": supervisor.file_digest(reference["candidate_path"]),
+            "base_checkpoint_sha256": supervisor.file_digest(reference["base_path"]),
+            "budget_v2_checkpoint_sha256": supervisor.file_digest(reference["v2_path"]),
             "holdout_checkpoint_sha256": supervisor.file_digest(reference["extension_path"]),
         },
         "runtime_hashes": {path: supervisor.file_digest(ROOT / path) for path in runtime_paths},

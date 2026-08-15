@@ -21,6 +21,7 @@ from scripts.freeze_reference_budget_v2 import EXTRA_CONFIGS, VERSION as PLAN_VE
 
 
 VERSION = "paper2-reference-resolution-budget-v2"
+ACTION = "joint_numerical_convergence"
 POLS = v1.POLS
 BASE_CONFIG = v1.FINE_CONFIG
 STEPS = (1.0, 0.5)
@@ -30,6 +31,23 @@ SPATIAL_CONFIGS = {
     "grid": EXTRA_CONFIGS[1],
     "corner": EXTRA_CONFIGS[2],
 }
+
+
+def dispatch_identity(path: Path) -> dict:
+    dispatch = load_json(path, {}) or {}
+    if (
+        dispatch.get("action") != ACTION
+        or dispatch.get("status") != "in_progress"
+        or int(dispatch.get("strategy_revision", 0)) < 2
+        or not isinstance(dispatch.get("request_id"), str)
+        or not dispatch["request_id"]
+        or int(dispatch.get("attempt", 0)) < 1
+    ):
+        raise ValueError("budget v2 requires an active revision-2 joint request")
+    return {
+        "request_id": dispatch["request_id"],
+        "attempt": int(dispatch["attempt"]),
+    }
 
 
 def spatial_axis_specs() -> list[tuple[str, tuple[int, int], float]]:
@@ -244,13 +262,22 @@ def comparison(selected: list[dict], results: dict, left_config: tuple[int, int]
     }
 
 
-def summarize(plan: dict, evidence: dict, baseline: dict, results: dict, checkpoint_path: Path, runtime_hashes: dict) -> dict:
+def summarize(
+    plan: dict,
+    evidence: dict,
+    baseline: dict,
+    results: dict,
+    checkpoint_path: Path,
+    runtime_hashes: dict,
+    request: dict,
+) -> dict:
     selected = plan["selection"]
     tasks = build_tasks(selected)
     spectra = validate_results(results, tasks)
     common = {
         "schema_version": 1,
         "evidence_version": VERSION,
+        "request": request,
         "pool_sha256": plan["pool_sha256"],
         "spectra": spectra,
         "thresholds": plan["thresholds"],
@@ -331,6 +358,7 @@ def summarize(plan: dict, evidence: dict, baseline: dict, results: dict, checkpo
 
 
 def run(args: argparse.Namespace) -> dict:
+    request = dispatch_identity(ROOT / args.dispatch)
     plan_path = ROOT / args.plan
     v1_audit_path = ROOT / args.v1_audit
     v1_evidence_path = ROOT / args.v1_evidence
@@ -341,6 +369,7 @@ def run(args: argparse.Namespace) -> dict:
     tasks = build_tasks(plan["selection"])
     meta = {
         "version": VERSION,
+        "request": request,
         "plan_sha256": file_digest(plan_path),
         "pool_sha256": plan["pool_sha256"],
         "selected_geometries": plan["selection"],
@@ -363,7 +392,15 @@ def run(args: argparse.Namespace) -> dict:
         for result in workers.imap_unordered(run_task, pending, chunksize=1):
             checkpoint["results"][result["id"]] = result
             v1.atomic_pickle(checkpoint_path, checkpoint)
-    result = summarize(plan, evidence, baseline, checkpoint["results"], checkpoint_path, meta["runtime_hashes"])
+    result = summarize(
+        plan,
+        evidence,
+        baseline,
+        checkpoint["results"],
+        checkpoint_path,
+        meta["runtime_hashes"],
+        request,
+    )
     output = ROOT / args.evidence
     if output.exists():
         existing = json.loads(output.read_text(encoding="utf-8"))
@@ -382,6 +419,7 @@ def main() -> int:
     parser.add_argument("--v1-checkpoint", default=".state/reference_resolution_v1_checkpoint.pkl")
     parser.add_argument("--checkpoint", default=".state/reference_resolution_budget_v2_checkpoint.pkl")
     parser.add_argument("--evidence", default=".state/reference_resolution_budget_v2.json")
+    parser.add_argument("--dispatch", default=".state/dispatch_request.json")
     parser.add_argument("--n-jobs", type=int, default=16)
     args = parser.parse_args()
     result = run(args)

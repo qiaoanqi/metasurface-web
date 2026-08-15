@@ -16,6 +16,8 @@ import json
 import math
 import os
 import pickle
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -38,6 +40,11 @@ LEGACY_INBOX = STATE / "hermes_inbox.json"
 GATE_STATE = STATE / "gate_state.json"
 SUPERVISOR_LOCK = STATE / "pipeline_supervisor.lock"
 ATOMIC_REPLACE_ATTEMPTS = 10
+REFERENCE_HOLDOUT_FINAL_REFERENCE = {
+    "requested_nG": 450,
+    "Nxy": 768,
+    "wavelength_step_nm": 0.5,
+}
 
 
 def now_iso() -> str:
@@ -92,6 +99,49 @@ def file_digest(path: Path, algorithm: str = "sha256") -> str:
 def json_payload_digest(payload: Any) -> str:
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest().upper()
+
+
+def production_reference_audit_approved(audit: Any) -> bool:
+    return bool(
+        isinstance(audit, dict)
+        and audit.get("evidence_version") == "paper2-reference-holdout-audit-v1"
+        and audit.get("protocol_revision") == "v2_bound_holdout"
+        and audit.get("classification") == "reference_holdout_passed"
+        and audit.get("final_reference") == REFERENCE_HOLDOUT_FINAL_REFERENCE
+        and audit.get("passed") is True
+        and audit.get("production_reference_approved") is True
+    )
+
+
+def run_auto_transition(controller: dict[str, Any]) -> dict[str, Any] | None:
+    """Run only the deterministic post-failure transition helper."""
+    dispatch = controller.get("dispatch")
+    if not isinstance(dispatch, dict) or not (
+        dispatch.get("action") == "joint_numerical_convergence"
+        and dispatch.get("status") == "failed"
+        and dispatch.get("terminal_failure") is True
+        and str(dispatch.get("failure_class", "")).lower() == "scientific"
+    ):
+        return None
+    script = ROOT / "scripts" / "paper2_auto_transition.py"
+    completed = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"paper2 auto-transition failed: {detail}")
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("paper2 auto-transition returned no status")
+    result = json.loads(lines[-1])
+    if not isinstance(result, dict):
+        raise RuntimeError("paper2 auto-transition returned invalid status")
+    return result
 
 
 def pid_alive(pid: Any) -> bool:
@@ -885,6 +935,7 @@ def resolve_active_pool(policy: dict[str, Any]) -> tuple[dict[str, Any], dict[st
         if (
             protocol.get("schema_version") != 1
             or protocol.get("evidence_version") != "paper2-replacement-protocol-v1"
+            or protocol.get("protocol_revision") != "v2_bound_holdout"
             or protocol.get("approved") is not True
             or protocol.get("automatic_launch_authorized") is not True
             or protocol.get("pool_spec") != override
@@ -903,12 +954,23 @@ def resolve_active_pool(policy: dict[str, Any]) -> tuple[dict[str, Any], dict[st
         if source_path is None or not source_path.is_file() or file_digest(source_path) != source_sha:
             raise ValueError("source reference gate hash mismatch")
         source_audit = load_json(source_path, {}) or {}
-        if (
-            source_audit.get("evidence_version") != "paper2-reference-holdout-audit-v1"
-            or source_audit.get("passed") is not True
-            or source_audit.get("production_reference_approved") is not True
-        ):
+        if not production_reference_audit_approved(source_audit):
             raise ValueError("source reference gate is not production-approved")
+        selected = source_audit.get("approved_protocol_candidate")
+        if not isinstance(selected, dict) or selected.get("passed") is not True:
+            raise ValueError("source reference gate lacks the frozen candidate")
+        expected_protocol = (
+            int(selected["requested_nG"]),
+            int(selected["Nxy"]),
+            float(selected["wavelength_step_nm"]),
+        )
+        actual_protocol = (
+            int(protocol.get("nG_requested", -1)),
+            int(protocol.get("Nxy", -1)),
+            float(protocol.get("wavelength_step_nm", -1.0)),
+        )
+        if actual_protocol != expected_protocol:
+            raise ValueError("active replacement protocol differs from the v2 frozen candidate")
         registered_reference = (load_json(GATE_STATE, {}) or {}).get("gates", {}).get(
             "reference_resolution", {}
         )
@@ -1159,8 +1221,9 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
         ),
         "reference_resolution": (
             f"Run {action_spec.get('runner', 'the configured reference audit')}. "
-            "The eight-case diagnostic is candidate evidence only. Register this gate only after the pre-frozen "
-            "24-case extension yields exact 32-case/320-task evidence with production_reference_approved=true. "
+            "Use the initial eight cases only to freeze one candidate. Register this gate only after the pre-frozen "
+            "24-case confirmation passes against the nG450/Nxy768/0.5nm final reference, with exactly 240 tasks "
+            "or 288 when the frozen candidate is outside the five-protocol reference matrix. "
             "Never mark the historical joint gate passed or reuse coarse labels for a fine-grid claim."
         ),
         "replacement_pool_generation": (
@@ -1729,8 +1792,14 @@ def watch(interval: int) -> None:
                 parts.append(("minute", int(time.time() // 60)))
                 fingerprint = repr(parts)
                 if fingerprint != last_fingerprint:
-                    print(json.dumps(evaluate_once(policy), ensure_ascii=True), flush=True)
-                    last_fingerprint = fingerprint
+                    controller = evaluate_once(policy)
+                    transition = run_auto_transition(controller)
+                    payload = {"controller": controller, "auto_transition": transition}
+                    print(json.dumps(payload, ensure_ascii=True), flush=True)
+                    last_fingerprint = None if (
+                        isinstance(transition, dict)
+                        and transition.get("status") == "advanced"
+                    ) else fingerprint
             except Exception as exc:
                 failure = {
                     "schema_version": 1,

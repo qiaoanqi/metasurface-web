@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed launcher for the pre-frozen 32-case reference holdout."""
+"""Fail-closed launcher for the v2-bound 24-case holdout."""
 
 from __future__ import annotations
 
@@ -14,14 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pipeline_supervisor as supervisor  # noqa: E402
-from scripts import run_reference_resolution_escalation as candidate_runner  # noqa: E402
 from scripts import run_reference_resolution_holdout as holdout  # noqa: E402
 
 
-VERSION = "paper2-reference-holdout-launch-preflight-v1"
-EXPECTED_PLAN_SHA256 = "B3812A34116AD62CD69BFD8AB806949F3AEEF7549702905C9BEAF38495911CFE"
-CANDIDATE_AUDIT_VERSION = "paper2-reference-resolution-audit-v1"
-CANDIDATE_PROTOCOL_VERSION = "paper2-reference-protocol-candidate-v1"
+VERSION = "paper2-reference-holdout-launch-preflight-v2"
 
 
 def normalized(path: Path) -> str:
@@ -38,73 +34,66 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
 
 
 def source_matches(source: Any, path: Path) -> bool:
-    if not isinstance(source, dict):
-        return False
-    return (
-        str(source.get("path", "")).replace("\\", "/") == normalized(path)
+    return bool(
+        isinstance(source, dict)
+        and str(source.get("path", "")).replace("\\", "/") == normalized(path)
         and str(source.get("sha256", "")).upper() == supervisor.file_digest(path)
     )
 
 
-def validate_candidate_chain(
+def registered_plan_sha(dispatch: dict[str, Any], plan_path: Path) -> str:
+    matches = [
+        str(item.get("sha256", "")).upper()
+        for item in dispatch.get("strategy_evidence", [])
+        if isinstance(item, dict)
+        and str(item.get("path", "")).replace("\\", "/") == normalized(plan_path)
+    ]
+    if len(matches) != 1 or len(matches[0]) != 64:
+        raise ValueError("dispatch does not bind exactly one v2 holdout plan SHA256")
+    return matches[0]
+
+
+def validate_source_chain(
     plan_path: Path,
-    evidence_path: Path,
-    checkpoint_path: Path,
-    audit_path: Path,
-    protocol_path: Path,
+    v2_plan_path: Path,
+    v2_checkpoint_path: Path,
+    v2_evidence_path: Path,
+    v2_audit_path: Path,
+    expected_plan_sha256: str,
 ) -> dict[str, Any]:
     plan_sha = supervisor.file_digest(plan_path)
-    if plan_sha != EXPECTED_PLAN_SHA256:
-        raise ValueError("pre-frozen holdout plan SHA256 mismatch")
+    if plan_sha != expected_plan_sha256.upper():
+        raise ValueError("v2 holdout plan SHA256 differs from dispatch")
     plan = holdout.load_plan(plan_path)
-
-    evidence = read_json(evidence_path, "candidate evidence")
-    if evidence.get("evidence_version") != candidate_runner.VERSION or evidence.get("passed") is not True:
-        raise ValueError("eight-case candidate evidence is not passed")
-    if evidence.get("pool_sha256") != plan["pool"]["sha256"]:
-        raise ValueError("candidate evidence pool SHA256 mismatch")
-    holdout.load_candidate(evidence_path, checkpoint_path, plan)
-
-    audit = read_json(audit_path, "independent candidate audit")
-    required_checks = (
-        "reference_checkpoint_exact_80",
-        "reference_evidence_passed",
-        "physics_controls_passed",
-        "production_1nm_comparison_complete",
-    )
-    if (
-        audit.get("evidence_version") != CANDIDATE_AUDIT_VERSION
-        or audit.get("passed") is not True
-        or audit.get("replacement_pool_required") is not True
-        or audit.get("pool_sha256") != plan["pool"]["sha256"]
-        or not all(audit.get("checks", {}).get(name) is True for name in required_checks)
-        or not source_matches(audit.get("inputs", {}).get("reference_evidence"), evidence_path)
-        or not source_matches(audit.get("inputs", {}).get("reference_checkpoint"), checkpoint_path)
-        or not source_matches(audit.get("inputs", {}).get("plan"), ROOT / ".state/reference_resolution_v1_plan.json")
-    ):
-        raise ValueError("independent candidate audit is missing, failed, or not hash-linked")
-
-    protocol = read_json(protocol_path, "candidate protocol screening")
-    if (
-        protocol.get("evidence_version") != CANDIDATE_PROTOCOL_VERSION
-        or protocol.get("passed") is not True
-        or protocol.get("approved") is not False
-        or protocol.get("pool_sha256") != plan["pool"]["sha256"]
-        or not source_matches(protocol.get("source_evidence"), evidence_path)
-        or not source_matches(protocol.get("source_checkpoint"), checkpoint_path)
-    ):
-        raise ValueError("candidate protocol screening is missing, failed, or not hash-linked")
-
-    return {
-        "plan": {"path": normalized(plan_path), "sha256": plan_sha},
-        "candidate_evidence": {"path": normalized(evidence_path), "sha256": supervisor.file_digest(evidence_path)},
-        "candidate_checkpoint": {"path": normalized(checkpoint_path), "sha256": supervisor.file_digest(checkpoint_path)},
-        "candidate_audit": {"path": normalized(audit_path), "sha256": supervisor.file_digest(audit_path)},
-        "candidate_protocol": {"path": normalized(protocol_path), "sha256": supervisor.file_digest(protocol_path)},
+    explicit = {
+        "source_v2_plan": v2_plan_path,
+        "source_v2_checkpoint": v2_checkpoint_path,
+        "source_v2_worker_evidence": v2_evidence_path,
+        "source_v2_independent_audit": v2_audit_path,
     }
+    for name, path in explicit.items():
+        if not source_matches(plan.get(name), path):
+            raise ValueError(f"v2 holdout plan {name} binding mismatch")
+    holdout.load_source_results(plan)
+    audit = read_json(v2_audit_path, "independent v2 audit")
+    if audit.get("passed") is not True:
+        raise ValueError("independent v2 audit is not passed")
+    sources = {"plan": {"path": normalized(plan_path), "sha256": plan_sha}}
+    sources.update(
+        {
+            name: {"path": normalized(path), "sha256": supervisor.file_digest(path)}
+            for name, path in explicit.items()
+        }
+    )
+    for name in ("archived_v1_holdout_plan", "source_base_checkpoint"):
+        path = holdout.resolve_binding(plan[name], name)
+        sources[name] = {"path": normalized(path), "sha256": supervisor.file_digest(path)}
+    return sources
 
 
-def strategy_has_sources(dispatch: dict[str, Any], sources: dict[str, Any], launcher_path: Path) -> bool:
+def strategy_has_sources(
+    dispatch: dict[str, Any], sources: dict[str, Any], launcher_path: Path
+) -> bool:
     registered = {
         (str(item.get("path", "")).replace("\\", "/"), str(item.get("sha256", "")).upper())
         for item in dispatch.get("strategy_evidence", [])
@@ -127,24 +116,25 @@ def lock_available(path: Path) -> bool:
 
 
 def build_preflight(args: argparse.Namespace) -> dict[str, Any]:
+    dispatch = read_json(ROOT / args.dispatch, "dispatch")
     paths = {
         "plan": ROOT / args.plan,
-        "candidate_evidence": ROOT / args.candidate_evidence,
-        "candidate_checkpoint": ROOT / args.candidate_checkpoint,
-        "candidate_audit": ROOT / args.candidate_audit,
-        "candidate_protocol": ROOT / args.candidate_protocol,
+        "v2_plan": ROOT / args.v2_plan,
+        "v2_checkpoint": ROOT / args.v2_checkpoint,
+        "v2_evidence": ROOT / args.v2_evidence,
+        "v2_audit": ROOT / args.v2_audit,
     }
-    sources = validate_candidate_chain(
+    sources = validate_source_chain(
         paths["plan"],
-        paths["candidate_evidence"],
-        paths["candidate_checkpoint"],
-        paths["candidate_audit"],
-        paths["candidate_protocol"],
+        paths["v2_plan"],
+        paths["v2_checkpoint"],
+        paths["v2_evidence"],
+        paths["v2_audit"],
+        registered_plan_sha(dispatch, paths["plan"]),
     )
     policy = supervisor.load_policy()
     integrity = supervisor.verify_policy_integrity(policy)
     protected = supervisor.audit_protected_files(policy)
-    dispatch = read_json(ROOT / args.dispatch, "dispatch")
     controller = read_json(supervisor.CONTROLLER_STATE, "controller state")
     audit = read_json(supervisor.AUDIT_RESULT, "pipeline audit")
     launcher_path = Path(__file__).resolve()
@@ -167,13 +157,20 @@ def build_preflight(args: argparse.Namespace) -> dict[str, Any]:
     command = [
         sys.executable,
         normalized(ROOT / "scripts/run_reference_resolution_holdout.py"),
-        "--plan", args.plan,
-        "--candidate-evidence", args.candidate_evidence,
-        "--candidate-checkpoint", args.candidate_checkpoint,
-        "--checkpoint", args.checkpoint,
-        "--evidence", args.evidence,
-        "--lock", args.lock,
-        "--n-jobs", str(args.n_jobs),
+        "--plan",
+        args.plan,
+        "--checkpoint",
+        args.checkpoint,
+        "--evidence",
+        args.evidence,
+        "--lock",
+        args.lock,
+        "--n-jobs",
+        str(args.n_jobs),
+        "--request-id",
+        str(dispatch["request_id"]),
+        "--attempt",
+        str(dispatch["attempt"]),
     ]
     return {
         "schema_version": 1,
@@ -181,7 +178,7 @@ def build_preflight(args: argparse.Namespace) -> dict[str, Any]:
         "passed": True,
         "request_id": dispatch["request_id"],
         "attempt": dispatch["attempt"],
-        "pool_sha256": read_json(paths["candidate_evidence"], "candidate evidence")["pool_sha256"],
+        "pool_sha256": holdout.load_plan(paths["plan"])["pool"]["sha256"],
         "checks": checks,
         "sources": sources,
         "launcher": {"path": normalized(launcher_path), "sha256": supervisor.file_digest(launcher_path)},
@@ -196,7 +193,7 @@ def write_once(path: Path, payload: dict[str, Any]) -> None:
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
         if existing != payload:
-            raise ValueError("existing holdout preflight differs; use a new evidence version")
+            raise ValueError("existing v2 holdout preflight differs; use a new evidence version")
     else:
         supervisor.atomic_json(path, payload)
 
@@ -204,18 +201,18 @@ def write_once(path: Path, payload: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dispatch", default=".state/dispatch_request.json")
-    parser.add_argument("--plan", default=".state/reference_resolution_holdout_v1_plan.json")
-    parser.add_argument("--candidate-evidence", default=".state/reference_resolution_v1.json")
-    parser.add_argument("--candidate-checkpoint", default=".state/reference_resolution_v1_checkpoint.pkl")
-    parser.add_argument("--candidate-audit", default=".state/reference_resolution_v1_audit.json")
-    parser.add_argument("--candidate-protocol", default=".state/reference_protocol_candidate_v1.json")
-    parser.add_argument("--checkpoint", default=".state/reference_resolution_holdout_v1_checkpoint.pkl")
-    parser.add_argument("--evidence", default=".state/reference_resolution_holdout_v1.json")
+    parser.add_argument("--plan", default=".state/reference_resolution_holdout_v2_plan.json")
+    parser.add_argument("--v2-plan", default=".state/reference_resolution_budget_v2_plan.json")
+    parser.add_argument("--v2-checkpoint", default=".state/reference_resolution_budget_v2_checkpoint.pkl")
+    parser.add_argument("--v2-evidence", default=".state/reference_resolution_budget_v2.json")
+    parser.add_argument("--v2-audit", default=".state/reference_resolution_budget_v2_audit.json")
+    parser.add_argument("--checkpoint", default=".state/reference_resolution_holdout_v2_checkpoint.pkl")
+    parser.add_argument("--evidence", default=".state/reference_resolution_holdout_v2.json")
     parser.add_argument(
         "--preflight-evidence",
-        default=".state/reference_resolution_holdout_preflight_v1_{request_id}_a{attempt}.json",
+        default=".state/reference_resolution_holdout_preflight_v2_{request_id}_a{attempt}.json",
     )
-    parser.add_argument("--lock", default=".state/reference_resolution_holdout_v1.lock")
+    parser.add_argument("--lock", default=".state/reference_resolution_holdout_v2.lock")
     parser.add_argument("--n-jobs", type=int, default=16)
     parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()

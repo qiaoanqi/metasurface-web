@@ -218,6 +218,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["effective_status"], "completed")
         self.assertTrue(result["status_reconciled"])
         self.assertEqual(result["next_action"], "pool_validation")
+        self.assertEqual(result["controller_status"], "pending")
+        self.assertEqual(result["pipeline_status"], "pending")
+        self.assertFalse(result["pipeline_complete"])
         self.assertFalse(result["training_allowed"])
 
     def test_failed_producer_is_never_relabelled_passed(self):
@@ -228,6 +231,50 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["controller_status"], "blocked")
         self.assertEqual(result["next_action"], "stop_and_report")
         self.assertFalse(audit["passed"])
+
+    def test_auto_transition_runs_only_for_terminal_scientific_joint_failure(self):
+        with patch.object(supervisor.subprocess, "run") as run:
+            self.assertIsNone(
+                supervisor.run_auto_transition(
+                    {"dispatch": {"action": "joint_numerical_convergence", "status": "in_progress"}}
+                )
+            )
+            run.assert_not_called()
+
+        completed = supervisor.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=0,
+            stdout='{"status":"advanced","transition":"reference_budget_v2"}\n',
+            stderr="",
+        )
+        controller = {
+            "dispatch": {
+                "action": "joint_numerical_convergence",
+                "status": "failed",
+                "terminal_failure": True,
+                "failure_class": "scientific",
+            }
+        }
+        with patch.object(supervisor.subprocess, "run", return_value=completed) as run:
+            result = supervisor.run_auto_transition(controller)
+        self.assertEqual(result["status"], "advanced")
+        self.assertIn("paper2_auto_transition.py", run.call_args.args[0][1])
+
+    def test_auto_transition_failure_is_fail_closed(self):
+        completed = supervisor.subprocess.CompletedProcess(
+            args=["python"], returncode=2, stdout="", stderr="evidence mismatch"
+        )
+        controller = {
+            "dispatch": {
+                "action": "joint_numerical_convergence",
+                "status": "failed",
+                "terminal_failure": True,
+                "failure_class": "scientific",
+            }
+        }
+        with patch.object(supervisor.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+                supervisor.run_auto_transition(controller)
 
     def test_ack_without_gate_evidence_retries_same_request(self):
         self.write_status({"status": "running", "pid": 999999})
@@ -289,6 +336,13 @@ class ControllerTests(unittest.TestCase):
         )
         if pool_spec_updates:
             pool_spec.update(pool_spec_updates)
+        numerical = pool_spec["expected_meta"]
+        approved_candidate = {
+            "requested_nG": int(numerical["nG"]),
+            "Nxy": 256,
+            "wavelength_step_nm": 5.0,
+            "passed": True,
+        }
 
         reference = supervisor.STATE / "reference_holdout_audit.json"
         supervisor.atomic_json(
@@ -296,8 +350,16 @@ class ControllerTests(unittest.TestCase):
             {
                 "schema_version": 1,
                 "evidence_version": "paper2-reference-holdout-audit-v1",
+                "protocol_revision": "v2_bound_holdout",
                 "passed": True,
                 "production_reference_approved": True,
+                "classification": "reference_holdout_passed",
+                "final_reference": {
+                    "requested_nG": 450,
+                    "Nxy": 768,
+                    "wavelength_step_nm": 0.5,
+                },
+                "approved_protocol_candidate": approved_candidate,
                 "pool_sha256": supervisor.file_digest(self.root / "pool.pkl"),
             },
         )
@@ -327,8 +389,12 @@ class ControllerTests(unittest.TestCase):
             {
                 "schema_version": 1,
                 "evidence_version": "paper2-replacement-protocol-v1",
+                "protocol_revision": "v2_bound_holdout",
                 "approved": True,
                 "automatic_launch_authorized": True,
+                "nG_requested": approved_candidate["requested_nG"],
+                "Nxy": approved_candidate["Nxy"],
+                "wavelength_step_nm": approved_candidate["wavelength_step_nm"],
                 "source_reference_gate": reference_binding,
                 "runtime_hashes": {
                     "replacement_runtime.py": supervisor.file_digest(runtime),
@@ -416,6 +482,21 @@ class ControllerTests(unittest.TestCase):
         _, state = supervisor.resolve_active_pool(self.policy)
         self.assertFalse(state["passed"])
         self.assertIn("SHA256", state["error"])
+
+    def test_production_reference_requires_v2_revision_classification_and_final_reference(self):
+        audit = {
+            "evidence_version": "paper2-reference-holdout-audit-v1",
+            "protocol_revision": "v2_bound_holdout",
+            "classification": "reference_holdout_passed",
+            "final_reference": copy.deepcopy(supervisor.REFERENCE_HOLDOUT_FINAL_REFERENCE),
+            "passed": True,
+            "production_reference_approved": True,
+        }
+        self.assertTrue(supervisor.production_reference_audit_approved(audit))
+        for field in ("protocol_revision", "classification", "final_reference"):
+            stale = copy.deepcopy(audit)
+            stale.pop(field)
+            self.assertFalse(supervisor.production_reference_audit_approved(stale))
 
     def test_active_pool_rejects_zero_expected_records(self):
         self.write_valid_active_pool_chain({"expected_records": 0})
@@ -831,6 +912,11 @@ class ControllerTests(unittest.TestCase):
             "ack_required": True,
             "payload": {"pool": "pool.pkl", "pool_sha256": pool_sha},
             "instruction": "frozen active request",
+            "strategy_revision": 2,
+            "strategy_based_on": "failed-parent-request",
+            "strategy_evidence": [
+                {"path": "frozen-evidence.json", "sha256": "A" * 64}
+            ],
         }
         supervisor.atomic_json(supervisor.DISPATCH_REQUEST, active)
         supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
@@ -851,6 +937,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["status"], "in_progress")
         self.assertEqual(result["payload"]["pool_sha256"], pool_sha)
         self.assertEqual(result["instruction"], "frozen active request")
+        self.assertEqual(result["strategy_revision"], active["strategy_revision"])
+        self.assertEqual(result["strategy_based_on"], active["strategy_based_on"])
+        self.assertEqual(result["strategy_evidence"], active["strategy_evidence"])
 
     def test_expired_running_lease_retries(self):
         self.write_status({"status": "running", "pid": 999999})
@@ -1002,6 +1091,67 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(advanced["action"], "reference_resolution")
         self.assertEqual(advanced["status"], "pending")
         self.assertEqual(advanced["strategy_revision"], 2)
+        self.assertEqual(advanced["strategy_based_on"], failed["request_id"])
+        self.assertEqual(
+            advanced["strategy_evidence"],
+            self.policy["strategy_override"]["evidence"],
+        )
+        frozen = copy.deepcopy(advanced)
+        repeated = supervisor.update_dispatch(
+            "joint_numerical_convergence",
+            self.policy,
+            {"pool": {"sha256": "0" * 64}},
+        )
+        self.assertEqual(repeated, frozen)
+
+    def test_terminal_joint_failure_relays_to_frozen_reference_request(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        failed = {
+            "request_id": "failed-budget-v2-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "terminal_failure": True,
+            "failure_class": "scientific",
+            "strategy_revision": 2,
+            "payload": {"pool": "pool.pkl", "pool_sha256": pool_sha},
+            "instruction": "frozen failed request",
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, failed)
+        evidence = self.root / "holdout-plan.json"
+        evidence.write_text('{"plan_valid": true}\n', encoding="ascii")
+        self.policy["strategy_override"] = {
+            "enabled": True,
+            "decision": "transition_after_failure",
+            "revision": 3,
+            "action": "reference_resolution",
+            "from_action": "joint_numerical_convergence",
+            "based_on_request_id": failed["request_id"],
+            "instruction_append": "Launch only the hash-bound v2 holdout.",
+            "evidence": [
+                {"path": evidence.name, "sha256": supervisor.file_digest(evidence)}
+            ],
+        }
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            first = supervisor.evaluate_once(self.policy)
+        request = first["dispatch"]
+        self.assertNotEqual(request["request_id"], failed["request_id"])
+        self.assertEqual(request["action"], "reference_resolution")
+        self.assertEqual(request["status"], "pending")
+        self.assertEqual(request["strategy_revision"], 3)
+        self.assertEqual(request["strategy_based_on"], failed["request_id"])
+        self.assertEqual(first["controller_status"], "pending")
+        self.assertEqual(first["pipeline_status"], "pending")
+        self.assertFalse(first["pipeline_complete"])
+
+        frozen = copy.deepcopy(request)
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            second = supervisor.evaluate_once(self.policy)
+        self.assertEqual(second["dispatch"], frozen)
+        self.assertEqual(second["next_action"], "reference_resolution")
+        self.assertFalse(second["pipeline_complete"])
 
     def test_strategy_revision_must_increase_and_request_id_binds_decision(self):
         repair = self.root / "repair_evidence.json"

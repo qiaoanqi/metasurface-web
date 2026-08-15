@@ -12,95 +12,90 @@ class ReferenceHoldoutLauncherTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.plan = self.root / "plan.json"
-        self.evidence = self.root / "candidate.json"
-        self.checkpoint = self.root / "candidate.pkl"
-        self.audit = self.root / "audit.json"
-        self.protocol = self.root / "protocol.json"
-        self.candidate_plan = self.root / ".state" / "reference_resolution_v1_plan.json"
-        self.candidate_plan.parent.mkdir()
-        self.candidate_plan.write_text("{}\n", encoding="ascii")
-        self.base_plan = {"pool": {"sha256": "POOL"}}
-        self.plan.write_text("{}\n", encoding="ascii")
-        self.checkpoint.write_bytes(b"checkpoint")
-        self.evidence.write_text(
-            json.dumps({
-                "evidence_version": launcher.candidate_runner.VERSION,
-                "passed": True,
-                "pool_sha256": "POOL",
-            }),
-            encoding="ascii",
-        )
-        self.audit.write_text(
-            json.dumps({
-                "evidence_version": launcher.CANDIDATE_AUDIT_VERSION,
-                "passed": True,
-                "replacement_pool_required": True,
-                "pool_sha256": "POOL",
-                "checks": {
-                    "reference_checkpoint_exact_80": True,
-                    "reference_evidence_passed": True,
-                    "physics_controls_passed": True,
-                    "production_1nm_comparison_complete": True,
-                },
-                "inputs": {
-                    "reference_evidence": {"path": "candidate.json", "sha256": file_digest(self.evidence)},
-                    "reference_checkpoint": {"path": "candidate.pkl", "sha256": file_digest(self.checkpoint)},
-                    "plan": {
-                        "path": ".state/reference_resolution_v1_plan.json",
-                        "sha256": file_digest(self.candidate_plan),
-                    },
-                },
-            }),
-            encoding="ascii",
-        )
-        self.protocol.write_text(
-            json.dumps({
-                "evidence_version": launcher.CANDIDATE_PROTOCOL_VERSION,
-                "passed": True,
-                "approved": False,
-                "pool_sha256": "POOL",
-                "source_evidence": {"path": "candidate.json", "sha256": file_digest(self.evidence)},
-                "source_checkpoint": {"path": "candidate.pkl", "sha256": file_digest(self.checkpoint)},
-            }),
-            encoding="ascii",
-        )
+        self.plan_path = self.root / "holdout-plan.json"
+        self.v2_plan = self.root / "v2-plan.json"
+        self.v2_checkpoint = self.root / "v2-checkpoint.pkl"
+        self.v2_evidence = self.root / "v2-evidence.json"
+        self.v2_audit = self.root / "v2-audit.json"
+        self.archive = self.root / "archive.json"
+        self.base_checkpoint = self.root / "base.pkl"
+        for path, content in (
+            (self.v2_plan, "{}"),
+            (self.v2_evidence, "{}"),
+            (self.v2_audit, '{"passed": true}'),
+            (self.archive, "{}"),
+        ):
+            path.write_text(content, encoding="ascii")
+        self.v2_checkpoint.write_bytes(b"v2")
+        self.base_checkpoint.write_bytes(b"base")
+        self.plan = {
+            "pool": {"sha256": "P"},
+            "source_v2_plan": self.binding(self.v2_plan),
+            "source_v2_checkpoint": self.binding(self.v2_checkpoint),
+            "source_v2_worker_evidence": self.binding(self.v2_evidence),
+            "source_v2_independent_audit": self.binding(self.v2_audit),
+            "archived_v1_holdout_plan": self.binding(self.archive),
+            "source_base_checkpoint": self.binding(self.base_checkpoint),
+        }
+        self.plan_path.write_text(json.dumps(self.plan), encoding="ascii")
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def validate(self):
+    def binding(self, path):
+        return {"path": path.name, "sha256": file_digest(path)}
+
+    def validate(self, expected_sha=None):
+        expected_sha = expected_sha or file_digest(self.plan_path)
         with (
             patch.object(launcher, "ROOT", self.root),
-            patch.object(launcher, "EXPECTED_PLAN_SHA256", file_digest(self.plan)),
-            patch.object(launcher.holdout, "load_plan", return_value=self.base_plan),
-            patch.object(launcher.holdout, "load_candidate", return_value={"results": {}}),
+            patch.object(launcher.holdout, "ROOT", self.root),
+            patch.object(launcher.holdout, "load_plan", return_value=self.plan),
+            patch.object(launcher.holdout, "load_source_results", return_value={}),
         ):
-            return launcher.validate_candidate_chain(
-                self.plan, self.evidence, self.checkpoint, self.audit, self.protocol
+            return launcher.validate_source_chain(
+                self.plan_path,
+                self.v2_plan,
+                self.v2_checkpoint,
+                self.v2_evidence,
+                self.v2_audit,
+                expected_sha,
             )
 
-    def test_independent_audit_is_required_and_hash_linked(self):
+    def test_full_v2_source_chain_is_hash_linked(self):
         result = self.validate()
-        self.assertEqual(result["candidate_audit"]["sha256"], file_digest(self.audit))
-        payload = json.loads(self.audit.read_text(encoding="ascii"))
-        payload["passed"] = False
-        self.audit.write_text(json.dumps(payload), encoding="ascii")
-        with self.assertRaisesRegex(ValueError, "independent candidate audit"):
+        self.assertEqual(result["source_v2_independent_audit"]["sha256"], file_digest(self.v2_audit))
+        self.assertEqual(result["archived_v1_holdout_plan"]["sha256"], file_digest(self.archive))
+
+    def test_dispatch_plan_hash_is_mandatory(self):
+        with self.assertRaisesRegex(ValueError, "differs from dispatch"):
+            self.validate("0" * 64)
+
+    def test_any_v2_source_hash_change_is_rejected(self):
+        self.v2_checkpoint.write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "source_v2_checkpoint"):
             self.validate()
 
-    def test_candidate_protocol_screening_cannot_self_approve(self):
-        payload = json.loads(self.protocol.read_text(encoding="ascii"))
-        payload["approved"] = True
-        self.protocol.write_text(json.dumps(payload), encoding="ascii")
-        with self.assertRaisesRegex(ValueError, "candidate protocol screening"):
+    def test_failed_v2_audit_is_rejected(self):
+        self.v2_audit.write_text('{"passed": false}', encoding="ascii")
+        self.plan["source_v2_independent_audit"] = self.binding(self.v2_audit)
+        self.plan_path.write_text(json.dumps(self.plan), encoding="ascii")
+        with self.assertRaisesRegex(ValueError, "not passed"):
             self.validate()
 
-    def test_frozen_plan_hash_matches_registered_plan(self):
-        self.assertEqual(
-            file_digest(launcher.ROOT / ".state/reference_resolution_holdout_v1_plan.json"),
-            launcher.EXPECTED_PLAN_SHA256,
-        )
+    def test_registered_plan_sha_requires_one_exact_binding(self):
+        dispatch = {
+            "strategy_evidence": [
+                {"path": "holdout-plan.json", "sha256": file_digest(self.plan_path)}
+            ]
+        }
+        with patch.object(launcher, "ROOT", self.root):
+            self.assertEqual(
+                launcher.registered_plan_sha(dispatch, self.plan_path), file_digest(self.plan_path)
+            )
+            dispatch["strategy_evidence"].append(dispatch["strategy_evidence"][0])
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                launcher.registered_plan_sha(dispatch, self.plan_path)
 
     def test_stale_lock_is_recoverable_but_live_lock_is_not(self):
         lock = self.root / "holdout.lock"

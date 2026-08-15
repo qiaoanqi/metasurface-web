@@ -192,8 +192,23 @@ def source_gate_matches(protocol: dict[str, Any]) -> None:
     if not source_path.is_file() or file_digest(source_path) != str(source.get("sha256", "")).upper():
         raise ValueError("approved protocol reference evidence hash mismatch")
     source_evidence = load_json(source_path)
-    if source_evidence.get("passed") is not True:
-        raise ValueError("approved protocol reference evidence is not passed")
+    if not supervisor.production_reference_audit_approved(source_evidence):
+        raise ValueError("approved protocol reference evidence is not a v2-bound pass")
+    selected = source_evidence.get("approved_protocol_candidate")
+    if not isinstance(selected, dict) or selected.get("passed") is not True:
+        raise ValueError("approved reference evidence lacks the frozen candidate")
+    expected = (
+        int(selected["requested_nG"]),
+        int(selected["Nxy"]),
+        float(selected["wavelength_step_nm"]),
+    )
+    actual = (
+        int(protocol.get("nG_requested", -1)),
+        int(protocol.get("Nxy", -1)),
+        float(protocol.get("wavelength_step_nm", -1.0)),
+    )
+    if actual != expected:
+        raise ValueError("replacement protocol differs from the v2 frozen candidate")
     gate_state = supervisor.load_json(supervisor.GATE_STATE, {}) or {}
     gate = gate_state.get("gates", {}).get("reference_resolution", {})
     registered = {
@@ -276,7 +291,11 @@ def validate_protocol(path: Path) -> dict[str, Any]:
     protocol = load_json(path)
     if protocol.get("schema_version") != 1:
         raise ValueError("replacement protocol schema_version must be 1")
-    if protocol.get("evidence_version") != PROTOCOL_VERSION or protocol.get("approved") is not True:
+    if (
+        protocol.get("evidence_version") != PROTOCOL_VERSION
+        or protocol.get("protocol_revision") != "v2_bound_holdout"
+        or protocol.get("approved") is not True
+    ):
         raise ValueError("replacement protocol is not auditor-approved")
     integrity = supervisor.verify_policy_integrity(supervisor.load_policy())
     if integrity.get("passed") is not True:

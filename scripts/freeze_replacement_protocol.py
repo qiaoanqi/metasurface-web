@@ -20,9 +20,7 @@ from scripts.run_joint_convergence import retained_order  # noqa: E402
 
 def registered_reference_audit(path: Path) -> dict:
     audit = json.loads(path.read_text(encoding="utf-8"))
-    if audit.get("evidence_version") != "paper2-reference-holdout-audit-v1":
-        raise ValueError("replacement protocol requires the independent 32-case audit")
-    if audit.get("passed") is not True or audit.get("production_reference_approved") is not True:
+    if not supervisor.production_reference_audit_approved(audit):
         raise ValueError("32-case production reference is not approved")
     gate_state = supervisor.load_json(supervisor.GATE_STATE, {}) or {}
     gate = gate_state.get("gates", {}).get("reference_resolution", {})
@@ -109,6 +107,7 @@ def build_protocol(audit_path: Path) -> dict:
     return {
         "schema_version": 1,
         "evidence_version": runner.PROTOCOL_VERSION,
+        "protocol_revision": "v2_bound_holdout",
         "approved": True,
         "automatic_launch_authorized": True,
         "source_reference_gate": {
@@ -131,11 +130,11 @@ def build_protocol(audit_path: Path) -> dict:
         "geometry_manifest_sha256": runner.geometry_manifest_hash(params),
         "runtime_hashes": {name: supervisor.file_digest(ROOT / name) for name in runtime_paths},
         "cost_estimate": {
-            "source": "32-case measured task runtimes scaled to 6000 records on 16 workers",
+            "source": "eight-case calibration runtimes scaled to 6000 records on 16 workers; candidate independently confirmed on 24 untouched cases",
             "wall_hours": selected["estimated_wall_hours_16_workers_6000"],
             "mean_task_seconds": selected["mean_task_seconds_estimate"],
         },
-        "decision_rule": "lowest measured-cost protocol that directly passes unchanged joint DeltaE thresholds against nG365/Nxy512/0.5nm on all 32 frozen geometries",
+        "decision_rule": "lowest measured-cost protocol frozen on eight calibration cases and independently confirmed on 24 untouched cases against nG450/Nxy768/0.5nm under unchanged joint DeltaE thresholds",
         "training_allowed": False,
     }
 

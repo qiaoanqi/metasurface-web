@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Apply the two pre-registered paper 2 strategy transitions once evidence exists."""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+STATE = ROOT / ".state"
+DISPATCH = STATE / "dispatch_request.json"
+V1_AUDIT = STATE / "reference_resolution_v1_audit.json"
+V2_AUDIT = STATE / "reference_resolution_budget_v2_audit.json"
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"JSON object required: {path}")
+    return value
+
+
+def terminal_scientific_request(dispatch: dict[str, Any]) -> bool:
+    return bool(
+        dispatch.get("action") == "joint_numerical_convergence"
+        and dispatch.get("status") == "failed"
+        and dispatch.get("terminal_failure") is True
+        and str(dispatch.get("failure_class", "")).lower() == "scientific"
+        and isinstance(dispatch.get("request_id"), str)
+        and dispatch["request_id"]
+        and int(dispatch.get("attempt", 0)) >= 1
+    )
+
+
+def request_identity(dispatch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "request_id": dispatch["request_id"],
+        "attempt": int(dispatch["attempt"]),
+    }
+
+
+def run_command(script: str) -> dict[str, Any]:
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / script)],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"{script} failed: {detail}")
+    return {
+        "script": script,
+        "returncode": completed.returncode,
+    }
+
+
+def v1_transition_ready(audit: dict[str, Any]) -> bool:
+    if not audit:
+        return False
+    if (
+        audit.get("evidence_version") != "paper2-reference-resolution-audit-v1"
+        or audit.get("passed") is not False
+        or audit.get("classification")
+        in {"execution_integrity_failure", "worker_evidence_integrity_failure"}
+    ):
+        raise ValueError("v1 evidence is not a transition-eligible scientific failure")
+    required = (
+        "frozen_plan_sha256_and_content",
+        "checkpoint_meta_and_runtime_hashes",
+        "reference_checkpoint_exact_80",
+        "worker_claim_matches_independent_recomputation",
+        "physics_controls_passed",
+    )
+    if not all(audit.get("checks", {}).get(name) is True for name in required):
+        raise ValueError("v1 independent audit prerequisites are incomplete")
+    return True
+
+
+def v2_transition_decision(
+    audit: dict[str, Any], dispatch: dict[str, Any]
+) -> str:
+    if not audit:
+        return "waiting_for_v2_audit"
+    if audit.get("evidence_version") != "paper2-reference-resolution-budget-v2-audit":
+        raise ValueError("unexpected v2 audit version")
+    if audit.get("request") != request_identity(dispatch):
+        raise ValueError("v2 audit is not bound to the terminal request")
+    if (
+        audit.get("passed") is True
+        and audit.get("classification") == "budget_v2_converged"
+        and audit.get("training_allowed") is False
+    ):
+        return "advance_to_holdout"
+    if (
+        audit.get("passed") is False
+        and audit.get("classification") == "budget_v2_still_insufficient"
+    ):
+        return "terminal_scientific_negative"
+    raise ValueError("v2 audit is not an approved pass or a registered scientific negative")
+
+
+def advance_once() -> dict[str, Any]:
+    dispatch = load_json(DISPATCH)
+    if not terminal_scientific_request(dispatch):
+        return {"status": "idle", "reason": "no_terminal_scientific_joint_request"}
+
+    revision = int(dispatch.get("strategy_revision", 0))
+    if revision < 2:
+        audit = load_json(V1_AUDIT)
+        if not v1_transition_ready(audit):
+            return {"status": "waiting", "reason": "waiting_for_v1_audit"}
+        commands = [
+            run_command("scripts/freeze_reference_budget_v2.py"),
+            run_command("scripts/advance_reference_budget_v2_strategy.py"),
+        ]
+        return {
+            "status": "advanced",
+            "transition": "reference_budget_v2",
+            "based_on_request_id": dispatch["request_id"],
+            "commands": commands,
+        }
+
+    decision = v2_transition_decision(load_json(V2_AUDIT), dispatch)
+    if decision == "waiting_for_v2_audit":
+        return {"status": "waiting", "reason": decision}
+    if decision == "terminal_scientific_negative":
+        return {
+            "status": "stopped",
+            "reason": decision,
+            "based_on_request_id": dispatch["request_id"],
+        }
+    commands = [
+        run_command("scripts/freeze_reference_holdout_plan.py"),
+        run_command("scripts/advance_reference_holdout_strategy.py"),
+    ]
+    return {
+        "status": "advanced",
+        "transition": "reference_resolution_holdout",
+        "based_on_request_id": dispatch["request_id"],
+        "commands": commands,
+    }
+
+
+def main() -> int:
+    result = advance_once()
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -12,6 +12,17 @@ from scripts import run_reference_resolution_holdout as holdout
 
 
 class JointConvergenceV2Tests(unittest.TestCase):
+    def test_reference_lookup_uses_v2_final_reference(self):
+        final_id = holdout.result_id(0, "p", (450, 768), 0.5)
+        expected = {"status": "ok", "R": np.asarray([0.3]), "T": np.asarray([0.7])}
+        self.assertIs(
+            joint.reference_result({"results": {final_id: expected}}, 0, "p", False),
+            expected,
+        )
+        old_id = holdout.result_id(0, "p", base.FINE_CONFIG, 0.5)
+        with self.assertRaises(ValueError):
+            joint.reference_result({"results": {old_id: expected}}, 0, "p", False)
+
     def build_fixture(self, directory: Path):
         production_wavelength = colorimetry.wavelength_grid(5.0)
         reference_wavelength = colorimetry.wavelength_grid(0.5)
@@ -54,7 +65,7 @@ class JointConvergenceV2Tests(unittest.TestCase):
                     }
                 )
                 source_pol = {"p": "s", "s": "p"}[pol] if swapped else pol
-                identifier = holdout.result_id(index, source_pol, base.FINE_CONFIG, 0.5)
+                identifier = holdout.result_id(index, source_pol, (450, 768), 0.5)
                 reference_results[identifier] = {
                     "status": "ok",
                     "wavelength_nm": reference_wavelength,

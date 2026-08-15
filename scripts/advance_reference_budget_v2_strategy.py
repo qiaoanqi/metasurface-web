@@ -24,6 +24,7 @@ EVIDENCE_PATHS = (
     "scripts/audit_reference_resolution_budget_v2.py",
     "scripts/freeze_reference_budget_v2.py",
     "scripts/advance_reference_budget_v2_strategy.py",
+    "scripts/paper2_auto_transition.py",
     "tests/test_reference_resolution_budget_v2.py",
 )
 
@@ -81,6 +82,19 @@ def validate_scientific_inputs(v1_audit: dict, v2_plan: dict) -> None:
         raise ValueError("v2 strategy cannot change thresholds")
 
 
+def strategy_instruction() -> str:
+    return (
+        "Run only the hash-bound numerical-budget v2 diagnostic: python "
+        "scripts/run_reference_resolution_budget_v2.py --n-jobs 16. Preserve its independent "
+        "checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python "
+        "scripts/audit_reference_resolution_budget_v2.py and close this historical joint request as "
+        "failed with failure_class=scientific even when the independent budget-v2 audit passes; attach "
+        "that audit as evidence for the next strategy transition. This is diagnostic-only: do not "
+        "register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a "
+        "pool, or enable training."
+    )
+
+
 def build_strategy(policy: dict, dispatch: dict, evidence: list[dict]) -> dict:
     validate_terminal_dispatch(dispatch)
     current = policy.get("strategy_override", {})
@@ -94,14 +108,7 @@ def build_strategy(policy: dict, dispatch: dict, evidence: list[dict]) -> dict:
         "revision": revision,
         "action": ACTION,
         "based_on_request_id": dispatch["request_id"],
-        "instruction_append": (
-            "Run only the hash-bound numerical-budget v2 diagnostic: python "
-            "scripts/run_reference_resolution_budget_v2.py --n-jobs 16. Preserve its independent "
-            "checkpoint and raw 1 nm/0.5 nm R/T arrays. When complete, run python "
-            "scripts/audit_reference_resolution_budget_v2.py and acknowledge this request with the "
-            "independent audit evidence. This is diagnostic-only: do not register the historical nG131 "
-            "pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training."
-        ),
+        "instruction_append": strategy_instruction(),
         "evidence": evidence,
     }
 
@@ -132,6 +139,7 @@ def apply_strategy(policy_path: Path, integrity_path: Path, dispatch_path: Path)
             current_strategy.get("enabled") is True
             and current_strategy.get("decision") == "retry_same_gate"
             and current_strategy.get("action") == ACTION
+            and current_strategy.get("instruction_append") == strategy_instruction()
             and current_strategy.get("evidence") == evidence
             and int(current_strategy.get("revision", 0))
             > int(dispatch.get("strategy_revision", 0))

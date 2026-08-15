@@ -23,6 +23,7 @@ from scripts import run_reference_resolution_escalation as v1  # noqa: E402
 
 
 VERSION = "paper2-reference-resolution-budget-v2-audit"
+ACTION = "joint_numerical_convergence"
 PLAN_VERSION = "paper2-reference-budget-v2-plan"
 POLS = ("p", "s")
 EXTRA_CONFIGS = ((450, 512), (365, 768), (450, 768))
@@ -40,6 +41,23 @@ SPATIAL_CONFIGS = {
     "grid": EXTRA_CONFIGS[1],
     "corner": EXTRA_CONFIGS[2],
 }
+
+
+def dispatch_identity(path: Path) -> dict:
+    dispatch = load_json(path, {}) or {}
+    if (
+        dispatch.get("action") != ACTION
+        or dispatch.get("status") not in {"in_progress", "failed"}
+        or int(dispatch.get("strategy_revision", 0)) < 2
+        or not isinstance(dispatch.get("request_id"), str)
+        or not dispatch["request_id"]
+        or int(dispatch.get("attempt", 0)) < 1
+    ):
+        raise ValueError("budget v2 audit requires its bound revision-2 joint request")
+    return {
+        "request_id": dispatch["request_id"],
+        "attempt": int(dispatch["attempt"]),
+    }
 
 
 def spatial_axis_specs() -> list[tuple[str, tuple[int, int], float]]:
@@ -319,6 +337,7 @@ def build_audit(
     evidence_path: Path,
     checkpoint_path: Path,
     plan_path: Path,
+    request: dict,
 ) -> dict:
     plan = load_json(plan_path, {}) or {}
     validate_plan(plan, plan_path)
@@ -326,6 +345,8 @@ def build_audit(
     evidence = load_json(evidence_path, {}) or {}
     if evidence.get("evidence_version") != "paper2-reference-resolution-budget-v2":
         raise ValueError("unexpected v2 worker evidence version")
+    if evidence.get("request") != request:
+        raise ValueError("v2 worker evidence request identity mismatch")
     require_binding(evidence.get("plan"), plan_path, "v2 evidence plan")
     require_binding(evidence.get("checkpoint"), checkpoint_path, "v2 evidence checkpoint")
     if evidence.get("pool_sha256") != plan.get("pool_sha256"):
@@ -341,6 +362,7 @@ def build_audit(
     tasks = build_tasks(plan["selection"])
     expected_meta = {
         "version": "paper2-reference-resolution-budget-v2",
+        "request": request,
         "plan_sha256": file_digest(plan_path),
         "pool_sha256": plan["pool_sha256"],
         "selected_geometries": plan["selection"],
@@ -415,6 +437,7 @@ def build_audit(
     return {
         "schema_version": 1,
         "evidence_version": VERSION,
+        "request": request,
         "passed": passed,
         "classification": "budget_v2_converged" if passed else "budget_v2_still_insufficient",
         "pool_sha256": plan["pool_sha256"],
@@ -439,6 +462,7 @@ def main() -> int:
     parser.add_argument("--evidence", default=".state/reference_resolution_budget_v2.json")
     parser.add_argument("--checkpoint", default=".state/reference_resolution_budget_v2_checkpoint.pkl")
     parser.add_argument("--output", default=".state/reference_resolution_budget_v2_audit.json")
+    parser.add_argument("--dispatch", default=".state/dispatch_request.json")
     args = parser.parse_args()
     paths = {name: ROOT / value for name, value in (
         ("plan", args.plan), ("evidence", args.evidence), ("checkpoint", args.checkpoint)
@@ -447,7 +471,10 @@ def main() -> int:
         missing = [relative_path(path) for path in paths.values() if not path.is_file()]
         if missing:
             raise ValueError(f"required v2 audit inputs are missing: {missing}")
-        audit = build_audit(paths["evidence"], paths["checkpoint"], paths["plan"])
+        request = dispatch_identity(ROOT / args.dispatch)
+        audit = build_audit(
+            paths["evidence"], paths["checkpoint"], paths["plan"], request
+        )
     except Exception as exc:
         audit = {
             "schema_version": 1,
