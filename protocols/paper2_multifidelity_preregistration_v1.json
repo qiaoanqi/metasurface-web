@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-multifidelity-preregistration-v1",
+  "preregistration_revision": 1,
+  "created_before_reference_budget_terminal": true,
+  "created_before_holdout_results": true,
+  "holdout_outcome_paths_absent_at_registration": true,
+  "scientific_question": "Can a physics-audited low-to-high-fidelity residual model support dual-polarization elliptical inverse design without treating a coarse pool as truth?",
+  "fidelity_roles": {
+    "low": {
+      "path": "data/rcwa_ellip_TiO2_3000_air.pkl",
+      "sha256": "9B495E92B7C27FCE712E8943BAFF757A9EE9B2C9B692145F2887611DDF62EE72",
+      "records": 6000,
+      "geometries": 3000,
+      "polarizations": [
+        "p",
+        "s"
+      ],
+      "nG_requested": 131,
+      "background": "air",
+      "wavelength_step_nm": 5.0,
+      "role": "coverage_and_baseline_only",
+      "production_truth": false
+    },
+    "high": {
+      "protocol_source": "approved_v2_reference_holdout_candidate",
+      "must_bind_to_independent_reference_audit": true,
+      "must_use_air_background": true,
+      "must_keep_polarizations_paired": true,
+      "common_label_grid_nm": 5.0,
+      "production_truth": true
+    }
+  },
+  "holdout_isolation": {
+    "manifest": {
+      "path": ".state/reference_resolution_holdout_v1_plan.json",
+      "sha256": "B3812A34116AD62CD69BFD8AB806949F3AEEF7549702905C9BEAF38495911CFE"
+    },
+    "geometry_count": 32,
+    "geometry_ids_sha256": "79E1D3B7FDD97218388E335E074D2B0EF93E4C9932ED6ABDEE959675489A5FE7",
+    "exclude_from_selection_training_validation_early_stopping": true,
+    "exclude_from_active_acquisition": true,
+    "exclude_from_hyperparameter_selection": true,
+    "result_independent_of_this_plan": true
+  },
+  "geometry_split": {
+    "version": "sha256-ranked-80-10-10-v1",
+    "source_geometry_count": 3000,
+    "source_record_count": 6000,
+    "pre_exclusion_counts": {
+      "train": 2400,
+      "validation": 300,
+      "test": 300
+    },
+    "eligible_counts_after_holdout_exclusion": {
+      "train": 2373,
+      "validation": 296,
+      "test": 299
+    },
+    "assignment_input_pool_sha256": "9B495E92B7C27FCE712E8943BAFF757A9EE9B2C9B692145F2887611DDF62EE72",
+    "split_before_holdout_exclusion": true,
+    "p_s_pair_unit": true
+  },
+  "high_fidelity_budget": {
+    "seed_train_geometries": 96,
+    "seed_maximin_geometries": 64,
+    "seed_fixed_random_geometries": 32,
+    "active_batch_geometries": 32,
+    "default_train_geometries": 160,
+    "maximum_train_geometries": 192,
+    "validation_geometries": 64,
+    "test_geometries": 96,
+    "default_total_geometries": 320,
+    "maximum_total_geometries": 352,
+    "passive_control_batch_geometries": 32,
+    "passive_control_batches": 4,
+    "maximum_unique_geometries_with_passive_control": 480,
+    "polarization_records_per_geometry": 2,
+    "minimum_active_batches": 2,
+    "maximum_active_batches": 3,
+    "never_expand_after_maximum": true
+  },
+  "seed_selection": {
+    "algorithm": "64 deterministic joint-feature maximin plus 32 deterministic stratified random controls",
+    "features": [
+      "L",
+      "W",
+      "H",
+      "P",
+      "r",
+      "fill",
+      "D65_Lab_p",
+      "D65_Lab_s",
+      "fixed_17_band_spectra_p",
+      "fixed_17_band_spectra_s"
+    ],
+    "feature_fit_scope": "eligible_train_geometries_only",
+    "maximin_start": "lexicographically smallest SHA256-ranked eligible train geometry",
+    "random_seed": 2026,
+    "random_control_is_not_used_for_acquisition": true,
+    "p_s_pair_atomic": true
+  },
+  "multifidelity_model": {
+    "primary": "low_fidelity_plus_high_fidelity_residual",
+    "residual_grid_nm": 5.0,
+    "residual_basis_components": 16,
+    "basis_fit_scope": "high_fidelity_train_seed_only_then_frozen",
+    "regressor": "5-member residual ensemble, input geometry plus low-fidelity p/s spectra, hidden 128x3, output 16",
+    "ensemble_seeds": [
+      42,
+      123,
+      456,
+      789,
+      2026
+    ],
+    "normalization_fit_scope": "eligible_train_only",
+    "fixed_baselines": [
+      "low_fidelity_only",
+      "high_fidelity_only",
+      "random_acquisition"
+    ],
+    "no_model_selection_on_holdout": true
+  },
+  "active_acquisition": {
+    "batch_size_geometries": 32,
+    "score": "0.50 spectral disagreement + 0.30 inverse-target ranking disagreement + 0.20 distance to labeled-HF set",
+    "uncertainty": "ensemble spectral variance integrated over both polarizations",
+    "boundary_quota": "at least 2 per batch from high-r, fill-extreme, P-extreme, or high p/s split",
+    "retrain_after_each_batch": true,
+    "train_only": true,
+    "validation_and_test_never_acquired": true
+  },
+  "stopping": {
+    "minimum_batches": 2,
+    "success": "two consecutive validation checks with mean joint dE00 < 1.15, all 64 validation geometries < 2.3, and paired-bootstrap 95% upper bound of mean < 1.15",
+    "plateau": "two consecutive batches with mean improvement < 0.05 dE00 and one-sided 95% upper bound of improvement < 0.10 while success is not met",
+    "hard_stop": "maximum 192 high-fidelity active-train geometries",
+    "test_reveal_only_after_stop": true,
+    "thresholds_are_frozen": true
+  },
+  "inverse_design": {
+    "target_source": "24 primary frozen-reference geometries plus 64 final-test high-fidelity geometries",
+    "target_count": 88,
+    "polarization_joint_metric": "max(dE00_p, dE00_s)",
+    "success_threshold": 2.3,
+    "surrogate_candidate_budget": 10,
+    "random_topk_baseline": true,
+    "single_fidelity_baseline": true,
+    "direct_optimization_baseline": {
+      "targets": 8,
+      "solver_geometry_budget": 20
+    },
+    "independent_high_fidelity_rcwa_verification": true,
+    "holdout_targets_unlocked_only_after_model_and_stopping_lock": true,
+    "holdout_targets_final_evaluation_only": true
+  },
+  "failure_and_fallback": {
+    "on_plateau_or_hard_stop_without_success": "multifidelity_scientific_negative_or_narrowed_claim",
+    "full_high_fidelity_pool": "requires_new_independent_full_pool_necessity_audit",
+    "full_pool_automatic_launch": false,
+    "threshold_change_allowed": false,
+    "training_without_all_gates": false
+  },
+  "cost_basis": {
+    "path": "protocols/paper2_multifidelity_cost_basis_v1.json",
+    "sha256": "3EDA8AB71EAE23AE29B9B4FFE0CDFF916E1DA1A900F7226E67847887CF762BAB"
+  },
+  "cost_estimate": {
+    "formula": "geometry_count * 2 * task_seconds / 16 * 1.20",
+    "default_wall_time_hours": "70-140 for 320 geometries (160 train + 64 validation + 96 test)",
+    "maximum_active_wall_time_hours": "77-155 for 352 geometries (192 active-train + 64 validation + 96 test)",
+    "active_passive_comparison_wall_time_hours": "100-210 for at most 480 unique geometries",
+    "full_3000_geometry_wall_time_hours": "approximately 650-1300 at the observed high-fidelity endpoint; never the default",
+    "estimate_is_not_a_scientific_gate": true
+  },
+  "training_allowed": false,
+  "forbidden": [
+    "holdout_reselection",
+    "threshold_edit",
+    "old_pool_overwrite",
+    "paper1_edit",
+    "automatic_full_pool_launch",
+    "training_before_all_gates"
+  ]
+}

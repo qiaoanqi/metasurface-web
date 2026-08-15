@@ -214,6 +214,20 @@
         "binding": "solver_protocol"
       },
       {
+        "action": "multifidelity_preregistration",
+        "gate": "multifidelity_preregistered",
+        "evidence_version": "paper2-multifidelity-preregistration-audit-v1",
+        "runner": "python scripts/audit_multifidelity_preregistration_v1.py --mode worker",
+        "auditor": "python scripts/audit_multifidelity_preregistration_v1.py --mode auditor",
+        "auditor_script": "scripts/audit_multifidelity_preregistration_v1.py",
+        "worker_evidence": ".state/multifidelity_preregistration_v1.json",
+        "audit_evidence": ".state/multifidelity_preregistration_v1_audit.json",
+        "finalizer": "scripts/finalize_audited_gate.py",
+        "finalization_mode": "generic",
+        "binding": "pool",
+        "diagnostic_only": false
+      },
+      {
         "action": "reference_resolution",
         "gate": "reference_resolution",
         "evidence_version": "paper2-reference-holdout-audit-v1",
@@ -226,6 +240,14 @@
         "binding": "solver_protocol"
       },
       {
+        "action": "multifidelity_data_preparation",
+        "gate": "multifidelity_data_ready",
+        "evidence_version": "paper2-multifidelity-data-audit-v1",
+        "implementation_state": "ready",
+        "manual_only": true,
+        "binding": "pool"
+      },
+      {
         "action": "replacement_pool_generation",
         "gate": "replacement_pool_ready",
         "evidence_version": "paper2-replacement-pool-audit-v1",
@@ -236,7 +258,10 @@
         "audit_evidence": ".state/replacement_pool_v1_audit.json",
         "finalization_mode": "external_transition",
         "requires_new_versioned_pool": true,
-        "diagnostic_only": true
+        "diagnostic_only": true,
+        "manual_only": true,
+        "automatic_launch_authorized": false,
+        "fallback_only": true
       },
       {
         "action": "joint_numerical_convergence",
@@ -337,11 +362,13 @@
       "d65_colorimetry",
       "joint_numerical_convergence",
       "reference_resolution",
-      "replacement_pool_ready",
       "cross_solver_spectrum_validation",
       "circular_control",
-      "geometry_split_frozen"
-    ]
+      "geometry_split_frozen",
+      "multifidelity_preregistered",
+      "multifidelity_data_ready"
+    ],
+    "contract_revision": "paper2-workflow-contract-v2-multifidelity"
   },
   "dispatch": {
     "ack_timeout_seconds": 1800,
@@ -365,7 +392,7 @@
     "revision": 8,
     "action": "joint_numerical_convergence",
     "based_on_request_id": "000786ba2cb4154777b8",
-    "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before starting any worker; if it reports audit_existing_evidence, skip the worker and run only the independent auditor. Preserve the independent checkpoint and raw 1 nm/0.5 nm R/T arrays. When the worker is dead, run scripts/finalize_paper2_request.py; it must independently audit, atomically replace the matching running ack, and classify v2 results as failed/scientific. Then let pipeline_supervisor and paper2_auto_transition.py decide the next evidence-bound step. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
+    "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before starting any worker; if it reports audit_existing_evidence, skip the worker and run only the independent auditor. Preserve the independent checkpoint and raw 1 nm/0.5 nm R/T arrays. Keep the active running ack until the supervisor observes worker exit; never write a scientific terminal ack directly. The supervisor launches scripts/finalize_paper2_request.py, which independently audits and atomically replaces the matching running ack. Any strategy drift is a permanent execution_integrity_failure, never a scientific result. Then let pipeline_supervisor and paper2_auto_transition.py decide the next evidence-bound step. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
     "evidence": [
       {
         "path": ".state/reference_resolution_v1_audit.json",
@@ -425,7 +452,7 @@
       },
       {
         "path": "scripts/finalize_paper2_request.py",
-        "sha256": "1AA098F6290649B2A2754111FDCF9A4E3A9B10BB30236D7944127B89F33ABBFD"
+        "sha256": "AD1F3A6913AABD00289F43E3408E54875C06FFE3C0E630AEF61AA4935F9F9986"
       },
       {
         "path": "tests/test_finalize_paper2_request.py",
@@ -433,11 +460,11 @@
       },
       {
         "path": "pipeline_supervisor.py",
-        "sha256": "6ED618269B722E48F90A0C591B55B6575FF261FEAE108C7FB414F6EFD0192602"
+        "sha256": "78611D11D3C30D48C466A5A54A1307D7103E7C6700C6E2CFEB3F7D6FFB51B4B9"
       },
       {
         "path": "tests/test_pipeline_supervisor.py",
-        "sha256": "3EDFF4ABE04B4C6B141DA9F6974BD91E1DD95D8E1FD16705FF340D02F408BB85"
+        "sha256": "AE0569497873DD82C3A384D1E4A487F4138AE0A78AACC74F1BA5A5405679D4E1"
       }
     ]
   },
@@ -446,5 +473,32 @@
     "forbid_pool_overwrite": true,
     "forbid_old_pool_resume": true,
     "forbid_paper1_changes": true
+  },
+  "multifidelity": {
+    "protocol_revision": "paper2-multifidelity-preregistration-v1",
+    "preregistration": {
+      "path": "protocols/paper2_multifidelity_preregistration_v1.json",
+      "sha256": "015A6DE23157BAC831661379A9A4247414AC889855F94FF4FBC0B07EEF451157"
+    },
+    "cost_basis": {
+      "path": "protocols/paper2_multifidelity_cost_basis_v1.json",
+      "sha256": "3EDA8AB71EAE23AE29B9B4FFE0CDFF916E1DA1A900F7226E67847887CF762BAB"
+    },
+    "low_fidelity_is_coverage_only": true,
+    "high_fidelity_requires_reference_audit": true,
+    "full_pool_fallback_requires_independent_necessity_audit": true,
+    "automatic_full_pool_launch": false
+  },
+  "fallbacks": {
+    "full_high_fidelity_pool": {
+      "action": "replacement_pool_generation",
+      "automatic_launch_authorized": false,
+      "requires": [
+        "multifidelity_scientific_negative",
+        "full_pool_necessity_audit_passed"
+      ],
+      "must_use_new_versioned_output": true,
+      "must_not_overwrite_low_fidelity_pool": true
+    }
   }
 }

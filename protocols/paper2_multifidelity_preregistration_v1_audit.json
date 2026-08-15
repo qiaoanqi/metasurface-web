@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-multifidelity-preregistration-audit-v1",
+  "independent_reproduction": true,
+  "request": null,
+  "pre_registration_only": true,
+  "passed": true,
+  "classification": "multifidelity_preregistration_passed",
+  "pool_sha256": "9B495E92B7C27FCE712E8943BAFF757A9EE9B2C9B692145F2887611DDF62EE72",
+  "plan": {
+    "path": "protocols/paper2_multifidelity_preregistration_v1.json",
+    "sha256": "015A6DE23157BAC831661379A9A4247414AC889855F94FF4FBC0B07EEF451157"
+  },
+  "cost_basis": {
+    "path": "protocols/paper2_multifidelity_cost_basis_v1.json",
+    "sha256": "3EDA8AB71EAE23AE29B9B4FFE0CDFF916E1DA1A900F7226E67847887CF762BAB"
+  },
+  "holdout_manifest": {
+    "path": ".state/reference_resolution_holdout_v1_plan.json",
+    "sha256": "B3812A34116AD62CD69BFD8AB806949F3AEEF7549702905C9BEAF38495911CFE"
+  },
+  "checks": {
+    "preregistration_schema_and_revision": true,
+    "low_fidelity_pool_hash_and_pairing_contract": true,
+    "holdout_manifest_bound_and_excluded": true,
+    "budget_and_stopping_rules_frozen": true,
+    "model_and_acquisition_rules_frozen": true,
+    "cost_basis_reproduced": true,
+    "paper1_and_immutable_assets_unchanged": true,
+    "training_forbidden": true
+  },
+  "protected_files": [
+    {
+      "path": "paper_oe.tex",
+      "expected_md5": "7368A098F5D8563AD31A747A51DAC442",
+      "actual_md5": "7368A098F5D8563AD31A747A51DAC442",
+      "passed": true
+    },
+    {
+      "path": "paper_oe.pdf",
+      "expected_md5": "C6C69241EA687A1D3858386B0C646027",
+      "actual_md5": "C6C69241EA687A1D3858386B0C646027",
+      "passed": true
+    },
+    {
+      "path": "\u8bba\u6587.pdf",
+      "expected_md5": "C6C69241EA687A1D3858386B0C646027",
+      "actual_md5": "C6C69241EA687A1D3858386B0C646027",
+      "passed": true
+    },
+    {
+      "path": "paper_full.md",
+      "expected_md5": "DC347B854AEABC90EF2232516827D6AC",
+      "actual_md5": "DC347B854AEABC90EF2232516827D6AC",
+      "passed": true
+    },
+    {
+      "path": "closed_loop_validate.py",
+      "expected_md5": "FFB55A8575F39813CE08B31E5A416351",
+      "actual_md5": "FFB55A8575F39813CE08B31E5A416351",
+      "passed": true
+    },
+    {
+      "path": "ml_module.py",
+      "expected_md5": "2EF58119C0E8CC7E9969A59F659FB292",
+      "actual_md5": "2EF58119C0E8CC7E9969A59F659FB292",
+      "passed": true
+    },
+    {
+      "path": "train_new_materials.py",
+      "expected_md5": "14A39C753CD057E0F62B8311DD31D98E",
+      "actual_md5": "14A39C753CD057E0F62B8311DD31D98E",
+      "passed": true
+    },
+    {
+      "path": "train_overnight.py",
+      "expected_md5": "B2C223C5040AB26A98B0501F732BCA19",
+      "actual_md5": "B2C223C5040AB26A98B0501F732BCA19",
+      "passed": true
+    },
+    {
+      "path": "train_rcwa.py",
+      "expected_md5": "DA6D9EB13FFEFE6B2735779EBE82A4E0",
+      "actual_md5": "DA6D9EB13FFEFE6B2735779EBE82A4E0",
+      "passed": true
+    },
+    {
+      "path": "train_rcwa_wavelength.py",
+      "expected_md5": "99C2D9F214119A5A116767FB6853EB1D",
+      "actual_md5": "99C2D9F214119A5A116767FB6853EB1D",
+      "passed": true
+    },
+    {
+      "path": "spearman_repro.py",
+      "expected_md5": "03612E6627D88CA3B823886995A5A3DF",
+      "actual_md5": "03612E6627D88CA3B823886995A5A3DF",
+      "passed": true
+    },
+    {
+      "path": "data/rcwa_5k.pkl",
+      "expected_md5": "83389302EB2E30CDC47ED7D72ACF9B33",
+      "actual_md5": "83389302EB2E30CDC47ED7D72ACF9B33",
+      "passed": true
+    },
+    {
+      "path": "data/rcwa_5k_b2.pkl",
+      "expected_md5": "FE886968D7C51C79DB1360027B2AF1CD",
+      "actual_md5": "FE886968D7C51C79DB1360027B2AF1CD",
+      "passed": true
+    }
+  ],
+  "training_allowed": false
+}

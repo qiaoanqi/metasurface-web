@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-multifidelity-cost-basis-v1",
+  "observed_at": "2026-08-15T23:39:12+08:00",
+  "source_checkpoint": {
+    "path": ".state/reference_resolution_budget_v2_checkpoint.pkl",
+    "sha256": "B21028D3A419E80E506062EEB463EEF8B20E689372CE845788E9180ED36F8D10"
+  },
+  "tasks_observed": 15,
+  "task_seconds_min": 5068.432857799984,
+  "task_seconds_median": 9018.745840499992,
+  "task_seconds_max": 10371.848446100019,
+  "protocol_groups": {
+    "nG365-Nxy768-step0.5": {
+      "tasks_observed": 3,
+      "median_seconds": 10371.321707900031,
+      "min_seconds": 10354.620069900004,
+      "max_seconds": 10371.848446100019
+    },
+    "nG365-Nxy768-step1": {
+      "tasks_observed": 5,
+      "median_seconds": 5135.914058299997,
+      "min_seconds": 5068.432857799984,
+      "max_seconds": 5147.716434800008
+    },
+    "nG450-Nxy512-step1": {
+      "tasks_observed": 4,
+      "median_seconds": 9021.433574900002,
+      "min_seconds": 8999.415720400022,
+      "max_seconds": 9054.294697699981
+    },
+    "nG450-Nxy768-step1": {
+      "tasks_observed": 3,
+      "median_seconds": 9062.657466200006,
+      "min_seconds": 9010.797356000025,
+      "max_seconds": 9065.8902734
+    }
+  },
+  "workers": 16,
+  "paired_polarizations": true,
+  "wall_time_formula": "geometry_count * 2 * task_seconds / 16 * 1.20",
+  "overhead_factor": 1.2,
+  "training_allowed": false
+}

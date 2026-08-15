@@ -255,6 +255,11 @@ def finalization_diagnostic(
         "strategy_evidence": strategy_evidence_observations(dispatch),
         "training_allowed": False,
     }
+    rejected = (supervisor.load_json(ack_path, {}) or {}).get("checks", {}).get("rejected_terminal_ack")
+    if isinstance(rejected, dict):
+        rejected_path = supervisor.workspace_file(rejected.get("path"))
+        if rejected_path is not None and rejected_path.is_file():
+            payload["rejected_terminal_ack"] = binding(rejected_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         existing = supervisor.load_json(path, {}) or {}
@@ -269,7 +274,7 @@ def terminal_replay(ack: dict[str, Any], pool_sha: str, policy: dict[str, Any]) 
     if ack.get("status") in {"completed", "succeeded"}:
         valid, error = supervisor.validate_completed_ack(ack, pool_sha, policy)
     elif ack.get("status") == "failed":
-        valid, error = supervisor.validate_failed_ack(ack, pool_sha)
+        valid, error = supervisor.validate_failed_ack(ack, pool_sha, supervisor.load_json(supervisor.DISPATCH_REQUEST, {}) or {})
     else:
         raise ValueError("terminal replay requires a terminal ack")
     if not valid:
@@ -279,7 +284,7 @@ def terminal_replay(ack: dict[str, Any], pool_sha: str, policy: dict[str, Any]) 
 
 def ack_base(dispatch: dict, pool_sha: str, checkpoint: Path) -> dict[str, Any]:
     timestamp = now_iso()
-    return {
+    payload = {
         "schema_version": 1,
         "finalizer_version": VERSION,
         "thread_id": supervisor.load_policy()["executor_thread_id"],
@@ -296,6 +301,12 @@ def ack_base(dispatch: dict, pool_sha: str, checkpoint: Path) -> dict[str, Any]:
             "finalizer_version": VERSION,
         },
     }
+    incoming_checks = dispatch.get("_recovery_ack_checks")
+    if isinstance(incoming_checks, dict):
+        for key in ("terminal_ack_rejected", "terminal_ack_rejection_reason", "rejected_terminal_ack", "execution_seal"):
+            if key in incoming_checks:
+                payload["checks"][key] = incoming_checks[key]
+    return payload
 
 
 def finalize_joint(
@@ -334,7 +345,7 @@ def finalize_joint(
     base["status"] = "failed"
     base["failure_class"] = "scientific" if audit.get("classification") == "budget_v2_still_insufficient" or audit.get("passed") is True else "permanent"
     base["error"] = f"budget-v2 finalization: {audit.get('classification', 'missing classification')}"
-    valid, error = supervisor.validate_failed_ack(base, pool_sha)
+    valid, error = supervisor.validate_failed_ack(base, pool_sha, dispatch)
     if not valid:
         raise ValueError(f"finalizer produced invalid failure ack: {error}")
     write_terminal_ack(ack_path, base)
@@ -388,7 +399,7 @@ def finalize_holdout(
         base["failure_class"] = "permanent"
         base["outputs"] = []
         base["error"] = "holdout independent audit execution integrity failure"
-        valid, error = supervisor.validate_failed_ack(base, pool_sha)
+        valid, error = supervisor.validate_failed_ack(base, pool_sha, dispatch)
         if not valid:
             raise ValueError(f"finalizer produced invalid failure ack: {error}")
         write_terminal_ack(ack_path, base)
@@ -426,6 +437,9 @@ def finalize(dispatch_path: Path, ack_path: Path) -> dict[str, Any]:
     dispatch = load_dispatch(dispatch_path)
     policy = supervisor.load_policy()
     ack = load_matching_ack(ack_path, dispatch, policy)
+    if isinstance(ack.get("checks"), dict) and ack["checks"].get("terminal_ack_rejected") is True:
+        dispatch = dict(dispatch)
+        dispatch["_recovery_ack_checks"] = dict(ack["checks"])
     _spec, pool, pool_sha = pool_context(policy, dispatch)
     if ack.get("status") in TERMINAL_ACK_STATUSES:
         return terminal_replay(ack, pool_sha, policy)
@@ -464,7 +478,7 @@ def finalize(dispatch_path: Path, ack_path: Path) -> dict[str, Any]:
             }
         )
         base["checks"]["finalization_classification"] = "execution_integrity_failure"
-        valid, error = supervisor.validate_failed_ack(base, pool_sha)
+        valid, error = supervisor.validate_failed_ack(base, pool_sha, dispatch)
         if not valid:
             raise ValueError(f"finalizer produced invalid failure ack: {error}") from exc
         write_terminal_ack(ack_path, base)

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "335F12EA01FC52DDAFBDA01037EFF6297DA6E7A0A0F939F862E410BAC550F592",
-  "supervisor_sha256": "75A8C46851383450C4B40E0CF05A111DA158499D291334279CE219991D0C9B78",
-  "protected_assets_revision": 27,
-  "note": "Update this lock atomically with an intentional policy or supervisor revision; a mismatch blocks dispatch."
+  "policy_sha256": "5D0EBA8ACCE084D786511A4B30D8549584AED6254DA26978FEB0192FD094886C",
+  "supervisor_sha256": "78611D11D3C30D48C466A5A54A1307D7103E7C6700C6E2CFEB3F7D6FFB51B4B9",
+  "protected_assets_revision": 31,
+  "note": "multifidelity preregistration contract installed; full pool is manual fallback"
 }

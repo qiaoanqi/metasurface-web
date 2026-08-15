@@ -1279,6 +1279,153 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "returncode does not match"):
                 supervisor.run_executor_finalization(self.policy)
 
+    def test_budget_v2_terminal_ack_requires_canonical_finalizer(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        evidence = self.root / "executor-evidence.json"
+        evidence.write_text("{}\n", encoding="ascii")
+        dispatch = {
+            "request_id": "racing-terminal-request",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "strategy_revision": 2,
+            "strategy_evidence": [
+                {
+                    "path": ".state/reference_resolution_budget_v2_plan.json",
+                    "sha256": "A" * 64,
+                }
+            ],
+            "payload": {"pool_sha256": pool_sha},
+        }
+        ack = {
+            "request_id": dispatch["request_id"],
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "scientific",
+            "checks": {"pool_sha256": pool_sha},
+            "evidence": [
+                {"path": evidence.name, "sha256": supervisor.file_digest(evidence)}
+            ],
+        }
+        valid, error = supervisor.validate_failed_ack(ack, pool_sha, dispatch)
+        self.assertFalse(valid)
+        self.assertIn("canonical paper2 finalizer", error)
+
+    def test_supervisor_quarantines_racing_scientific_terminal_ack(self):
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        request_id = "racing-terminal-request"
+        dispatch = {
+            "request_id": request_id,
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "target_thread_id": self.policy["executor_thread_id"],
+            "strategy_revision": 2,
+            "strategy_evidence": [
+                {
+                    "path": ".state/reference_resolution_budget_v2_plan.json",
+                    "sha256": "A" * 64,
+                }
+            ],
+            "payload": {"pool_sha256": pool_sha},
+        }
+        supervisor.atomic_json(supervisor.DISPATCH_REQUEST, dispatch)
+        checkpoint = self.root / "checkpoint.pkl"
+        checkpoint.write_bytes(b"complete")
+        worker_evidence = self.root / ".state/reference_resolution_budget_v2.json"
+        supervisor.atomic_json(
+            worker_evidence,
+            {"request": {"request_id": request_id, "attempt": 1}},
+        )
+        seal = {
+            "schema_version": 1,
+            "evidence_version": "paper2-executor-finalization-seal-v1",
+            "request": {
+                "request_id": request_id,
+                "attempt": 1,
+                "action": "joint_numerical_convergence",
+            },
+            "worker_pid": 999999,
+        }
+        supervisor.atomic_json(supervisor.executor_finalization_seal_path(dispatch), seal)
+        bad_evidence = self.root / "bad-terminal-evidence.json"
+        bad_evidence.write_text("{}\n", encoding="ascii")
+        racing_ack = {
+            "schema_version": 1,
+            "thread_id": self.policy["executor_thread_id"],
+            "request_id": request_id,
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "scientific",
+            "checkpoint_path": checkpoint.name,
+            "checks": {"pool_sha256": pool_sha},
+            "evidence": [
+                {
+                    "path": bad_evidence.name,
+                    "sha256": supervisor.file_digest(bad_evidence),
+                }
+            ],
+        }
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, racing_ack)
+        canonical_evidence = self.root / "canonical-integrity-evidence.json"
+        canonical_evidence.write_text("{}\n", encoding="ascii")
+        canonical_ack = {
+            "schema_version": 1,
+            "finalizer_version": supervisor.PAPER2_FINALIZER_VERSION,
+            "thread_id": self.policy["executor_thread_id"],
+            "request_id": request_id,
+            "attempt": 1,
+            "status": "failed",
+            "failure_class": "permanent",
+            "checks": {
+                "pool_sha256": pool_sha,
+                "training_allowed": False,
+                "finalizer_version": supervisor.PAPER2_FINALIZER_VERSION,
+                "finalizer_verified_worker_dead": True,
+                "finalization_classification": "execution_integrity_failure",
+            },
+            "evidence": [
+                {
+                    "path": canonical_evidence.name,
+                    "sha256": supervisor.file_digest(canonical_evidence),
+                }
+            ],
+        }
+
+        class CanonicalFinalizerProcess:
+            returncode = 2
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self):
+                active = supervisor.load_json(supervisor.EXECUTOR_ACK)
+                self_test.assertEqual(active["status"], "running")
+                self_test.assertTrue(active["checks"]["terminal_ack_rejected"])
+                supervisor.atomic_json(supervisor.EXECUTOR_ACK, canonical_ack)
+                return '{"status":"failed"}\n', ""
+
+        self_test = self
+        with patch.object(supervisor, "pid_alive", return_value=False), patch.object(
+            supervisor, "executor_finalization_grace", return_value=(False, None)
+        ), patch.object(
+            supervisor.subprocess, "Popen", return_value=CanonicalFinalizerProcess()
+        ):
+            result = supervisor.run_executor_finalization(self.policy)
+        self.assertEqual(result["status"], "finalized")
+        final_ack = supervisor.load_json(supervisor.EXECUTOR_ACK)
+        self.assertEqual(final_ack["failure_class"], "permanent")
+        self.assertEqual(
+            final_ack["checks"]["finalization_classification"],
+            "execution_integrity_failure",
+        )
+        rejected = (
+            self.root
+            / ".state/finalization_diagnostics"
+            / f"{request_id}-attempt1-rejected-ack.json"
+        )
+        self.assertEqual(supervisor.load_json(rejected), racing_ack)
+
     def test_audit_only_recovery_finalizes_without_worker_pid(self):
         pool_sha = supervisor.file_digest(self.root / "pool.pkl")
         dispatch = {
@@ -2077,6 +2224,8 @@ class ControllerTests(unittest.TestCase):
         gates = {item["gate"]: False for item in actions}
         gates.update({"pool_complete": True, "strict_pool_validation": True})
         for item in actions:
+            if item.get("manual_only") is True:
+                continue
             expected = item["action"]
             if item.get("requires_training_allowed"):
                 gates["training_allowed"] = True
@@ -2086,7 +2235,7 @@ class ControllerTests(unittest.TestCase):
                 gates["training_allowed"] = True
         self.assertIsNone(supervisor.select_workflow_action(self.policy, gates))
 
-    def test_reference_and_replacement_precede_new_joint_gate(self):
+    def test_preregistration_and_reference_precede_joint_while_full_pool_is_manual(self):
         gates = {item["gate"]: False for item in self.policy["workflow"]["actions"]}
         gates.update({
             "pool_complete": True,
@@ -2094,10 +2243,20 @@ class ControllerTests(unittest.TestCase):
             "pool_manifest_frozen": True,
             "d65_colorimetry": True,
         })
+        self.assertEqual(
+            supervisor.select_workflow_action(self.policy, gates),
+            "multifidelity_preregistration",
+        )
+        gates["multifidelity_preregistered"] = True
         self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "reference_resolution")
         gates["reference_resolution"] = True
-        self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "replacement_pool_generation")
-        gates["replacement_pool_ready"] = True
+        replacement = next(
+            item
+            for item in self.policy["workflow"]["actions"]
+            if item["action"] == "replacement_pool_generation"
+        )
+        self.assertTrue(replacement["manual_only"])
+        self.assertFalse(replacement["automatic_launch_authorized"])
         self.assertEqual(supervisor.select_workflow_action(self.policy, gates), "joint_numerical_convergence")
 
     def test_post_activation_actions_use_only_v2_protocol_bound_runners(self):

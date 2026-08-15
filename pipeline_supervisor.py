@@ -138,6 +138,11 @@ BUILTIN_FINALIZATION_SPECS = {
 }
 
 
+PAPER2_FINALIZER_VERSION = "paper2-finalizer-v2"
+EXECUTOR_FINALIZATION_SEALS = STATE / "executor_finalization_seals"
+FINALIZATION_DIAGNOSTICS = STATE / "finalization_diagnostics"
+
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -237,6 +242,196 @@ def file_digest(path: Path, algorithm: str = "sha256") -> str:
 def json_payload_digest(payload: Any) -> str:
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest().upper()
+
+
+def is_budget_v2_dispatch(dispatch: Any) -> bool:
+    """Identify the historical budget-v2 diagnostic by its frozen strategy contract."""
+    if not isinstance(dispatch, dict) or dispatch.get("action") != "joint_numerical_convergence":
+        return False
+    try:
+        revision = int(dispatch.get("strategy_revision", 0))
+    except (TypeError, ValueError):
+        return False
+    if revision <= 0:
+        return False
+    evidence = dispatch.get("strategy_evidence")
+    return isinstance(evidence, list) and any(
+        isinstance(item, dict)
+        and str(item.get("path", "")).replace("\\", "/")
+        == ".state/reference_resolution_budget_v2_plan.json"
+        for item in evidence
+    )
+
+
+def strategy_evidence_observations(dispatch: dict[str, Any]) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    for item in dispatch.get("strategy_evidence", []):
+        path = workspace_file(item.get("path")) if isinstance(item, dict) else None
+        expected = str(item.get("sha256", "")).upper() if isinstance(item, dict) else ""
+        actual = file_digest(path) if path is not None and path.is_file() else None
+        observations.append(
+            {
+                "path": item.get("path") if isinstance(item, dict) else None,
+                "expected_sha256": expected,
+                "actual_sha256": actual,
+                "passed": bool(expected and actual == expected),
+            }
+        )
+    return observations
+
+
+def budget_strategy_evidence_drift(dispatch: dict[str, Any]) -> bool:
+    evidence = dispatch.get("strategy_evidence")
+    return not isinstance(evidence, list) or not evidence or any(
+        item.get("passed") is not True for item in strategy_evidence_observations(dispatch)
+    )
+
+
+def executor_finalization_seal_path(dispatch: dict[str, Any]) -> Path:
+    return STATE / "executor_finalization_seals" / (
+        f"{dispatch['request_id']}-attempt{int(dispatch['attempt'])}.json"
+    )
+
+
+def capture_executor_finalization_seal(dispatch: dict[str, Any], ack: dict[str, Any]) -> Path | None:
+    """Persist the active worker identity before an executor can replace its ack."""
+    if not is_budget_v2_dispatch(dispatch):
+        return None
+    worker_pid = ack.get("worker_pid")
+    if not worker_pid:
+        return None
+    try:
+        worker_pid = int(worker_pid)
+    except (TypeError, ValueError):
+        return None
+    path = executor_finalization_seal_path(dispatch)
+    payload = {
+        "schema_version": 1,
+        "evidence_version": "paper2-executor-finalization-seal-v1",
+        "request": {
+            "request_id": dispatch.get("request_id"),
+            "attempt": int(dispatch.get("attempt", 0)),
+            "action": dispatch.get("action"),
+        },
+        "worker_pid": worker_pid,
+        "active_ack_sha256": json_payload_digest(ack),
+        "strategy_evidence": strategy_evidence_observations(dispatch),
+        "training_allowed": False,
+        "captured_at": now_iso(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        existing = load_json(path, {}) or {}
+        if existing.get("request") != payload["request"] or int(existing.get("worker_pid", 0)) != worker_pid:
+            raise ValueError("executor finalization seal identity collision")
+    else:
+        atomic_json(path, payload)
+    return path
+
+
+def terminal_ack_is_authorized(
+    ack: dict[str, Any], dispatch: dict[str, Any], pool_sha256: str | None = None
+) -> tuple[bool, str | None]:
+    """Fail closed on executor-authored terminal acks for budget-v2 requests."""
+    if not is_budget_v2_dispatch(dispatch):
+        return True, None
+    if ack.get("finalizer_version") != PAPER2_FINALIZER_VERSION:
+        return False, "terminal ack was not written by the canonical paper2 finalizer"
+    checks = ack.get("checks")
+    if not isinstance(checks, dict):
+        return False, "terminal ack finalizer checks are missing"
+    if (
+        checks.get("finalizer_version") != PAPER2_FINALIZER_VERSION
+        or checks.get("finalizer_verified_worker_dead") is not True
+        or checks.get("training_allowed") is not False
+    ):
+        return False, "terminal ack does not prove canonical finalization and worker exit"
+    if pool_sha256 is not None and str(checks.get("pool_sha256", "")).upper() != str(pool_sha256).upper():
+        return False, "terminal ack pool SHA256 does not match the active request"
+    drifted = budget_strategy_evidence_drift(dispatch)
+    if drifted and not (
+        ack.get("status") == "failed"
+        and str(ack.get("failure_class", "")).lower() == "permanent"
+        and checks.get("finalization_classification") == "execution_integrity_failure"
+    ):
+        return False, "drifted budget-v2 request may terminate only as execution_integrity_failure"
+    return True, None
+
+
+def preserve_rejected_terminal_ack(dispatch: dict[str, Any], ack: dict[str, Any]) -> Path:
+    path = STATE / "finalization_diagnostics" / (
+        f"{dispatch['request_id']}-attempt{int(dispatch['attempt'])}-rejected-ack.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        existing = load_json(path, {}) or {}
+        if existing != ack:
+            raise ValueError("rejected terminal ack evidence collision")
+    else:
+        atomic_json(path, ack)
+    return path
+
+
+def recover_untrusted_terminal_ack(
+    dispatch: dict[str, Any], ack: dict[str, Any], policy: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Quarantine an executor terminal ack and restore the sealed active identity."""
+    if not is_budget_v2_dispatch(dispatch) or ack.get("status") not in {"completed", "succeeded", "failed"}:
+        return ack, None
+    authorized, reason = terminal_ack_is_authorized(
+        ack, dispatch, str(dispatch.get("payload", {}).get("pool_sha256", ""))
+    )
+    if authorized:
+        return ack, None
+    seal_path = executor_finalization_seal_path(dispatch)
+    seal = load_json(seal_path, {}) or {}
+    request = seal.get("request") if isinstance(seal, dict) else None
+    if (
+        not isinstance(request, dict)
+        or request.get("request_id") != dispatch.get("request_id")
+        or int(request.get("attempt", 0)) != int(dispatch.get("attempt", 0))
+    ):
+        return None, "terminal_ack_rejected_without_execution_seal"
+    try:
+        worker_pid = int(seal.get("worker_pid"))
+    except (TypeError, ValueError):
+        return None, "execution_seal_worker_pid_invalid"
+    if pid_alive(worker_pid):
+        return None, "rejected_terminal_ack_worker_still_alive"
+    rejected_path = preserve_rejected_terminal_ack(dispatch, ack)
+    rejected_binding = {
+        "path": str(rejected_path.relative_to(ROOT)).replace("\\", "/"),
+        "sha256": file_digest(rejected_path),
+    }
+    current_ack_sha = file_digest(EXECUTOR_ACK) if EXECUTOR_ACK.is_file() else None
+    recovery = {
+        "schema_version": 1,
+        "finalizer_version": PAPER2_FINALIZER_VERSION,
+        "thread_id": ack.get("thread_id") or dispatch.get("target_thread_id") or policy.get("executor_thread_id"),
+        "request_id": dispatch["request_id"],
+        "attempt": int(dispatch["attempt"]),
+        "status": "running",
+        "observed_at": now_iso(),
+        "heartbeat_at": now_iso(),
+        "worker_pid": worker_pid,
+        "checkpoint_path": ack.get("checkpoint_path") or ".state/reference_resolution_budget_v2_checkpoint.pkl",
+        "checks": {
+            "pool_sha256": dispatch.get("payload", {}).get("pool_sha256"),
+            "training_allowed": False,
+            "terminal_ack_rejected": True,
+            "terminal_ack_rejection_reason": reason,
+            "rejected_terminal_ack": rejected_binding,
+            "execution_seal": {
+                "path": str(seal_path.relative_to(ROOT)).replace("\\", "/"),
+                "sha256": file_digest(seal_path),
+            },
+            "finalization_required": True,
+        },
+    }
+    if current_ack_sha is None or file_digest(EXECUTOR_ACK) != current_ack_sha:
+        return None, "terminal_ack_changed_during_recovery"
+    atomic_json(EXECUTOR_ACK, recovery)
+    return recovery, "executor_terminal_ack_quarantined"
 
 
 def production_reference_audit_approved(audit: Any) -> bool:
@@ -395,6 +590,29 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
     """Finalize a dead, complete executor deterministically from the supervisor watch loop."""
     dispatch = load_json(DISPATCH_REQUEST, {}) or {}
     ack = load_json(EXECUTOR_ACK, {}) or {}
+    if (
+        dispatch.get("status") == "in_progress"
+        and ack.get("request_id") == dispatch.get("request_id")
+        and int(ack.get("attempt", 0)) == int(dispatch.get("attempt", 0))
+        and ack.get("status") in {"accepted", "claimed", "running", "in_progress"}
+    ):
+        capture_executor_finalization_seal(dispatch, ack)
+    if (
+        dispatch.get("status") == "in_progress"
+        and ack.get("request_id") == dispatch.get("request_id")
+        and int(ack.get("attempt", 0)) == int(dispatch.get("attempt", 0))
+        and ack.get("status") in {"completed", "succeeded", "failed"}
+        and is_budget_v2_dispatch(dispatch)
+    ):
+        authorized, _reason = terminal_ack_is_authorized(
+            ack, dispatch, str(dispatch.get("payload", {}).get("pool_sha256", ""))
+        )
+        if authorized:
+            return None
+        recovered, recovery_reason = recover_untrusted_terminal_ack(dispatch, ack, policy)
+        if recovered is None:
+            return {"status": "waiting", "reason": recovery_reason or "terminal_ack_recovery_pending"}
+        ack = recovered
     finalization_spec = action_finalization_spec(
         policy, str(dispatch.get("action", "")), dispatch
     )
@@ -485,7 +703,7 @@ def run_executor_finalization(policy: dict[str, Any]) -> dict[str, Any] | None:
     if terminal.get("status") in {"completed", "succeeded"}:
         valid, error = validate_completed_ack(terminal, pool_sha, policy)
     else:
-        valid, error = validate_failed_ack(terminal, pool_sha)
+        valid, error = validate_failed_ack(terminal, pool_sha, dispatch)
     if not valid:
         raise RuntimeError(f"paper2 finalizer produced an invalid terminal ack: {error}")
     return {
@@ -1939,6 +2157,75 @@ def verify_geometry_split_gate(
     )
 
 
+def verify_multifidelity_preregistration_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    """Verify the static pre-holdout multi-fidelity contract independently."""
+    if (
+        payload.get("evidence_version") != "paper2-multifidelity-preregistration-audit-v1"
+        or payload.get("passed") is not True
+        or payload.get("classification") != "multifidelity_preregistration_passed"
+        or payload.get("training_allowed") is not False
+        or payload.get("independent_reproduction") is not True
+        or str(payload.get("pool_sha256", "")).upper() != str(pool.get("sha256", "")).upper()
+    ):
+        return False, "multifidelity preregistration classification, pool, or training lock is invalid"
+    plan_binding = payload.get("plan")
+    cost_binding = payload.get("cost_basis")
+    if not isinstance(plan_binding, dict) or not isinstance(cost_binding, dict):
+        return False, "multifidelity preregistration bindings are missing"
+    plan_path = workspace_file(plan_binding.get("path"))
+    cost_path = workspace_file(cost_binding.get("path"))
+    if plan_path is None or cost_path is None or not plan_path.is_file() or not cost_path.is_file():
+        return False, "multifidelity preregistration files are missing"
+    if file_digest(plan_path) != str(plan_binding.get("sha256", "")).upper():
+        return False, "multifidelity preregistration plan hash mismatch"
+    if file_digest(cost_path) != str(cost_binding.get("sha256", "")).upper():
+        return False, "multifidelity cost basis hash mismatch"
+    try:
+        from scripts import audit_multifidelity_preregistration_v1 as mf_audit
+
+        plan = mf_audit.validate_plan_payload(plan_path, cost_path)
+    except Exception as exc:
+        return False, f"multifidelity preregistration semantic audit failed: {exc}"
+    if plan.get("fidelity_roles", {}).get("low", {}).get("sha256") != pool.get("sha256"):
+        return False, "multifidelity preregistration low-fidelity pool binding mismatch"
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
+def verify_multifidelity_data_ready_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    """Verify a future high-fidelity seed/control manifest without activating it here."""
+    if (
+        payload.get("evidence_version") != "paper2-multifidelity-data-audit-v1"
+        or payload.get("passed") is not True
+        or payload.get("classification") != "multifidelity_data_passed"
+        or payload.get("training_allowed") is not False
+        or str(payload.get("low_fidelity_pool_sha256", "")).upper()
+        != str(pool.get("sha256", "")).upper()
+    ):
+        return False, "multifidelity data evidence classification, pool, or training lock is invalid"
+    checks = payload.get("checks", {})
+    required = {
+        "reference_protocol_independently_approved",
+        "seed_validation_test_geometry_disjoint",
+        "p_s_pairs_complete",
+        "holdout_geometry_excluded",
+        "pointwise_conservation_passed",
+        "protected_files_unchanged",
+    }
+    valid, error = all_checks_true(checks, required)
+    if not valid:
+        return False, error
+    for key in ("data_manifest", "reference_audit", "selection_manifest"):
+        item = payload.get(key)
+        path = workspace_file(item.get("path")) if isinstance(item, dict) else None
+        if path is None or not path.is_file() or file_digest(path) != str(item.get("sha256", "")).upper():
+            return False, f"multifidelity data binding is invalid: {key}"
+    return verify_protected_snapshot(payload.get("protected_files"))
+
+
 def supervisor_json_digest(payload: Any) -> str:
     return json_payload_digest(payload)
 
@@ -1951,6 +2238,8 @@ GATE_PAYLOAD_VERIFIERS = {
     "cross_solver_spectrum_validation": verify_cross_solver_v2_gate,
     "circular_control": verify_circular_control_gate,
     "geometry_split_frozen": verify_geometry_split_gate,
+    "multifidelity_preregistered": verify_multifidelity_preregistration_gate,
+    "multifidelity_data_ready": verify_multifidelity_data_ready_gate,
 }
 
 
@@ -2302,6 +2591,8 @@ def executor_finalization_grace(
 
 def select_workflow_action(policy: dict[str, Any], gates: dict[str, bool]) -> str | None:
     for item in policy["workflow"]["actions"]:
+        if item.get("manual_only") is True:
+            continue
         gate = item["gate"]
         if gates.get(gate, False):
             continue
@@ -2616,7 +2907,7 @@ def validate_completed_ack(
 
 
 def validate_failed_ack(
-    ack: dict[str, Any], pool_sha256: str | None
+    ack: dict[str, Any], pool_sha256: str | None, dispatch: dict[str, Any] | None = None
 ) -> tuple[bool, str | None]:
     checks = ack.get("checks")
     if not isinstance(checks, dict) or str(checks.get("pool_sha256", "")).upper() != str(
@@ -2629,6 +2920,10 @@ def validate_failed_ack(
     for item in evidence:
         valid, error = verify_file_binding(item, "failed ack evidence")
         if not valid:
+            return False, error
+    if dispatch is not None:
+        authorized, error = terminal_ack_is_authorized(ack, dispatch, pool_sha256)
+        if not authorized:
             return False, error
     return True, None
 
@@ -2702,8 +2997,19 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
             "Canonicalize long/short axes with the required p/s swap, assign stable geometry_id values, and freeze "
             "geometry-level train/validation/test splits. Do not use label-preserving geometry jitter."
         ),
+        "multifidelity_preregistration": (
+            "Run the static, hash-bound multi-fidelity preregistration auditor before any reference holdout result is "
+            "available. Verify the low-fidelity pool is coverage-only, freeze the geometry split, paired-polarization "
+            "seed/active budgets, uncertainty score, stopping rules, baselines, and full-pool fallback. Do not train "
+            "or generate high-fidelity labels."
+        ),
+        "multifidelity_data_preparation": (
+            "This action is manual-only until the approved reference protocol exists. Prepare only the versioned "
+            "high-fidelity seed, passive-control, validation, and test manifests described by the preregistration; "
+            "keep holdout geometries excluded, keep p/s pairs atomic, and do not train or activate a pool."
+        ),
         "training_pilot": (
-            "Run only a bounded dual-spectrum pilot after independently confirming training_allowed=true. Keep p/s "
+            "Run only a bounded multi-fidelity dual-spectrum pilot after independently confirming training_allowed=true. Keep p/s "
             "paired by geometry and archive configs, seeds, checkpoints, and holdout metrics."
         ),
         "closed_loop_evaluation": (
@@ -2862,11 +3168,22 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         and str(existing.get("failure_class", "")).lower() == "scientific"
         and audit.get("training_gates", {}).get("replacement_pool_ready") is True
     )
-    ack_is_terminal_for_existing = (
+    ack_terminal_identity = (
         ack.get("request_id") == existing.get("request_id")
         and int(ack.get("attempt", 0)) == int(existing.get("attempt", 0))
         and ack.get("status") in {"completed", "succeeded", "failed"}
     )
+    terminal_ack_authorized, _terminal_ack_error = (
+        terminal_ack_is_authorized(
+            ack,
+            existing,
+            str(existing.get("payload", {}).get("pool_sha256", "")),
+        )
+        if ack_terminal_identity
+        else (True, None)
+    )
+    ack_is_terminal_for_existing = ack_terminal_identity and terminal_ack_authorized
+    invalid_terminal_ack = ack_terminal_identity and not terminal_ack_authorized
     live_request_immutable = bool(
         existing.get("status") in {"pending", "in_progress"}
         and existing.get("action")
@@ -2983,7 +3300,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
     )
     ack_thread = ack.get("thread_id") or ack.get("target_thread_id")
     identity_mismatch = same_request_attempt and ack_thread != policy["executor_thread_id"]
-    matching_ack = same_request_attempt and not identity_mismatch
+    matching_ack = same_request_attempt and not identity_mismatch and not invalid_terminal_ack
     if same_request_attempt and identity_mismatch:
         request["failure_class"] = "policy"
         retry_or_fail(
@@ -3073,6 +3390,10 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         age = (datetime.now().astimezone() - updated).total_seconds()
         if age >= timeout_seconds:
             retry_or_fail(request, max_attempts, "executor pickup timeout")
+
+    if invalid_terminal_ack and request.get("status") in {"pending", "in_progress"}:
+        request["terminal_ack_rejected"] = True
+        request["last_error"] = _terminal_ack_error or "executor terminal ack requires canonical finalization"
 
     atomic_json(DISPATCH_REQUEST, request)
     atomic_json(
