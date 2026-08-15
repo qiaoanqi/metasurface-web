@@ -450,6 +450,86 @@ def recovery_attempt(status: dict[str, Any]) -> int:
     return int(recovery.get("attempt", 1))
 
 
+def verify_file_binding(binding: Any, label: str) -> tuple[bool, str | None]:
+    if not isinstance(binding, dict):
+        return False, f"{label} binding is missing"
+    path = workspace_file(binding.get("path"))
+    expected = str(binding.get("sha256", "")).upper()
+    if path is None or not path.is_file():
+        return False, f"{label} file is missing or outside workspace"
+    if not expected or file_digest(path) != expected:
+        return False, f"{label} SHA256 mismatch"
+    return True, None
+
+
+def verify_d65_gate(payload: dict[str, Any], pool: dict[str, Any]) -> tuple[bool, str | None]:
+    required_checks = {
+        "pool_records_6000",
+        "pool_grid_exact",
+        "perfect_reflector_lab_neutral",
+        "perfect_reflector_d65_xy",
+        "black_reflector_lab_zero",
+        "lab_source_unclipped_xyz",
+        "srgb_display_only",
+    }
+    checks = payload.get("checks")
+    if not isinstance(checks, dict) or any(checks.get(name) is not True for name in required_checks):
+        return False, "D65 evidence lacks the complete passed check set"
+    if int(payload.get("evidence_revision", 0)) < 2:
+        return False, "D65 evidence revision must be at least 2"
+    source_pool = payload.get("pool")
+    if not isinstance(source_pool, dict):
+        return False, "D65 evidence lacks its source pool"
+    source_path = workspace_file(source_pool.get("path"))
+    source_sha = str(source_pool.get("sha256", "")).upper()
+    if source_path is None or not source_path.is_file() or file_digest(source_path) != source_sha:
+        return False, "D65 source pool SHA256 mismatch"
+    if int(source_pool.get("records", -1)) <= 0:
+        return False, "D65 source pool record count is invalid"
+    for field, label in (("implementation", "D65 implementation"), ("tests", "D65 tests")):
+        valid, error = verify_file_binding(payload.get(field), label)
+        if not valid:
+            return False, error
+    provenance = payload.get("derived_label_provenance", {})
+    if (
+        provenance.get("lab_source") != "direct_unclipped_xyz"
+        or provenance.get("srgb_role") != "display_only_clipped"
+    ):
+        return False, "D65 label provenance is invalid"
+    references = payload.get("reference_cases", {})
+    try:
+        white_lab = np.asarray(references["perfect_reflector"]["lab"], dtype=float)
+        black_lab = np.asarray(references["black_reflector"]["lab"], dtype=float)
+        white_xy = np.asarray(references["white_xy"], dtype=float)
+    except (KeyError, TypeError, ValueError):
+        return False, "D65 reference cases are malformed"
+    if white_lab.shape != (3,) or np.max(np.abs(white_lab - [100.0, 0.0, 0.0])) > 1e-10:
+        return False, "D65 perfect-reflector Lab check is invalid"
+    if black_lab.shape != (3,) or np.max(np.abs(black_lab)) > 1e-12:
+        return False, "D65 black-reflector Lab check is invalid"
+    if white_xy.shape != (2,) or np.max(np.abs(white_xy - [0.3127, 0.3290])) > 5e-4:
+        return False, "D65 white-point check is invalid"
+    if payload.get("legacy_path_modified") is not False:
+        return False, "D65 evidence does not preserve the legacy path"
+    return True, None
+
+
+GATE_PAYLOAD_VERIFIERS = {
+    "d65_colorimetry": verify_d65_gate,
+}
+
+
+def verify_gate_payload(
+    gate: str,
+    payload: dict[str, Any],
+    pool: dict[str, Any],
+) -> tuple[bool, str | None]:
+    verifier = GATE_PAYLOAD_VERIFIERS.get(gate)
+    if verifier is None:
+        return False, f"no independent verifier is registered for gate {gate}"
+    return verifier(payload, pool)
+
+
 def verify_gate_evidence(
     policy: dict[str, Any], pool: dict[str, Any]
 ) -> tuple[dict[str, bool], dict[str, Any]]:
@@ -517,6 +597,10 @@ def verify_gate_evidence(
                         ):
                             semantic_valid = False
                             semantic_error = "evidence pool SHA256 does not match the audited pool"
+                        if semantic_valid:
+                            semantic_valid, semantic_error = verify_gate_payload(
+                                gate, payload, pool
+                            )
                     except Exception as exc:
                         semantic_valid = False
                         semantic_error = f"invalid evidence JSON: {type(exc).__name__}: {exc}"
@@ -962,6 +1046,13 @@ def validate_completed_ack(
         path = workspace_file(item["path"])
         if path is None or not path.is_file():
             return False, f"completed ack output is missing: {item.get('path')}"
+        expected_sha = str(item.get("sha256", "")).upper()
+        if (
+            len(expected_sha) != 64
+            or any(char not in "0123456789ABCDEF" for char in expected_sha)
+            or file_digest(path) != expected_sha
+        ):
+            return False, f"completed ack output SHA256 mismatch: {item.get('path')}"
         if policy is not None:
             protected = {
                 str(asset.get("path", "")).replace("\\", "/").casefold()
@@ -970,6 +1061,11 @@ def validate_completed_ack(
                     *policy.get("immutable_assets", []),
                 )
             }
+            current_pool = str(policy.get("pool", {}).get("path", "")).replace(
+                "\\", "/"
+            ).casefold()
+            if current_pool:
+                protected.add(current_pool)
             relative = str(path.relative_to(ROOT)).replace("\\", "/").casefold()
             if relative in protected:
                 return False, f"completed ack output targets immutable asset: {item.get('path')}"
@@ -998,6 +1094,24 @@ def validate_completed_ack(
         }
         if seen_paper_paths != required_paper_paths:
             return False, "completed ack paper_hashes must cover exactly the protected paper files"
+    return True, None
+
+
+def validate_failed_ack(
+    ack: dict[str, Any], pool_sha256: str | None
+) -> tuple[bool, str | None]:
+    checks = ack.get("checks")
+    if not isinstance(checks, dict) or str(checks.get("pool_sha256", "")).upper() != str(
+        pool_sha256 or ""
+    ).upper():
+        return False, "failed ack pool SHA256 does not match audited pool"
+    evidence = ack.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return False, "failed ack requires hash-backed evidence"
+    for item in evidence:
+        valid, error = verify_file_binding(item, "failed ack evidence")
+        if not valid:
+            return False, error
     return True, None
 
 
@@ -1105,9 +1219,19 @@ def build_instruction(action: str, policy: dict[str, Any]) -> str:
 
 
 def make_dispatch_id(
-    stage: str, action: str, artifact_sha256: str | None, strategy_revision: int = 0
+    stage: str,
+    action: str,
+    artifact_sha256: str | None,
+    strategy_revision: int = 0,
+    strategy_decision: str | None = None,
+    strategy_based_on: str | None = None,
 ) -> str:
-    suffix = f"|strategy:{strategy_revision}" if strategy_revision else ""
+    suffix = ""
+    if strategy_revision:
+        suffix = (
+            f"|strategy:{strategy_revision}|decision:{strategy_decision or 'none'}"
+            f"|based_on:{strategy_based_on or 'none'}"
+        )
     raw = f"{stage}|{action}|{artifact_sha256 or 'none'}{suffix}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:20]
 
@@ -1147,7 +1271,10 @@ def strategy_override(
     strategy = policy.get("strategy_override")
     if not isinstance(strategy, dict) or strategy.get("enabled") is not True:
         return None
-    if strategy.get("action") != action or strategy.get("decision") != "retry_same_gate":
+    decision = strategy.get("decision")
+    if strategy.get("action") != action or decision not in {
+        "retry_same_gate", "transition_after_failure"
+    }:
         return None
     try:
         revision = int(strategy.get("revision", 0))
@@ -1171,15 +1298,25 @@ def strategy_override(
         )
         if not existing.get("terminal_failure") and not attempts_exhausted:
             return None
+        previous_revision = int(existing.get("strategy_revision", 0))
+        if revision <= previous_revision:
+            return None
+        previous_action = existing.get("action")
+        if decision == "retry_same_gate" and action != previous_action:
+            return None
+        if decision == "transition_after_failure" and (
+            action == previous_action or strategy.get("from_action") != previous_action
+        ):
+            return None
     evidence = strategy.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         return None
     for item in evidence:
         if not isinstance(item, dict):
             return None
-        path = ROOT / str(item.get("path", ""))
+        path = workspace_file(item.get("path"))
         expected = str(item.get("sha256", "")).upper()
-        if not path.is_file() or not expected or file_digest(path) != expected:
+        if path is None or not path.is_file() or not expected or file_digest(path) != expected:
             return None
     instruction_append = strategy.get("instruction_append", "")
     if not isinstance(instruction_append, str) or not instruction_append.strip() or len(instruction_append) > 4000:
@@ -1218,7 +1355,13 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         max_attempts = int(existing.get("max_attempts", policy["dispatch"]["max_attempts"]))
     else:
         pool_sha = audit.get("pool", {}).get("sha256")
-        strategy = strategy_override(action, policy, existing)
+        strategy_action = action
+        configured_strategy = policy.get("strategy_override", {})
+        if existing.get("status") == "failed" and isinstance(configured_strategy, dict):
+            strategy_action = str(configured_strategy.get("action") or action)
+        strategy = strategy_override(strategy_action, policy, existing)
+        if strategy is not None:
+            action = strategy_action
         if existing.get("status") == "failed" and strategy is None:
             # Scientific, safety, policy, permanent, and exhausted transient
             # failures remain terminal until an evidence-backed strategy names
@@ -1232,7 +1375,14 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
             max_attempts = int(existing.get("max_attempts", policy["dispatch"]["max_attempts"]))
         else:
             strategy_revision = int(strategy.get("revision", 0)) if strategy else 0
-            request_id = make_dispatch_id("paper2_pipeline", action, pool_sha, strategy_revision)
+            request_id = make_dispatch_id(
+                "paper2_pipeline",
+                action,
+                pool_sha,
+                strategy_revision,
+                strategy.get("decision") if strategy else None,
+                strategy.get("based_on_request_id") if strategy else None,
+            )
             max_attempts = int(policy["dispatch"]["max_attempts"])
     timeout_seconds = int(
         policy["dispatch"].get(
@@ -1293,7 +1443,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         and int(ack.get("attempt", 0)) == int(request["attempt"])
     )
     ack_thread = ack.get("thread_id") or ack.get("target_thread_id")
-    identity_mismatch = bool(ack_thread) and ack_thread != policy["executor_thread_id"]
+    identity_mismatch = same_request_attempt and ack_thread != policy["executor_thread_id"]
     matching_ack = same_request_attempt and not identity_mismatch
     if same_request_attempt and identity_mismatch:
         request["failure_class"] = "policy"
@@ -1338,12 +1488,15 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
                     )
         elif ack_status == "failed":
             failure_class = str(ack.get("failure_class", "transient")).lower()
+            valid_failure, failure_error = validate_failed_ack(ack, pool_sha)
+            if not valid_failure:
+                failure_class = "policy"
             terminal = failure_class in {"scientific", "safety", "policy", "permanent"}
             request["failure_class"] = failure_class
             retry_or_fail(
                 request,
                 max_attempts,
-                ack.get("error", "executor reported failure"),
+                failure_error or ack.get("error", "executor reported failure"),
                 terminal=terminal,
             )
     if request.get("status") == "acknowledged" and action not in {"resume_pool_generation", "stop_and_report"}:

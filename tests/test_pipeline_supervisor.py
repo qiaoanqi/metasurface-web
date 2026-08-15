@@ -156,6 +156,61 @@ class ControllerTests(unittest.TestCase):
     def write_status(self, status):
         supervisor.atomic_json(supervisor.STATUS, status)
 
+    def write_d65_gate(self, *, evidence_version="paper2-d65-v1"):
+        implementation = self.root / "paper2_colorimetry.py"
+        tests = self.root / "test_paper2_colorimetry.py"
+        implementation.write_text("# frozen D65 implementation\n", encoding="ascii")
+        tests.write_text("# frozen D65 tests\n", encoding="ascii")
+        pool_sha = supervisor.file_digest(self.root / "pool.pkl")
+        evidence = self.root / "d65_evidence.json"
+        supervisor.atomic_json(evidence, {
+            "schema_version": 1,
+            "evidence_version": evidence_version,
+            "evidence_revision": 2,
+            "passed": True,
+            "checks": {
+                "pool_records_6000": True,
+                "pool_grid_exact": True,
+                "perfect_reflector_lab_neutral": True,
+                "perfect_reflector_d65_xy": True,
+                "black_reflector_lab_zero": True,
+                "lab_source_unclipped_xyz": True,
+                "srgb_display_only": True,
+            },
+            "reference_cases": {
+                "perfect_reflector": {"lab": [100.0, 0.0, 0.0]},
+                "black_reflector": {"lab": [0.0, 0.0, 0.0]},
+                "white_xy": [0.3127, 0.3290],
+            },
+            "derived_label_provenance": {
+                "lab_source": "direct_unclipped_xyz",
+                "srgb_role": "display_only_clipped",
+            },
+            "pool": {"path": "pool.pkl", "sha256": pool_sha, "records": 2},
+            "implementation": {
+                "path": "paper2_colorimetry.py",
+                "sha256": supervisor.file_digest(implementation),
+            },
+            "tests": {
+                "path": "test_paper2_colorimetry.py",
+                "sha256": supervisor.file_digest(tests),
+            },
+            "legacy_path_modified": False,
+        })
+        supervisor.atomic_json(supervisor.GATE_STATE, {
+            "schema_version": 1,
+            "gates": {
+                "d65_colorimetry": {
+                    "passed": True,
+                    "checked_at": supervisor.now_iso(),
+                    "evidence": [
+                        {"path": "d65_evidence.json", "sha256": supervisor.file_digest(evidence)}
+                    ],
+                }
+            },
+        })
+        return evidence, {"passed": True, "sha256": pool_sha, "records": 2}
+
     def test_stale_running_is_reconciled_from_artifact(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):
@@ -184,6 +239,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "completed",
                 "observed_at": supervisor.now_iso(),
             },
@@ -204,7 +260,7 @@ class ControllerTests(unittest.TestCase):
         ]
         ack = {
             "checks": {"pool_sha256": "ABC"},
-            "outputs": [{"path": "legacy.pkl", "material": "legacy"}],
+            "outputs": [{"path": "legacy.pkl", "material": "legacy", "sha256": supervisor.file_digest(legacy)}],
             "paper_hashes": [{"path": "evidence.json", "md5": supervisor.file_digest(evidence, "md5")}],
         }
         valid, error = supervisor.validate_completed_ack(ack, "ABC", self.policy)
@@ -457,9 +513,10 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "completed",
                 "observed_at": supervisor.now_iso(),
-                "outputs": [{"path": "pool_manifest.json", "material": "pool_manifest"}],
+                "outputs": [{"path": "pool_manifest.json", "material": "pool_manifest", "sha256": supervisor.file_digest(manifest)}],
                 "paper_hashes": [
                     {
                         "path": "pool_manifest.json",
@@ -502,9 +559,10 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "completed",
                 "observed_at": supervisor.now_iso(),
-                "outputs": [{"path": "output.json", "material": "evidence"}],
+                "outputs": [{"path": "output.json", "material": "evidence", "sha256": supervisor.file_digest(output)}],
                 "paper_hashes": [{"path": "output.json", "md5": "0" * 32}],
                 "checks": {"pool_sha256": audit["pool"]["sha256"]},
             },
@@ -559,99 +617,23 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["next_action"], "stop_and_report")
 
     def test_gate_requires_matching_evidence_hash(self):
-        evidence = self.root / "evidence.json"
-        evidence.write_text(
-            json.dumps(
-                {
-                    "passed": True,
-                    "pool_sha256": "ABC",
-                    "evidence_version": "paper2-d65-v1",
-                }
-            ) + "\n",
-            encoding="ascii",
-        )
-        supervisor.atomic_json(
-            supervisor.GATE_STATE,
-            {
-                "schema_version": 1,
-                "gates": {
-                    "d65_colorimetry": {
-                        "passed": True,
-                        "checked_at": supervisor.now_iso(),
-                        "evidence": [
-                            {"path": "evidence.json", "sha256": supervisor.file_digest(evidence)}
-                        ],
-                    }
-                },
-            },
-        )
-        gates, _ = supervisor.verify_gate_evidence(
-            self.policy, {"passed": True, "sha256": "ABC", "records": 2}
-        )
+        evidence, pool = self.write_d65_gate()
+        gates, _ = supervisor.verify_gate_evidence(self.policy, pool)
         self.assertTrue(gates["d65_colorimetry"])
-        evidence.write_text(
-            json.dumps(
-                {
-                    "passed": False,
-                    "pool_sha256": "ABC",
-                    "evidence_version": "paper2-d65-v1",
-                }
-            ) + "\n",
-            encoding="ascii",
-        )
-        gates, _ = supervisor.verify_gate_evidence(
-            self.policy, {"passed": True, "sha256": "ABC", "records": 2}
-        )
+        evidence.write_text('{"tampered": true}\n', encoding="ascii")
+        gates, _ = supervisor.verify_gate_evidence(self.policy, pool)
         self.assertFalse(gates["d65_colorimetry"])
 
     def test_gate_rejects_wrong_evidence_version(self):
-        evidence = self.root / "evidence.json"
-        evidence.write_text(
-            json.dumps(
-                {
-                    "passed": True,
-                    "pool_sha256": "ABC",
-                    "evidence_version": "paper2-d65-v0",
-                }
-            ) + "\n",
-            encoding="ascii",
-        )
-        supervisor.atomic_json(
-            supervisor.GATE_STATE,
-            {
-                "schema_version": 1,
-                "gates": {
-                    "d65_colorimetry": {
-                        "passed": True,
-                        "checked_at": supervisor.now_iso(),
-                        "evidence": [
-                            {"path": "evidence.json", "sha256": supervisor.file_digest(evidence)}
-                        ],
-                    }
-                },
-            },
-        )
+        _, pool = self.write_d65_gate(evidence_version="paper2-d65-v0")
         gates, details = supervisor.verify_gate_evidence(
-            self.policy, {"passed": True, "sha256": "ABC", "records": 2}
+            self.policy, pool
         )
         self.assertFalse(gates["d65_colorimetry"])
         self.assertIn("evidence_version", details["d65_colorimetry"]["evidence"][0]["semantic_error"])
 
     def test_protocol_bound_gate_survives_active_pool_switch(self):
-        evidence = self.root / "evidence.json"
-        evidence.write_text(json.dumps({
-            "passed": True,
-            "pool_sha256": "SOURCE-POOL",
-            "evidence_version": "paper2-d65-v1",
-        }) + "\n", encoding="ascii")
-        supervisor.atomic_json(supervisor.GATE_STATE, {
-            "schema_version": 1,
-            "gates": {"d65_colorimetry": {
-                "passed": True,
-                "checked_at": supervisor.now_iso(),
-                "evidence": [{"path": "evidence.json", "sha256": supervisor.file_digest(evidence)}],
-            }},
-        })
+        self.write_d65_gate()
         gates, _ = supervisor.verify_gate_evidence(
             self.policy, {"passed": True, "sha256": "ACTIVE-POOL", "records": 2}
         )
@@ -663,6 +645,33 @@ class ControllerTests(unittest.TestCase):
             self.policy, {"passed": True, "sha256": "ACTIVE-POOL", "records": 2}
         )
         self.assertFalse(gates["d65_colorimetry"])
+
+    def test_minimal_self_declared_gate_evidence_never_unlocks_training(self):
+        gate_state = {"schema_version": 1, "gates": {}}
+        for item in self.policy["workflow"]["actions"]:
+            if item["gate"] == "pool_manifest_frozen":
+                continue
+            path = self.root / f"fake-{item['gate']}.json"
+            supervisor.atomic_json(path, {
+                "schema_version": 1,
+                "passed": True,
+                "evidence_version": item.get("evidence_version"),
+                "pool_sha256": "ABC",
+            })
+            gate_state["gates"][item["gate"]] = {
+                "passed": True,
+                "evidence": [{"path": path.name, "sha256": supervisor.file_digest(path)}],
+            }
+        supervisor.atomic_json(supervisor.GATE_STATE, gate_state)
+        gates, _ = supervisor.verify_gate_evidence(
+            self.policy, {"passed": True, "sha256": "ABC", "records": 2}
+        )
+        self.assertFalse(gates["training_allowed"])
+        self.assertTrue(all(
+            gates[item["gate"]] is False
+            for item in self.policy["workflow"]["actions"]
+            if item["gate"] != "pool_manifest_frozen"
+        ))
 
     def test_valid_pool_manifest_is_derived_without_manual_gate_entry(self):
         manifest = supervisor.STATE / "pool_manifest.json"
@@ -782,6 +791,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "running",
                 "observed_at": supervisor.now_iso(),
                 "lease_expires_at": lease,
@@ -826,6 +836,7 @@ class ControllerTests(unittest.TestCase):
         supervisor.atomic_json(supervisor.EXECUTOR_ACK, {
             "request_id": active["request_id"],
             "attempt": 1,
+            "thread_id": self.policy["executor_thread_id"],
             "status": "running",
             "observed_at": supervisor.now_iso(),
             "lease_expires_at": (
@@ -852,6 +863,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "running",
                 "observed_at": supervisor.now_iso(),
                 "lease_expires_at": lease,
@@ -873,6 +885,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "running",
                 "observed_at": supervisor.now_iso(),
                 "lease_expires_at": future,
@@ -897,6 +910,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "running",
                 "observed_at": supervisor.now_iso(),
                 "lease_expires_at": future,
@@ -920,6 +934,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": request["request_id"],
                 "attempt": request["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "failed",
                 "failure_class": "scientific",
                 "error": "pre-registered convergence threshold failed",
@@ -974,10 +989,60 @@ class ControllerTests(unittest.TestCase):
         advanced = supervisor.update_dispatch(
             "reference_resolution", self.policy, {"pool": {"sha256": pool_sha}}
         )
+        self.assertEqual(advanced, failed)
+
+        self.policy["strategy_override"].update({
+            "decision": "transition_after_failure",
+            "from_action": "joint_numerical_convergence",
+        })
+        advanced = supervisor.update_dispatch(
+            "reference_resolution", self.policy, {"pool": {"sha256": pool_sha}}
+        )
         self.assertNotEqual(advanced["request_id"], failed["request_id"])
         self.assertEqual(advanced["action"], "reference_resolution")
         self.assertEqual(advanced["status"], "pending")
         self.assertEqual(advanced["strategy_revision"], 2)
+
+    def test_strategy_revision_must_increase_and_request_id_binds_decision(self):
+        repair = self.root / "repair_evidence.json"
+        repair.write_text('{"passed": true}\n', encoding="ascii")
+        failed = {
+            "request_id": "failed-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "attempt": 1,
+            "max_attempts": 3,
+            "terminal_failure": True,
+            "strategy_revision": 2,
+        }
+        self.policy["strategy_override"] = {
+            "enabled": True,
+            "decision": "retry_same_gate",
+            "revision": 2,
+            "action": failed["action"],
+            "based_on_request_id": failed["request_id"],
+            "instruction_append": "Use only the versioned repair.",
+            "evidence": [
+                {"path": repair.name, "sha256": supervisor.file_digest(repair)}
+            ],
+        }
+        self.assertIsNone(supervisor.strategy_override(failed["action"], self.policy, failed))
+        self.policy["strategy_override"]["revision"] = 3
+        self.assertIsNotNone(supervisor.strategy_override(failed["action"], self.policy, failed))
+        first = supervisor.make_dispatch_id(
+            "paper2_pipeline", failed["action"], "ABC", 3,
+            "retry_same_gate", "failed-request",
+        )
+        second = supervisor.make_dispatch_id(
+            "paper2_pipeline", failed["action"], "ABC", 3,
+            "transition_after_failure", "failed-request",
+        )
+        replay = supervisor.make_dispatch_id(
+            "paper2_pipeline", failed["action"], "ABC", 3,
+            "retry_same_gate", "another-request",
+        )
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, replay)
 
     def test_scientific_failure_generates_guarded_recovery_plan(self):
         plan = supervisor.build_recovery_plan(
@@ -1021,6 +1086,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "request_id": failed["request_id"],
                 "attempt": failed["attempt"],
+                "thread_id": self.policy["executor_thread_id"],
                 "status": "failed",
                 "failure_class": "scientific",
                 "error": "convergence gate failed",
