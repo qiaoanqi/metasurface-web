@@ -77,6 +77,7 @@
     "ack_timeout_seconds": 1800,
     "pickup_timeout_seconds": 1800,
     "lease_timeout_seconds": 1800,
+    "finalization_grace_seconds": 1200,
     "max_attempts": 3
   },
   "watchdog": {
@@ -89,13 +90,30 @@
     "scheduled_task": "Paper2-Unattended-Watchdog"
   },
   "strategy_override": {
-    "enabled": false,
+    "enabled": true,
     "decision": "retry_same_gate",
-    "revision": 0,
-    "action": null,
-    "based_on_request_id": null,
-    "instruction_append": "",
-    "evidence": []
+    "revision": 1,
+    "action": "joint_numerical_convergence",
+    "based_on_request_id": "215e7a5152a650d096b4",
+    "instruction_append": "Do not rerun v1 or v1.1 and do not claim the failed nG131 production gate passes. Run python scripts/run_reference_resolution_escalation.py --n-jobs 16 using the frozen paper2-reference-resolution-v1 plan. This is a diagnostic evidence-acquisition run: preserve its checkpoint, renew the running lease, and never register joint_numerical_convergence as passed. When the diagnostic finishes, acknowledge this request as failed/scientific with the diagnostic evidence even if its own elevated-reference check passes, because the current production pool remains failed. The independent auditor will use that result to freeze a replacement production protocol.",
+    "evidence": [
+      {
+        "path": ".state/reference_resolution_v1_plan.json",
+        "sha256": "E8720251ABEF1C0ADD26730404E495B77EBAE2AB5AA99A5236B32CA3286BE634"
+      },
+      {
+        "path": ".state/joint_convergence_v1_1.json",
+        "sha256": "21DD425B138BA9DAFE27C739A0595CCE8B18819D2CE82AC05EB168537EF652D5"
+      },
+      {
+        "path": "scripts/run_reference_resolution_escalation.py",
+        "sha256": "EC9EE6B4CC1309E8CC89003D39B9AB9A6667308C03FB75EB5AEF023B0D993B78"
+      },
+      {
+        "path": "tests/test_reference_resolution_escalation.py",
+        "sha256": "3BCEE7504C9738E6B98155FA1334DCE81F5F46BA7842C887FB25949E8010D475"
+      }
+    ]
   },
   "safety": {
     "training_default": "forbidden",

@@ -526,6 +526,8 @@ def retry_or_fail(
             "acknowledged_at",
             "claimed_at",
             "lease_expires_at",
+            "finalization_grace_until",
+            "worker_exit_detected_at",
             "terminal_failure",
             "failure_class",
         ):
@@ -608,6 +610,9 @@ def build_recovery_plan(
         "failure_class": failure_class,
         "last_error": dispatch.get("last_error"),
         "automatic_retry": False,
+        "recovery_owner": "independent_auditor",
+        "next_action": "diagnose_repair_and_replan",
+        "user_intervention_required": False,
         "recommended_strategy": strategy,
         "required_evidence": [
             "failure classification and runtime hashes",
@@ -645,6 +650,24 @@ def active_executor_lease(ack: dict[str, Any], policy: dict[str, Any]) -> tuple[
     if expires is None:
         return False, None
     return datetime.now().astimezone() < expires, expires.isoformat(timespec="seconds")
+
+
+def executor_finalization_grace(
+    ack: dict[str, Any], policy: dict[str, Any], *, now: datetime | None = None
+) -> tuple[bool, str | None]:
+    """Allow a scheduled executor to finalize a just-finished worker."""
+    if not ack.get("worker_pid") or pid_alive(ack.get("worker_pid")):
+        return False, None
+    checkpoint = workspace_file(ack.get("checkpoint_path"))
+    if checkpoint is None or not checkpoint.is_file():
+        return False, None
+    current = now or datetime.now().astimezone()
+    modified = datetime.fromtimestamp(checkpoint.stat().st_mtime, tz=current.tzinfo)
+    grace_seconds = int(policy["dispatch"].get("finalization_grace_seconds", 1200))
+    deadline = modified + timedelta(seconds=max(60, grace_seconds))
+    if current >= deadline:
+        return False, None
+    return True, deadline.isoformat(timespec="seconds")
 
 
 def select_workflow_action(policy: dict[str, Any], gates: dict[str, bool]) -> str | None:
@@ -813,7 +836,10 @@ def strategy_override(
         return strategy
     if existing.get("status") != "failed" or existing.get("request_id") != strategy.get("based_on_request_id"):
         return None
-    if not existing.get("terminal_failure"):
+    attempts_exhausted = int(existing.get("attempt", 0)) >= int(
+        existing.get("max_attempts", policy["dispatch"]["max_attempts"])
+    )
+    if not existing.get("terminal_failure") and not attempts_exhausted:
         return None
     evidence = strategy.get("evidence")
     if not isinstance(evidence, list) or not evidence:
@@ -907,7 +933,15 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
                 request["claimed_at"] = ack.get("observed_at", request.get("claimed_at", now_iso()))
                 request["lease_expires_at"] = lease_expires_at
             else:
-                retry_or_fail(request, max_attempts, "executor lease expired")
+                grace_active, grace_until = executor_finalization_grace(ack, policy)
+                if grace_active:
+                    request["status"] = "in_progress"
+                    request["worker_exit_detected_at"] = request.get(
+                        "worker_exit_detected_at", now_iso()
+                    )
+                    request["finalization_grace_until"] = grace_until
+                else:
+                    retry_or_fail(request, max_attempts, "executor lease expired")
         elif ack_status in {"completed", "succeeded"}:
             if action == "stop_and_report":
                 request["status"] = "acknowledged"

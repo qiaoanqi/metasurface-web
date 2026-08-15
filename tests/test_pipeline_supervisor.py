@@ -497,6 +497,32 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["status"], "pending")
         self.assertEqual(second["dispatch"]["attempt"], 2)
 
+    def test_recent_checkpoint_gives_dead_worker_a_finalization_grace(self):
+        self.write_status({"status": "running", "pid": 999999})
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            first = supervisor.evaluate_once(self.policy)
+        request = first["dispatch"]
+        checkpoint = self.root / "checkpoint.pkl"
+        checkpoint.write_bytes(b"completed checkpoint")
+        future = (datetime.now().astimezone() + timedelta(hours=1)).isoformat(timespec="seconds")
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {
+                "request_id": request["request_id"],
+                "attempt": request["attempt"],
+                "status": "running",
+                "observed_at": supervisor.now_iso(),
+                "lease_expires_at": future,
+                "worker_pid": 999999,
+                "checkpoint_path": "checkpoint.pkl",
+            },
+        )
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            second = supervisor.evaluate_once(self.policy)
+        self.assertEqual(second["dispatch"]["status"], "in_progress")
+        self.assertEqual(second["dispatch"]["attempt"], 1)
+        self.assertIn("finalization_grace_until", second["dispatch"])
+
     def test_scientific_failure_is_terminal_not_retried(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):
@@ -533,6 +559,9 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(plan["status"], "terminal_review")
         self.assertFalse(plan["automatic_retry"])
+        self.assertEqual(plan["recovery_owner"], "independent_auditor")
+        self.assertEqual(plan["next_action"], "diagnose_repair_and_replan")
+        self.assertFalse(plan["user_intervention_required"])
         self.assertEqual(
             plan["recommended_strategy"],
             "inspect_failed_geometry_then_rerun_frozen_case",
@@ -587,6 +616,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(retried["dispatch"]["status"], "pending")
         self.assertEqual(retried["dispatch"]["attempt"], 1)
         self.assertEqual(retried["dispatch"]["strategy_revision"], 1)
+
+    def test_evidence_backed_strategy_can_retry_after_transient_budget_exhausted(self):
+        repair = self.root / "repair_evidence.json"
+        repair.write_text('{"passed": true}\n', encoding="ascii")
+        failed = {
+            "request_id": "exhausted-request",
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "attempt": 3,
+            "max_attempts": 3,
+            "terminal_failure": False,
+        }
+        self.policy["strategy_override"] = {
+            "enabled": True,
+            "decision": "retry_same_gate",
+            "revision": 2,
+            "action": failed["action"],
+            "based_on_request_id": failed["request_id"],
+            "instruction_append": "Retry only with the validated permanent repair.",
+            "evidence": [
+                {"path": "repair_evidence.json", "sha256": supervisor.file_digest(repair)}
+            ],
+        }
+        strategy = supervisor.strategy_override(failed["action"], self.policy, failed)
+        self.assertIsNotNone(strategy)
 
 
 if __name__ == "__main__":
