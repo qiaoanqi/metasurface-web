@@ -522,13 +522,108 @@ def retry_or_fail(
         request["status"] = "pending"
         request["updated_at"] = now_iso()
         request["last_error"] = error
-        for key in ("acknowledged_at", "claimed_at", "lease_expires_at", "terminal_failure"):
+        for key in (
+            "acknowledged_at",
+            "claimed_at",
+            "lease_expires_at",
+            "terminal_failure",
+            "failure_class",
+        ):
             request.pop(key, None)
         return
     request["status"] = "failed"
     request["updated_at"] = now_iso()
     request["last_error"] = error
     request["terminal_failure"] = terminal
+
+
+def build_recovery_plan(
+    action: str | None, dispatch: dict[str, Any] | None, policy: dict[str, Any]
+) -> dict[str, Any]:
+    """Describe the next safe response without silently changing science policy."""
+    if not action:
+        return {
+            "status": "idle",
+            "automatic_retry": False,
+            "recommended_strategy": "monitor",
+        }
+
+    if action == "stop_and_report":
+        return {
+            "status": "blocked",
+            "automatic_retry": False,
+            "recommended_strategy": "preserve_and_report",
+            "guardrails": [
+                "preserve all artifacts and checkpoints",
+                "do not modify paper 1 or overwrite any pool",
+                "do not start training",
+            ],
+        }
+
+    dispatch = dispatch if isinstance(dispatch, dict) else {}
+    status = str(dispatch.get("status", "pending"))
+    request_id = dispatch.get("request_id")
+    if status in {"pending", "in_progress"}:
+        return {
+            "status": "monitoring",
+            "request_id": request_id,
+            "action": action,
+            "automatic_retry": False,
+            "recommended_strategy": "continue_current_attempt",
+        }
+
+    if status != "failed":
+        return {
+            "status": "awaiting_confirmation",
+            "request_id": request_id,
+            "action": action,
+            "automatic_retry": False,
+            "recommended_strategy": "recheck_gate_evidence",
+        }
+
+    failure_class = str(dispatch.get("failure_class", "transient")).lower()
+    terminal = bool(dispatch.get("terminal_failure")) or failure_class in {
+        "scientific",
+        "safety",
+        "policy",
+        "permanent",
+    }
+    strategies = {
+        "resume_pool_generation": "validate_checkpoint_then_resume_same_command",
+        "pool_validation": "revalidate_immutable_pool_and_provenance",
+        "d65_colorimetry": "reproduce_colorimetry_controls_without_threshold_changes",
+        "joint_numerical_convergence": "inspect_failed_geometry_then_rerun_frozen_case",
+        "cross_solver_spectrum_validation": "classify_solver_disagreement_before_any_retry",
+        "circular_control": "rerun_control_with_frozen_budget_and_new_output",
+        "geometry_split_freeze": "audit_axis_canonicalization_and_split_manifest",
+        "training_pilot": "hold_training_and_reaudit_all_required_gates",
+        "closed_loop_evaluation": "recompute_frozen_evaluation_matrix",
+        "paper2_result_audit": "reconcile_claims_against_immutable_evidence",
+    }
+    strategy = strategies.get(action, "diagnose_failure_without_protocol_changes")
+    plan = {
+        "status": "terminal_review" if terminal else "retries_exhausted",
+        "request_id": request_id,
+        "action": action,
+        "failure_class": failure_class,
+        "last_error": dispatch.get("last_error"),
+        "automatic_retry": False,
+        "recommended_strategy": strategy,
+        "required_evidence": [
+            "failure classification and runtime hashes",
+            "reproducible repair or diagnostic result",
+            "unchanged pool SHA256 and paper 1 MD5 ledger",
+        ],
+        "guardrails": [
+            "do not change pre-registered thresholds",
+            "do not overwrite or resume the old isolated pool",
+            "do not modify paper 1",
+            "training remains forbidden until both gate ledgers pass",
+        ],
+    }
+    if not terminal:
+        plan["retry_budget"] = int(policy["dispatch"]["max_attempts"])
+    return plan
 
 
 def active_executor_lease(ack: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str | None]:
@@ -817,6 +912,7 @@ def update_dispatch(action: str, policy: dict[str, Any], audit: dict[str, Any]) 
         elif ack_status == "failed":
             failure_class = str(ack.get("failure_class", "transient")).lower()
             terminal = failure_class in {"scientific", "safety", "policy", "permanent"}
+            request["failure_class"] = failure_class
             retry_or_fail(
                 request,
                 max_attempts,
@@ -912,6 +1008,11 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     if dispatch and dispatch.get("status") == "failed":
         action = "stop_and_report"
         stage_passed = False
+    recovery_plan = build_recovery_plan(
+        dispatch.get("action") if isinstance(dispatch, dict) else action,
+        dispatch,
+        policy,
+    )
     next_plan = {
         "schema_version": 2,
         "audit_passed": stage_passed,
@@ -920,6 +1021,7 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         "dispatch_status": dispatch.get("status") if dispatch else None,
         "training_allowed": training_gates["training_allowed"],
         "scientific_blockers": [key for key, value in training_gates.items() if not value and key != "training_allowed"],
+        "recovery": recovery_plan,
         "generated_at": now_iso(),
     }
     atomic_json(NEXT_PLAN, next_plan)
@@ -933,6 +1035,7 @@ def evaluate_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
         "current_stage": "pool_generation",
         "next_action": action,
         "dispatch": dispatch,
+        "recovery_plan": recovery_plan,
         "training_allowed": training_gates["training_allowed"],
         "watchdog": watchdog if isinstance(watchdog, dict) else {},
         "updated_at": now_iso(),

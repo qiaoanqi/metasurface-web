@@ -483,6 +483,35 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second["dispatch"]["attempt"], 1)
         self.assertEqual(second["next_action"], "stop_and_report")
 
+    def test_scientific_failure_generates_guarded_recovery_plan(self):
+        plan = supervisor.build_recovery_plan(
+            "joint_numerical_convergence",
+            {
+                "request_id": "failed-request",
+                "status": "failed",
+                "failure_class": "scientific",
+                "terminal_failure": True,
+                "last_error": "cross-order mismatch",
+            },
+            self.policy,
+        )
+        self.assertEqual(plan["status"], "terminal_review")
+        self.assertFalse(plan["automatic_retry"])
+        self.assertEqual(
+            plan["recommended_strategy"],
+            "inspect_failed_geometry_then_rerun_frozen_case",
+        )
+        self.assertIn("do not change pre-registered thresholds", plan["guardrails"])
+
+    def test_running_dispatch_generates_monitoring_plan(self):
+        plan = supervisor.build_recovery_plan(
+            "cross_solver_spectrum_validation",
+            {"request_id": "running-request", "status": "in_progress"},
+            self.policy,
+        )
+        self.assertEqual(plan["status"], "monitoring")
+        self.assertFalse(plan["automatic_retry"])
+
     def test_evidence_backed_strategy_can_retry_same_failed_gate(self):
         self.write_status({"status": "running", "pid": 999999})
         with patch.object(supervisor, "pid_alive", return_value=False):
