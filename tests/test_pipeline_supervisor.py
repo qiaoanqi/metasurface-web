@@ -985,6 +985,47 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("audit_replacement_pool.py", run.call_args_list[0].args[0][1])
         self.assertIn("activate_replacement_pool.py", run.call_args_list[1].args[0][1])
 
+    def test_auto_transition_arms_only_matching_terminal_integrity_failure(self):
+        dispatch = {
+            "request_id": "integrity-request",
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "terminal_failure": True,
+            "failure_class": "permanent",
+        }
+        supervisor.atomic_json(
+            supervisor.EXECUTOR_ACK,
+            {
+                "request_id": dispatch["request_id"],
+                "attempt": 1,
+                "status": "failed",
+                "checks": {
+                    "finalization_classification": "execution_integrity_failure"
+                },
+            },
+        )
+        completed = supervisor.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=0,
+            stdout=(
+                '{"status":"armed","strategy_revision":3,'
+                '"target_request_id":"target-request"}\n'
+            ),
+            stderr="",
+        )
+        with patch.object(supervisor.subprocess, "run", return_value=completed) as run:
+            result = supervisor.run_auto_transition({"dispatch": dispatch})
+        self.assertEqual(result["status"], "armed")
+        self.assertIn("arm_reference_budget_v2_audit_recovery.py", run.call_args.args[0][1])
+
+        mismatched = supervisor.load_json(supervisor.EXECUTOR_ACK)
+        mismatched["request_id"] = "other-request"
+        supervisor.atomic_json(supervisor.EXECUTOR_ACK, mismatched)
+        with patch.object(supervisor.subprocess, "run") as run:
+            self.assertIsNone(supervisor.run_auto_transition({"dispatch": dispatch}))
+        run.assert_not_called()
+
     def test_executor_finalizer_waits_for_live_worker_and_stale_evidence(self):
         dispatch = {
             "request_id": "live-finalizer-request",

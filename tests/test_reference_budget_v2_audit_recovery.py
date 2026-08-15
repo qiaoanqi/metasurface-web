@@ -37,8 +37,8 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.state = self.root / ".state"
         self.state.mkdir()
-        self.source = {"request_id": "source-request", "attempt": 1}
-        self.active = {"request_id": "target-request", "attempt": 1}
+        self.source = {"request_id": "abcdef1234567890abcd", "attempt": 1}
+        self.active = {"request_id": "1234567890abcdefabcd", "attempt": 1}
         self.tasks = budget.build_tasks(cases())
         runner_path = self.root / "runner.py"
         runner_path.write_text("# frozen runner\n", encoding="ascii")
@@ -98,7 +98,9 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
                 "training_allowed": False,
             },
         )
-        self.diagnostic = self.state / "finalization_diagnostics" / "source-request-attempt1.json"
+        self.diagnostic = self.state / "finalization_diagnostics" / (
+            f"{self.source['request_id']}-attempt1.json"
+        )
         self.diagnostic.parent.mkdir()
         supervisor.atomic_json(
             self.diagnostic,
@@ -130,7 +132,9 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             "terminal_failure": True,
             "failure_class": "permanent",
         }
-        self.history = self.state / "dispatch_history" / "source-request-attempt1.json"
+        self.history = self.state / "dispatch_history" / (
+            f"{self.source['request_id']}-attempt1.json"
+        )
         self.history.parent.mkdir()
         supervisor.atomic_json(
             self.history,
@@ -220,6 +224,114 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             supervisor.load_json(self.recovery),
             self.checkpoint,
             self.evidence,
+        )
+
+    def test_post_terminal_arm_is_idempotent_and_seals_auditable_target(self):
+        self.history.unlink()
+        self.seal.unlink()
+        supervisor_path = self.root / "pipeline_supervisor.py"
+        supervisor_path.write_text("# frozen supervisor\n", encoding="ascii")
+        for name in arm.STATIC_EVIDENCE_PATHS:
+            path = self.root / name
+            if path in {self.plan, self.recovery, self.seal}:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"# frozen {name}\n", encoding="ascii")
+
+        policy_path = self.root / "pipeline_policy.json"
+        policy = {
+            "strategy_override": {
+                "enabled": True,
+                "decision": "retry_same_gate",
+                "revision": 2,
+                "action": "joint_numerical_convergence",
+                "based_on_request_id": "feedfacefeedfacefeed",
+                "instruction_append": "older strategy",
+                "evidence": [{"path": "runner.py", "sha256": file_digest(self.root / "runner.py")}],
+            }
+        }
+        supervisor.atomic_json(policy_path, policy)
+        integrity_path = self.state / "pipeline_integrity.json"
+        supervisor.atomic_json(
+            integrity_path,
+            {
+                "schema_version": 1,
+                "policy_sha256": file_digest(policy_path),
+                "supervisor_sha256": file_digest(supervisor_path),
+                "protected_assets_revision": 26,
+            },
+        )
+        source_dispatch = {
+            "request_id": self.source["request_id"],
+            "attempt": 1,
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "terminal_failure": True,
+            "failure_class": "permanent",
+            "strategy_revision": 2,
+            "payload": {"pool_sha256": "A" * 64},
+        }
+        dispatch_path = self.state / "dispatch_request.json"
+        ack_path = self.state / "executor_ack.json"
+        supervisor.atomic_json(dispatch_path, source_dispatch)
+        supervisor.atomic_json(ack_path, self.source_ack)
+
+        old_arm_root = arm.ROOT
+        old_supervisor_root = supervisor.ROOT
+        old_supervisor_state = supervisor.STATE
+        arm.ROOT = self.root
+        supervisor.ROOT = self.root
+        supervisor.STATE = self.state
+        self.addCleanup(setattr, arm, "ROOT", old_arm_root)
+        self.addCleanup(setattr, supervisor, "ROOT", old_supervisor_root)
+        self.addCleanup(setattr, supervisor, "STATE", old_supervisor_state)
+
+        result = arm.apply(policy_path, integrity_path, dispatch_path, ack_path)
+        self.assertEqual(result["status"], "armed")
+        self.assertEqual(result["strategy_revision"], 3)
+        self.assertEqual(result["integrity_revision"], 27)
+        repeated = arm.apply(policy_path, integrity_path, dispatch_path, ack_path)
+        self.assertEqual(repeated["status"], "already_armed")
+
+        updated_policy = supervisor.load_json(policy_path)
+        strategy = updated_policy["strategy_override"]
+        seal = supervisor.load_json(self.seal)
+        self.assertEqual(seal["source_request"], self.source)
+        self.assertEqual(seal["target_request"]["strategy_revision"], 3)
+        self.assertEqual(strategy["revision"], 3)
+        self.assertEqual(strategy["based_on_request_id"], self.source["request_id"])
+        history = supervisor.load_json(self.history)
+        self.assertEqual(history["request"], source_dispatch)
+        self.assertEqual(history["final_ack"], self.source_ack)
+
+        target = seal["target_request"]
+        target_dispatch = {
+            "request_id": target["request_id"],
+            "attempt": target["attempt"],
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "strategy_revision": target["strategy_revision"],
+            "strategy_based_on": self.source["request_id"],
+            "strategy_evidence": strategy["evidence"],
+        }
+        target_ack = {
+            "request_id": target["request_id"],
+            "attempt": target["attempt"],
+            "status": "claimed",
+            "worker_pid": None,
+        }
+        lineage = validate_lineage(
+            self.root,
+            target_dispatch,
+            target_ack,
+            self.checkpoint,
+            self.evidence,
+            require_ready=False,
+        )
+        self.assertEqual(lineage["producer_request"], self.source)
+        self.assertEqual(
+            lineage["active_request"],
+            {"request_id": target["request_id"], "attempt": target["attempt"]},
         )
 
     def test_repacked_unrelated_diagnostic_is_rejected(self):
