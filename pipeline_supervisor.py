@@ -293,6 +293,34 @@ def executor_finalization_seal_path(dispatch: dict[str, Any]) -> Path:
     )
 
 
+def executor_finalization_rebind_path(dispatch: dict[str, Any], worker_pid: int) -> Path:
+    return STATE / "executor_finalization_seals" / (
+        f"{dispatch['request_id']}-attempt{int(dispatch['attempt'])}-rebind-{worker_pid}.json"
+    )
+
+
+def _authorized_executor_rebind(
+    dispatch: dict[str, Any], ack: dict[str, Any], previous_worker_pid: int, worker_pid: int
+) -> bool:
+    """Accept only an explicit, dead-worker load-shed rebind for the same attempt."""
+    checks = ack.get("checks")
+    if not isinstance(checks, dict) or pid_alive(previous_worker_pid):
+        return False
+    try:
+        stopped_pid = int(checks.get("load_shed_stopped_worker_pid"))
+        resumed_pid = int(checks.get("load_shed_resumed_worker_pid"))
+    except (TypeError, ValueError):
+        return False
+    if stopped_pid != previous_worker_pid or resumed_pid != worker_pid:
+        return False
+    before = checks.get("checkpoint_sha256_before_resume")
+    after = checks.get("checkpoint_sha256_after_rebind")
+    shed = checks.get("load_shed_checkpoint_sha256")
+    return bool(after and shed and str(after).upper() == str(shed).upper()) and bool(
+        before and str(before).upper() != str(after).upper()
+    )
+
+
 def capture_executor_finalization_seal(dispatch: dict[str, Any], ack: dict[str, Any]) -> Path | None:
     """Persist the active worker identity before an executor can replace its ack."""
     if not is_budget_v2_dispatch(dispatch):
@@ -322,8 +350,38 @@ def capture_executor_finalization_seal(dispatch: dict[str, Any], ack: dict[str, 
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         existing = load_json(path, {}) or {}
-        if existing.get("request") != payload["request"] or int(existing.get("worker_pid", 0)) != worker_pid:
+        previous_worker_pid = int(existing.get("worker_pid", 0) or 0)
+        if existing.get("request") != payload["request"]:
             raise ValueError("executor finalization seal identity collision")
+        if previous_worker_pid != worker_pid:
+            if not _authorized_executor_rebind(dispatch, ack, previous_worker_pid, worker_pid):
+                raise ValueError("executor finalization seal identity collision")
+            rebind_path = executor_finalization_rebind_path(dispatch, worker_pid)
+            rebind_payload = {
+                "schema_version": 1,
+                "evidence_version": "paper2-executor-finalization-rebind-v1",
+                "request": payload["request"],
+                "previous_worker_pid": previous_worker_pid,
+                "worker_pid": worker_pid,
+                "active_ack_sha256": payload["active_ack_sha256"],
+                "checkpoint_sha256_before_resume": ack.get("checks", {}).get(
+                    "checkpoint_sha256_before_resume"
+                ),
+                "checkpoint_sha256_after_rebind": ack.get("checks", {}).get(
+                    "checkpoint_sha256_after_rebind"
+                ),
+                "captured_at": now_iso(),
+            }
+            if rebind_path.is_file():
+                existing_rebind = load_json(rebind_path, {}) or {}
+                comparable_existing = dict(existing_rebind)
+                comparable_payload = dict(rebind_payload)
+                comparable_existing.pop("captured_at", None)
+                comparable_payload.pop("captured_at", None)
+                if comparable_existing != comparable_payload:
+                    raise ValueError("executor finalization rebind evidence collision")
+            else:
+                atomic_json(rebind_path, rebind_payload)
     else:
         atomic_json(path, payload)
     return path

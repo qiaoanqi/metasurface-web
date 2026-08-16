@@ -452,7 +452,7 @@
       },
       {
         "path": "scripts/finalize_paper2_request.py",
-        "sha256": "AD1F3A6913AABD00289F43E3408E54875C06FFE3C0E630AEF61AA4935F9F9986"
+        "sha256": "72D08BE32A976C05CEAFBC156682612C4719C35DD9F7617F7B59ECEDEF1F4F64"
       },
       {
         "path": "tests/test_finalize_paper2_request.py",

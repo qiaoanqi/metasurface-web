@@ -1195,6 +1195,53 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["status"], "waiting")
         self.assertEqual(result["reason"], "worker_evidence_missing")
 
+    def test_executor_seal_accepts_only_explicit_load_shed_rebind(self):
+        dispatch = {
+            "request_id": "rebind-request",
+            "attempt": 2,
+            "action": "joint_numerical_convergence",
+            "status": "in_progress",
+            "strategy_revision": 2,
+            "strategy_evidence": [
+                {"path": ".state/reference_resolution_budget_v2_plan.json"}
+            ],
+        }
+        first_ack = {
+            "request_id": dispatch["request_id"],
+            "attempt": 2,
+            "status": "running",
+            "worker_pid": 111,
+        }
+        supervisor.capture_executor_finalization_seal(dispatch, first_ack)
+        rebound_ack = {
+            **first_ack,
+            "worker_pid": 222,
+            "checks": {
+                "load_shed_stopped_worker_pid": 111,
+                "load_shed_resumed_worker_pid": 222,
+                "checkpoint_sha256_before_resume": "A" * 64,
+                "checkpoint_sha256_after_rebind": "B" * 64,
+                "load_shed_checkpoint_sha256": "B" * 64,
+            },
+        }
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            supervisor.capture_executor_finalization_seal(dispatch, rebound_ack)
+            supervisor.capture_executor_finalization_seal(dispatch, rebound_ack)
+        seal = supervisor.load_json(supervisor.executor_finalization_seal_path(dispatch))
+        self.assertEqual(seal["worker_pid"], 111)
+        rebind = supervisor.load_json(
+            supervisor.executor_finalization_rebind_path(dispatch, 222)
+        )
+        self.assertEqual(rebind["previous_worker_pid"], 111)
+        self.assertEqual(rebind["worker_pid"], 222)
+
+        bad_ack = {**rebound_ack, "checks": {"load_shed_resumed_worker_pid": 222}}
+        with patch.object(supervisor, "pid_alive", return_value=False):
+            with self.assertRaisesRegex(ValueError, "identity collision"):
+                supervisor.capture_executor_finalization_seal(
+                    dispatch, {**bad_ack, "worker_pid": 333}
+                )
+
     def test_executor_finalizer_replaces_dead_complete_ack_before_transition(self):
         pool_sha = supervisor.file_digest(self.root / "pool.pkl")
         dispatch = {

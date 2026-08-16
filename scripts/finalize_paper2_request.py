@@ -80,7 +80,15 @@ def pool_context(policy: dict, dispatch: dict) -> tuple[dict, dict, str]:
     pool_sha = str(dispatch.get("payload", {}).get("pool_sha256", "")).upper()
     if not pool_sha:
         pool_sha = str(pool.get("sha256", "")).upper()
-    if pool_sha != str(pool.get("sha256", "")).upper():
+    # The frozen policy pool predates active-pool manifests and has no stored
+    # sha256 field. Bind it to the on-disk file before comparing the request.
+    resolved_sha = str(pool.get("sha256", "")).upper()
+    if not resolved_sha:
+        pool_path = supervisor.workspace_file(_spec.get("path"))
+        if pool_path is None or not pool_path.is_file():
+            raise ValueError("finalizer active pool file is missing")
+        resolved_sha = supervisor.file_digest(pool_path)
+    if pool_sha != resolved_sha:
         raise ValueError("finalizer pool SHA256 does not match the active pool")
     return _spec, pool, pool_sha
 

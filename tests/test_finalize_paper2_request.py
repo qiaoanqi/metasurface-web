@@ -125,6 +125,18 @@ class Paper2FinalizerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "worker is alive"):
                 finalizer.finalize(self.dispatch_path, self.ack_path)
 
+    def test_policy_pool_without_manifest_sha_binds_to_disk(self):
+        dispatch = self.dispatch()
+        with patch.object(
+            supervisor,
+            "resolve_active_pool",
+            return_value=({"path": "pool.pkl"}, {"passed": True, "active": False}),
+        ):
+            spec, pool, pool_sha = finalizer.pool_context(self.policy, dispatch)
+        self.assertEqual(spec["path"], "pool.pkl")
+        self.assertFalse(pool["active"])
+        self.assertEqual(pool_sha, self.pool_sha)
+
     def test_joint_pass_and_negative_are_scientific_failures(self):
         for passed, classification in ((True, "budget_v2_converged"), (False, "budget_v2_still_insufficient")):
             with self.subTest(passed=passed):
