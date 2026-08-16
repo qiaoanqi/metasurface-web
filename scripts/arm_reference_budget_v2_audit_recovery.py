@@ -113,11 +113,18 @@ def validate_terminal_source(
         != "execution_integrity_failure"
     ):
         raise ValueError("source final ack is not the expected integrity failure")
+    recovery_source = recovery.get("source_request", {})
+    try:
+        recovery_attempt = int(recovery_source.get("attempt", 0))
+    except (TypeError, ValueError):
+        recovery_attempt = 0
     if (
         recovery.get("evidence_version") != RECOVERY_VERSION
-        or recovery.get("source_request", {}).get("request_id") != source["request_id"]
-        or int(recovery.get("source_request", {}).get("attempt", 0)) != source["attempt"]
-        or recovery.get("source_request", {}).get("action") != diagnostic_source["action"]
+        or recovery_source.get("request_id") != source["request_id"]
+        # A recovery observation may predate a controlled retry of the same
+        # request. The terminal diagnostic below still binds the final attempt.
+        or not 1 <= recovery_attempt <= source["attempt"]
+        or recovery_source.get("action") != diagnostic_source["action"]
         or recovery.get("observation_only") is not True
         or recovery.get("scientific_outcome_authorized") is not False
         or recovery.get("training_allowed") is not False

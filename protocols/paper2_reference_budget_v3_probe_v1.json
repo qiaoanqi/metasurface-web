@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-reference-budget-v3-probe-v1",
+  "purpose": "engineering_probe_only",
+  "source_v2_plan_sha256": "3ADDFB222389E47ED3A757D25885344A23C5F047EDC1EEE5E008E825D50884B9",
+  "source_v2_audit_sha256": "D192B1BE29A3E54846A0BD21B84511B7B1C2C364A2989D46A8194F68BD222349",
+  "geometry_index": 2,
+  "configs": [[550, 1024], [650, 1024]],
+  "steps_nm": [1.0, 0.5],
+  "polarizations": ["p", "s"],
+  "expected_tasks": 8,
+  "thresholds": {
+    "mean_joint_dE00_lt": 1.15,
+    "all_joint_dE00_lt": 2.3,
+    "pointwise_conservation_lte": 1e-6
+  },
+  "decision_rule": "candidate_budget_supported only if both order comparisons and both spectral comparisons satisfy unchanged thresholds; otherwise keep gate closed and redesign the numerical protocol.",
+  "training_allowed": false,
+  "gate_registration_allowed": false
+}

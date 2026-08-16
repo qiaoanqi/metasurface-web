@@ -225,11 +225,17 @@ def validate_lineage(
         root, seal.get("live_recovery_observation"), "live recovery observation"
     )
     recovery = load_json(recovery_path)
+    recovery_source = recovery.get("source_request", {})
+    try:
+        recovery_attempt = int(recovery_source.get("attempt", 0))
+    except (TypeError, ValueError):
+        recovery_attempt = 0
     if (
         recovery.get("evidence_version") != RECOVERY_VERSION
-        or recovery.get("source_request", {}).get("request_id") != source["request_id"]
-        or int(recovery.get("source_request", {}).get("attempt", 0))
-        != int(source["attempt"])
+        or recovery_source.get("request_id") != source["request_id"]
+        # Preserve an earlier observation when the same request was retried;
+        # the sealed terminal diagnostic remains bound to the final attempt.
+        or not 1 <= recovery_attempt <= int(source["attempt"])
         or recovery.get("observation_only") is not True
         or recovery.get("checkpoint_reuse_authorized") is not False
     ):

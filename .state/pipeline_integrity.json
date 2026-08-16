@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "49F8BDF733A16CB60892052319B5AC3C884127FD85BA06EFC95155B4CE1B273D",
+  "policy_sha256": "DCCA6055C7974AC056A69F4FE1C07231F752528D1A6D8F1181F798ADC58921F6",
   "supervisor_sha256": "E8932AA6B0BE8C2097A99E6671CDE061ACB774082357C85E13770314DD09D4E9",
-  "protected_assets_revision": 34,
-  "note": "finalizer frozen-pool SHA binding fix; safe pause remains enabled"
+  "protected_assets_revision": 36,
+  "note": "safe pause cleared by explicit authorization"
 }

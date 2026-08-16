@@ -389,18 +389,22 @@
   "strategy_override": {
     "enabled": true,
     "decision": "retry_same_gate",
-    "revision": 8,
+    "revision": 9,
     "action": "joint_numerical_convergence",
-    "based_on_request_id": "000786ba2cb4154777b8",
-    "instruction_append": "Run only the hash-bound numerical-budget v2 diagnostic: python scripts/run_reference_resolution_budget_v2.py --n-jobs 16. On attempt greater than one, first run python scripts/prepare_reference_budget_v2_retry.py after claiming the request and before starting any worker; if it reports audit_existing_evidence, skip the worker and run only the independent auditor. Preserve the independent checkpoint and raw 1 nm/0.5 nm R/T arrays. Keep the active running ack until the supervisor observes worker exit; never write a scientific terminal ack directly. The supervisor launches scripts/finalize_paper2_request.py, which independently audits and atomically replaces the matching running ack. Any strategy drift is a permanent execution_integrity_failure, never a scientific result. Then let pipeline_supervisor and paper2_auto_transition.py decide the next evidence-bound step. This is diagnostic-only: do not register the historical nG131 pool, change thresholds, launch the 32-case holdout, activate a pool, or enable training.",
+    "based_on_request_id": "4218267d445f18aa0aef",
+    "instruction_append": "Audit-only recovery of the completed numerical-budget-v2 producer is authorized by the frozen post-terminal seal. After claiming this request, run python scripts/prepare_reference_budget_v2_retry.py. It must return audit_existing_evidence and atomically mark the acknowledgement finalization_ready; never start or resume a worker for this cross-request lineage. The supervisor finalizer then runs the independent auditor. Require exact archived dispatch, permanent execution-integrity final ack, diagnostic, 96/96 checkpoint, worker evidence, plan, pool, runner closure, seal, and strategy hashes. Preserve source bytes. Do not change thresholds, register the historical joint gate, launch holdout, activate a pool, modify paper 1, or enable training.",
     "evidence": [
-      {
-        "path": ".state/reference_resolution_v1_audit.json",
-        "sha256": "E054D78E35C33943F69D720A1931D923BC912FBFA8C54D61480BBB0BB49105B8"
-      },
       {
         "path": ".state/reference_resolution_budget_v2_plan.json",
         "sha256": "3ADDFB222389E47ED3A757D25885344A23C5F047EDC1EEE5E008E825D50884B9"
+      },
+      {
+        "path": ".state/reference_resolution_budget_v2_audit_recovery_v1.json",
+        "sha256": "379B3D4F2F28170BE8F8DE16BF324F7307043A641EBFDC27D8EDBEC67CC2D005"
+      },
+      {
+        "path": ".state/reference_resolution_budget_v2_post_terminal_seal_v1.json",
+        "sha256": "48B2F5A70A672D52EBB4BF1E6DFF01E6F95BDCBABFEDEAEED718240F9E3ADFEA"
       },
       {
         "path": "scripts/run_reference_resolution_budget_v2.py",
@@ -408,35 +412,39 @@
       },
       {
         "path": "scripts/prepare_reference_budget_v2_retry.py",
-        "sha256": "2395755D22249AA8B67BE7ABF46B47FB2C0DCB01D70349900C6B4F45469E21F7"
+        "sha256": "B394D13605F6BF59308BE603E7C0EB4916615D6B0EAAFAE30C0DFB580E00E25A"
       },
       {
         "path": "scripts/audit_reference_resolution_budget_v2.py",
-        "sha256": "34F7946B6419D5BDCFD7915ECAD623A1B7075B175C4A30C5E94ED3E44B433FA0"
+        "sha256": "78A48FEA4C6E2D6A8F57DAB7CD5E7F1A7FCC5B39F275AE68ED32B20F63885254"
       },
       {
-        "path": "scripts/freeze_reference_budget_v2.py",
-        "sha256": "43F1E2ED9175EE21E786344431D10A50440FEF7644A8CCDCE7653A594FB9CA0B"
-      },
-      {
-        "path": "scripts/advance_reference_budget_v2_strategy.py",
-        "sha256": "997AFED4A70AF3DE83CB9761CFAA58BF103AC6F1DC2B7CE3D8747C5BFF2AE364"
+        "path": "scripts/finalize_paper2_request.py",
+        "sha256": "72D08BE32A976C05CEAFBC156682612C4719C35DD9F7617F7B59ECEDEF1F4F64"
       },
       {
         "path": "scripts/paper2_auto_transition.py",
-        "sha256": "8FDB29DA4D542F05EAD8B15AE9CB831E2B5747A1C0EC6C6CDA58F9BE9F90AE5C"
+        "sha256": "B36A125BA32C7BB36A5644BB949761252EA4B4AB1B7051E4AE330D6FF4368CAA"
       },
       {
-        "path": "scripts/freeze_reference_holdout_plan.py",
-        "sha256": "65CF24AC885AB00C9FA058BE6267FE7F838FFFF021A7B0BB8278D9C12173EB87"
+        "path": "scripts/reference_budget_v2_lineage.py",
+        "sha256": "501457F1546CF2E78A493F4130C51C3340E8AB372553626B9208F4726510A4C3"
       },
       {
-        "path": "scripts/advance_reference_holdout_strategy.py",
-        "sha256": "183AFD864DEAB134E0B089E959FD5FE0A3BCAA1216353EBC1D44210C16939675"
+        "path": "scripts/freeze_reference_budget_v2_audit_recovery.py",
+        "sha256": "5F1A5AA8741F0AE44B558346972D70D79BC2384D9087E29C967E30EAA38A8EEA"
       },
       {
-        "path": "scripts/reference_v1_outcome.py",
-        "sha256": "1657662FDB86266326925A3E1B721B47FD521D21979F8BFFBE8FD4D43C7799EF"
+        "path": "scripts/arm_reference_budget_v2_audit_recovery.py",
+        "sha256": "C75C7B1C3B9F8781C34768303FD7448CD02E29053CFB00DF2B668D31BA27DE70"
+      },
+      {
+        "path": "scripts/policy_integrity_transaction.py",
+        "sha256": "DF2373BA1CDC6E10BCDEB62921C54CC8341F6E157CF62D554BD9B335D9812D52"
+      },
+      {
+        "path": "pipeline_supervisor.py",
+        "sha256": "E8932AA6B0BE8C2097A99E6671CDE061ACB774082357C85E13770314DD09D4E9"
       },
       {
         "path": "tests/test_reference_resolution_budget_v2.py",
@@ -447,24 +455,28 @@
         "sha256": "2E6ED2A42AF891B1BDB08A3C2DD6B34EB777C5CCED8AAFA6304638D89312A8CC"
       },
       {
-        "path": "tests/test_paper2_auto_transition.py",
-        "sha256": "939AA6873D767E27692F9A2035F19AB362F3AE09D7966236BD89ED371580DC85"
-      },
-      {
-        "path": "scripts/finalize_paper2_request.py",
-        "sha256": "72D08BE32A976C05CEAFBC156682612C4719C35DD9F7617F7B59ECEDEF1F4F64"
-      },
-      {
         "path": "tests/test_finalize_paper2_request.py",
-        "sha256": "42064EB3C832F71BFAC19977F1E870FFA044728DF3DBD226417D763CD0077857"
+        "sha256": "976914F7F04D5D61299B8ABF16586D6D6CA73C4226D4C4B71265DD52F26B683F"
       },
       {
-        "path": "pipeline_supervisor.py",
-        "sha256": "C15F4A0AF89272913136A7500B7462D31B5232FE2F5E99CBA7608C26D60C487E"
+        "path": "tests/test_paper2_auto_transition.py",
+        "sha256": "87237E0C9798615DA4B640C416E5FEA55F32A3FEDDB9902B6854379669EEC225"
+      },
+      {
+        "path": "tests/test_reference_budget_v2_audit_recovery.py",
+        "sha256": "5CC384FD226F37832C3082CF0815C3C839C05AA8157394A3C51587B1957108D8"
+      },
+      {
+        "path": "tests/test_policy_integrity_transaction.py",
+        "sha256": "30CB2AD34D3084C0CD809ECE7716BF71D7EE16EFC995A078FE1F71AD2C477790"
       },
       {
         "path": "tests/test_pipeline_supervisor.py",
-        "sha256": "52417953C95764A2339EBCA66D1F721BC3A57079F3C6994231254E2C5772B6A0"
+        "sha256": "93674A10767038D85DE8D130D01536B04D1D3787C0EFB2D413E038FCCD4FE3C7"
+      },
+      {
+        "path": ".state/dispatch_history/4218267d445f18aa0aef-attempt2.json",
+        "sha256": "3908CBC77A75693DDDA9EB780BCE2D6CD84BB545C2AC75471871AD248F17713A"
       }
     ]
   },
@@ -503,7 +515,7 @@
   },
   "operations": {
     "pause_after_request": {
-      "enabled": true,
+      "enabled": false,
       "request_id": "4218267d445f18aa0aef",
       "reason": "user_requested_safe_pause",
       "resume_requires": "explicit_user_authorization"

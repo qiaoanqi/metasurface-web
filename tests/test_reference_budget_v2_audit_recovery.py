@@ -305,6 +305,45 @@ class ReferenceBudgetV2AuditRecoveryTests(unittest.TestCase):
             self.evidence,
         )
 
+    def test_terminal_source_accepts_earlier_same_request_recovery_observation(self):
+        self.use_temp_arm_root()
+        terminal_source = self.source | {"attempt": 2}
+        with self.checkpoint.open("rb") as handle:
+            checkpoint = pickle.load(handle)
+        checkpoint["meta"]["request"] = terminal_source
+        self.checkpoint.write_bytes(
+            pickle.dumps(checkpoint, protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        evidence = supervisor.load_json(self.evidence)
+        evidence["request"] = terminal_source
+        evidence["checkpoint"] = binding(self.root, self.checkpoint) | {"tasks": 96}
+        supervisor.atomic_json(self.evidence, evidence)
+        diagnostic = supervisor.load_json(self.diagnostic)
+        diagnostic["request"] = terminal_source | {"action": "joint_numerical_convergence"}
+        supervisor.atomic_json(self.diagnostic, diagnostic)
+        source_ack = dict(self.source_ack)
+        source_ack["attempt"] = 2
+        source_ack["evidence"] = [
+            binding(self.root, self.diagnostic),
+            binding(self.root, self.checkpoint),
+            binding(self.root, self.evidence),
+        ]
+        source_dispatch = {
+            "request_id": terminal_source["request_id"],
+            "attempt": 2,
+            "action": "joint_numerical_convergence",
+            "status": "failed",
+            "terminal_failure": True,
+            "failure_class": "permanent",
+        }
+        arm.validate_terminal_source(
+            source_dispatch,
+            source_ack,
+            supervisor.load_json(self.recovery),
+            self.checkpoint,
+            self.evidence,
+        )
+
     def test_post_terminal_arm_is_idempotent_and_seals_auditable_target(self):
         self.history.unlink()
         self.seal.unlink()
