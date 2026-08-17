@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-reference-budget-v4-memory-recovery-v1",
+  "purpose": "execution_recovery_only",
+  "source_failed_checkpoint": {
+    "path": ".state/reference_resolution_budget_v4_probe_checkpoint.pkl",
+    "sha256": "59EF480DA1E1032CCFAA38D418E2187934697932FD7A036FE6604609C3EBA99B"
+  },
+  "source_protocol": {
+    "path": "protocols/paper2_reference_budget_v4_probe_v1.json",
+    "sha256": "9F1AD69155BE4434AE5713C908580648EF64BA3FD7773E88400EA72374B03BED"
+  },
+  "source_runner": {
+    "path": "scripts/probe_reference_budget_v4.py",
+    "sha256": "959690A02F1BAC18498043E0DEEDDC7BD7F97FFDC9F47D03EFB2D788FE593D3A"
+  },
+  "source_auditor": {
+    "path": "scripts/audit_reference_budget_v4_probe.py",
+    "sha256": "94569BD3F5C584A32CD88785E4DE0A0C89B775780A5E1A6495243F2D772722FF"
+  },
+  "implementation_hashes": [
+    {
+      "path": "scripts/recover_reference_budget_v4_memory_failure.py",
+      "sha256": "8483202C6DCB314FA70D0CFF08ACD1005525E1E55C5673D5091C40DBC20E7187"
+    }
+  ],
+  "failed_task_ids": [
+    "probe-v4-g02-p-ng850-nxy1024-step0p5",
+    "probe-v4-g02-s-ng850-nxy1024-step0p5"
+  ],
+  "required_failure": {
+    "status": "failed",
+    "error_prefix": "MemoryError:",
+    "requested_nG": 850,
+    "retained_nG": 841,
+    "Nxy": 1024,
+    "step_nm": 0.5
+  },
+  "chunking": {
+    "chunk_size_wavelengths": 40,
+    "expected_wavelengths_per_polarization": 801,
+    "expected_chunks_per_polarization": 21,
+    "expected_total_chunks": 42,
+    "maxtasksperchild": 1,
+    "default_n_jobs": 16
+  },
+  "raw_failure_seal": ".state/reference_resolution_budget_v4_failed_checkpoint_v1.pkl",
+  "recovery_checkpoint": ".state/reference_resolution_budget_v4_memory_recovery_checkpoint.pkl",
+  "recovery_evidence": ".state/reference_resolution_budget_v4_memory_recovery.json",
+  "decision_rule": "Preserve the exact failed checkpoint, recompute only the two MemoryError spectra in disjoint wavelength chunks with fresh worker processes, validate and concatenate the complete 0.5 nm grids, then replace only the two failed records in the live v4 checkpoint.",
+  "threshold_change_allowed": false,
+  "gate_registration_allowed": false,
+  "training_allowed": false
+}
