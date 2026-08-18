@@ -135,6 +135,10 @@ BUILTIN_FINALIZATION_SPECS = {
         "worker_evidence": ".state/reference_resolution_holdout_v2.json",
         "finalizer": "scripts/finalize_paper2_request.py",
     },
+    "reference_resolution_budget_v4": {
+        "worker_evidence": ".state/reference_resolution_budget_v4.json",
+        "finalizer": "scripts/finalize_paper2_request.py",
+    },
 }
 
 
@@ -2310,6 +2314,51 @@ def verify_multifidelity_data_ready_gate(
     return verify_protected_snapshot(payload.get("protected_files"))
 
 
+def verify_reference_resolution_budget_v4_gate(
+    payload: dict[str, Any], pool: dict[str, Any]
+) -> tuple[bool, str | None]:
+    """Verify the formal eight-geometry v4 audit without trusting worker claims."""
+    if (
+        payload.get("evidence_version") != "paper2-reference-budget-v4-audit"
+        or payload.get("passed") is not True
+        or payload.get("classification") != "reference_resolution_budget_v4_passed"
+        or payload.get("training_allowed") is not False
+        or payload.get("gate_registration_allowed") is not True
+    ):
+        return False, "reference v4 audit verdict or safety lock is invalid"
+    protocol = payload.get("protocol")
+    plan = payload.get("plan")
+    checkpoint = payload.get("checkpoint")
+    producer = payload.get("producer")
+    for item, label in ((protocol, "protocol"), (plan, "plan"), (checkpoint, "checkpoint"), (producer, "producer")):
+        path = workspace_file(item.get("path")) if isinstance(item, dict) else None
+        if path is None or not path.is_file() or file_digest(path) != str(item.get("sha256", "")).upper():
+            return False, f"reference v4 {label} binding is invalid"
+    protocol_path = workspace_file(protocol["path"])
+    protocol_payload = load_json(protocol_path, {}) or {}
+    if protocol_payload.get("evidence_version") != "paper2-reference-budget-v4" or protocol_payload.get("expected_tasks") != 48:
+        return False, "reference v4 protocol identity is invalid"
+    if protocol_payload.get("training_allowed") is not False or protocol_payload.get("holdout_allowed") is not False:
+        return False, "reference v4 protocol safety flags are invalid"
+    comparisons = payload.get("comparisons", {})
+    if set(comparisons) != {"order_750_to_850_0p5nm", "spectral_850_1p0_to_0p5nm"}:
+        return False, "reference v4 comparison axes are incomplete"
+    for key, value in comparisons.items():
+        if not isinstance(value, dict) or value.get("passed") is not True or value.get("count") != 8:
+            return False, f"reference v4 comparison failed: {key}"
+        rows = value.get("rows")
+        if not isinstance(rows, list) or len(rows) != 8 or len({row.get("geometry_index") for row in rows}) != 8:
+            return False, f"reference v4 paired rows are incomplete: {key}"
+        if not all(np.isfinite(float(row.get("joint_dE00", float("nan")))) for row in rows):
+            return False, f"reference v4 paired rows are non-finite: {key}"
+    checks = payload.get("checks", {})
+    required = {"all_tasks_completed", "no_task_failures", "spectra_and_conservation_valid", "p_s_pairing_complete", "order_axis_converged", "spectral_axis_converged", "runtime_hashes_verified"}
+    valid, error = all_checks_true(checks, required)
+    if not valid:
+        return False, error
+    return True, None
+
+
 def supervisor_json_digest(payload: Any) -> str:
     return json_payload_digest(payload)
 
@@ -2324,6 +2373,7 @@ GATE_PAYLOAD_VERIFIERS = {
     "geometry_split_frozen": verify_geometry_split_gate,
     "multifidelity_preregistered": verify_multifidelity_preregistration_gate,
     "multifidelity_data_ready": verify_multifidelity_data_ready_gate,
+    "reference_resolution_budget_v4": verify_reference_resolution_budget_v4_gate,
 }
 
 

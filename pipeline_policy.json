@@ -354,6 +354,29 @@
         "evidence_version": "paper2-result-audit-v1",
         "implementation_state": "deferred_until_pretraining_complete",
         "requires_training_allowed": true
+      },
+      {
+        "action": "reference_resolution_budget_v4",
+        "gate": "reference_resolution_budget_v4",
+        "evidence_version": "paper2-reference-budget-v4-audit",
+        "protocol": "protocols/paper2_reference_budget_v4.json",
+        "runner": "python scripts/run_reference_resolution_budget_v4.py --n-jobs 16",
+        "auditor": "python scripts/audit_reference_resolution_budget_v4.py",
+        "auditor_script": "scripts/audit_reference_resolution_budget_v4.py",
+        "worker_evidence": ".state/reference_resolution_budget_v4.json",
+        "audit_evidence": ".state/reference_resolution_budget_v4_audit.json",
+        "checkpoint": ".state/reference_resolution_budget_v4_checkpoint.pkl",
+        "finalizer": "scripts/finalize_paper2_request.py",
+        "finalization_mode": "builtin",
+        "diagnostic_only": true,
+        "gate_registration_requires_independent_audit": true,
+        "training_allowed": false,
+        "holdout_allowed": false,
+        "old_pool_activation_allowed": false,
+        "seed_reuse_geometry_index": 2,
+        "chunk_size_wavelengths": 40,
+        "maxtasksperchild": 1,
+        "expected_tasks": 48
       }
     ],
     "required_before_training": [
@@ -368,7 +391,7 @@
       "multifidelity_preregistered",
       "multifidelity_data_ready"
     ],
-    "contract_revision": "paper2-workflow-contract-v2-multifidelity"
+    "contract_revision": "paper2-workflow-contract-v4-formal-reference-budget"
   },
   "dispatch": {
     "ack_timeout_seconds": 1800,
@@ -517,7 +540,7 @@
     "pause_after_request": {
       "enabled": false,
       "request_id": "4218267d445f18aa0aef",
-      "reason": "user_requested_safe_pause",
+      "reason": "formal_v4_authorized",
       "resume_requires": "explicit_user_authorization"
     }
   }

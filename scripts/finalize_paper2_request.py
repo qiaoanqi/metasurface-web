@@ -26,6 +26,7 @@ from scripts.reference_budget_v2_lineage import validate_lineage  # noqa: E402
 VERSION = "paper2-finalizer-v2"
 JOINT_ACTION = "joint_numerical_convergence"
 HOLDOUT_ACTION = "reference_resolution"
+V4_ACTION = "reference_resolution_budget_v4"
 TERMINAL_ACK_STATUSES = {"completed", "succeeded", "failed"}
 ACTIVE_ACK_STATUSES = {"accepted", "claimed", "running", "in_progress"}
 
@@ -45,7 +46,7 @@ def binding(path: Path) -> dict[str, str]:
 def load_dispatch(path: Path) -> dict[str, Any]:
     dispatch = supervisor.load_json(path, {}) or {}
     if (
-        dispatch.get("action") not in {JOINT_ACTION, HOLDOUT_ACTION}
+        dispatch.get("action") not in {JOINT_ACTION, HOLDOUT_ACTION, V4_ACTION}
         or dispatch.get("status") != "in_progress"
         or not isinstance(dispatch.get("request_id"), str)
         or not dispatch["request_id"]
@@ -382,6 +383,24 @@ def register_reference_gate(audit_path: Path) -> dict[str, Any]:
     return updated
 
 
+def register_v4_gate(audit_path: Path) -> dict[str, Any]:
+    gate_path = supervisor.GATE_STATE
+    state = supervisor.load_json(gate_path, {}) or {"schema_version": 1, "gates": {}}
+    if state.get("schema_version") != 1 or not isinstance(state.get("gates"), dict):
+        raise ValueError("gate state is malformed")
+    entry = {"passed": True, "checked_at": now_iso(), "evidence": [binding(audit_path)]}
+    existing = state["gates"].get(V4_ACTION)
+    if isinstance(existing, dict) and existing.get("passed") is True:
+        if existing.get("evidence") != entry["evidence"]:
+            raise ValueError("formal v4 gate already points to different evidence")
+        return state
+    updated = dict(state)
+    updated["gates"] = dict(state["gates"])
+    updated["gates"][V4_ACTION] = entry
+    supervisor.atomic_json(gate_path, updated)
+    return updated
+
+
 def finalize_holdout(
     dispatch: dict, ack: dict, policy: dict, pool: dict, pool_sha: str, dispatch_path: Path, ack_path: Path
 ) -> dict[str, Any]:
@@ -441,6 +460,66 @@ def finalize_holdout(
     return base
 
 
+def finalize_v4(
+    dispatch: dict, ack: dict, policy: dict, pool_sha: str, dispatch_path: Path, ack_path: Path
+) -> dict[str, Any]:
+    checkpoint = ROOT / str(ack.get("checkpoint_path") or ".state/reference_resolution_budget_v4_checkpoint.pkl")
+    evidence = ROOT / ".state/reference_resolution_budget_v4.json"
+    audit_path = ROOT / ".state/reference_resolution_budget_v4_audit.json"
+    audit = run_auditor("scripts/audit_reference_resolution_budget_v4.py", audit_path, dispatch_path)
+    active = request_identity(dispatch)
+    if audit.get("evidence_version") != "paper2-reference-budget-v4-audit":
+        raise ValueError("unexpected formal v4 audit version")
+    if audit.get("training_allowed") is not False or audit.get("gate_registration_allowed") is not (audit.get("passed") is True):
+        raise ValueError("formal v4 audit safety flags are invalid")
+    for key, path in (("protocol", ROOT / "protocols/paper2_reference_budget_v4.json"),
+                      ("plan", ROOT / ".state/reference_resolution_budget_v2_plan.json"),
+                      ("checkpoint", checkpoint), ("producer", evidence)):
+        item = audit.get(key)
+        if not isinstance(item, dict) or item.get("path") != relative(path) or item.get("sha256") != supervisor.file_digest(path):
+            raise ValueError(f"formal v4 audit {key} binding mismatch")
+    if int(audit.get("checkpoint", {}).get("tasks", -1)) != 48:
+        raise ValueError("formal v4 audit task count mismatch")
+    checks = audit.get("checks")
+    if not isinstance(checks, dict) or not checks:
+        raise ValueError("formal v4 audit checks missing")
+    base = ack_base(dispatch, pool_sha, checkpoint)
+    base["checks"].update({
+        "audit_passed": audit.get("passed") is True,
+        "audit_classification": audit.get("classification"),
+        "independent_audit_checks": all(value is True for value in checks.values()),
+        "diagnostic_only": True,
+    })
+    base["evidence"] = evidence_bindings([evidence, audit_path, checkpoint, ROOT / "protocols/paper2_reference_budget_v4.json", ROOT / ".state/reference_resolution_budget_v2_plan.json"])
+    base["outputs"] = []
+    base["paper_hashes"] = []
+    if audit.get("classification") == "execution_integrity_failure":
+        base.update({"status": "failed", "failure_class": "permanent", "error": "formal v4 independent audit execution integrity failure"})
+    elif audit.get("passed") is True and audit.get("classification") == "reference_resolution_budget_v4_passed":
+        valid, error = supervisor.verify_gate_payload(V4_ACTION, audit, {})
+        if not valid:
+            raise ValueError(f"formal v4 gate payload failed supervisor verification: {error}")
+        base.update({"status": "completed", "failure_class": None, "error": None,
+                     "outputs": [{"path": relative(evidence), "material": "reference_resolution_budget_v4", "sha256": supervisor.file_digest(evidence)},
+                                 {"path": relative(audit_path), "material": "independent_reference_budget_v4_audit", "sha256": supervisor.file_digest(audit_path)}]})
+        register_v4_gate(audit_path)
+        base["checks"]["reference_resolution_budget_v4_gate_registered"] = True
+        base["paper_hashes"] = [
+            {"path": item["path"], "md5": supervisor.file_digest(ROOT / item["path"], "md5")}
+            for item in policy.get("protected_files", [])
+        ]
+    else:
+        base.update({"status": "failed", "failure_class": "scientific", "error": f"formal v4 scientific result: {audit.get('classification', 'negative')}"})
+    if base["status"] == "completed":
+        valid, error = supervisor.validate_completed_ack(base, pool_sha, policy)
+    else:
+        valid, error = supervisor.validate_failed_ack(base, pool_sha, dispatch)
+    if not valid:
+        raise ValueError(f"finalizer produced invalid formal v4 ack: {error}")
+    write_terminal_ack(ack_path, base)
+    return base
+
+
 def finalize(dispatch_path: Path, ack_path: Path) -> dict[str, Any]:
     dispatch = load_dispatch(dispatch_path)
     policy = supervisor.load_policy()
@@ -453,6 +532,8 @@ def finalize(dispatch_path: Path, ack_path: Path) -> dict[str, Any]:
         return terminal_replay(ack, pool_sha, policy)
     if dispatch["action"] == JOINT_ACTION:
         finalizer = lambda: finalize_joint(dispatch, ack, policy, pool_sha, dispatch_path, ack_path)
+    elif dispatch["action"] == V4_ACTION:
+        finalizer = lambda: finalize_v4(dispatch, ack, policy, pool_sha, dispatch_path, ack_path)
     else:
         finalizer = lambda: finalize_holdout(dispatch, ack, policy, pool, pool_sha, dispatch_path, ack_path)
     try:

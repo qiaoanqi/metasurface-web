@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-reference-budget-v4",
+  "purpose": "formal_eight_geometry_reference_resolution_gate",
+  "plan": {
+    "path": ".state/reference_resolution_budget_v2_plan.json",
+    "sha256": "3ADDFB222389E47ED3A757D25885344A23C5F047EDC1EEE5E008E825D50884B9"
+  },
+  "probe_protocol": {
+    "path": "protocols/paper2_reference_budget_v4_probe_v1.json",
+    "sha256": "9F1AD69155BE4434AE5713C908580648EF64BA3FD7773E88400EA72374B03BED"
+  },
+  "probe_audit": {
+    "path": ".state/reference_resolution_budget_v4_probe_audit.json",
+    "sha256": "DFA6B87F69C52B9012429EDD6E078E969B2CC257AD48E29E5088746FBDA93BCB"
+  },
+  "probe_checkpoint": {
+    "path": ".state/reference_resolution_budget_v4_probe_checkpoint.pkl",
+    "sha256": "CCF8EF93331692033CA76C19F54AB7CA4C39363AFD3081CCF5F479F0BA2369C5"
+  },
+  "geometry_source": "The eight geometries are frozen exactly from reference_resolution_budget_v2_plan.json; no reselection is permitted.",
+  "polarizations": ["p", "s"],
+  "configs": [[750, 1024, 0.5], [850, 1024, 1.0], [850, 1024, 0.5]],
+  "expected_tasks": 48,
+  "chunking": {
+    "chunk_size_wavelengths": 40,
+    "wavelengths_1nm": 401,
+    "wavelengths_0p5nm": 801,
+    "maxtasksperchild": 1,
+    "default_n_jobs": 16,
+    "atomic_checkpoint": true
+  },
+  "seed_reuse": {
+    "allowed": true,
+    "geometry_index": 2,
+    "source": ".state/reference_resolution_budget_v4_probe_checkpoint.pkl",
+    "audit": ".state/reference_resolution_budget_v4_probe_audit.json",
+    "read_only_exact_spectra": true
+  },
+  "thresholds": {
+    "mean_joint_dE00_lt": 1.15,
+    "all_joint_dE00_lt": 2.3,
+    "pointwise_conservation_lte": 1e-06
+  },
+  "decision_rule": "Pass only when both the paired p/s order comparison 750/Nxy1024/0.5nm to 850/Nxy1024/0.5nm and the paired p/s spectral comparison 850/Nxy1024/1.0nm to 850/Nxy1024/0.5nm satisfy mean joint dE00 < 1.15 and every geometry joint dE00 < 2.3.",
+  "implementation_hashes": [
+    {"path": "scripts/run_reference_resolution_budget_v4.py", "sha256": "2803EA882784482B84500F88D99F28F39AA03B3CB8494F494689560444F2EF94"},
+    {"path": "scripts/audit_reference_resolution_budget_v4.py", "sha256": "39D624142ED499CB1B5FF8B0BE4C7C9B9ECBB821B4175456F3EDDF4EF808192C"},
+    {"path": "tests/test_reference_resolution_budget_v4.py", "sha256": "CF4ACB70CA4527541A926686993F0445D8631ABC1AE610FFEC95BEA56AC973D2"}
+  ],
+  "runtime_hashes": {
+    "rcwa_batch.py": "8FD7CF97CE2C1BF73BACC5FAC3D5253F3BC8B21A7ECD2A1B23F0416A09D077B8",
+    "paper2_colorimetry.py": "710D81D34118AFDE4AA70037993DC3E1DBB38D7F3D9A572A09A7A8E8486AC5CB",
+    "color_utils.py": "FAB75B3D457374910E68012A0B0C1196B939DCDEB06E5F886D7064A8666CFBD1"
+  },
+  "training_allowed": false,
+  "gate_registration_allowed": true,
+  "holdout_allowed": false,
+  "old_pool_activation_allowed": false
+}

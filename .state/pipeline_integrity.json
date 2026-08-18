@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "DCCA6055C7974AC056A69F4FE1C07231F752528D1A6D8F1181F798ADC58921F6",
-  "supervisor_sha256": "E8932AA6B0BE8C2097A99E6671CDE061ACB774082357C85E13770314DD09D4E9",
-  "protected_assets_revision": 36,
-  "note": "safe pause cleared by explicit authorization"
+  "policy_sha256": "076261A768952FF0A712FDB714B316016709D971B732BE08A784A9876D9421C7",
+  "supervisor_sha256": "343397C62EDBC59A0849676F2A990CBFCD1C2F51CDCF9DDDEB9FC664BCD73DB9",
+  "protected_assets_revision": 38,
+  "note": "formal reference-resolution budget v4 protocol registered atomically"
 }
