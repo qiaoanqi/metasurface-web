@@ -2318,8 +2318,12 @@ def verify_reference_resolution_budget_v4_gate(
     payload: dict[str, Any], pool: dict[str, Any]
 ) -> tuple[bool, str | None]:
     """Verify the formal eight-geometry v4 audit without trusting worker claims."""
+    evidence_version = payload.get("evidence_version")
     if (
-        payload.get("evidence_version") != "paper2-reference-budget-v4-audit"
+        evidence_version not in {
+            "paper2-reference-budget-v4-audit",
+            "paper2-reference-budget-v4-audit-recovery-v1",
+        }
         or payload.get("passed") is not True
         or payload.get("classification") != "reference_resolution_budget_v4_passed"
         or payload.get("training_allowed") is not False
@@ -2353,6 +2357,38 @@ def verify_reference_resolution_budget_v4_gate(
             return False, f"reference v4 paired rows are non-finite: {key}"
     checks = payload.get("checks", {})
     required = {"all_tasks_completed", "no_task_failures", "spectra_and_conservation_valid", "p_s_pairing_complete", "order_axis_converged", "spectral_axis_converged", "runtime_hashes_verified"}
+    if evidence_version == "paper2-reference-budget-v4-audit-recovery-v1":
+        required |= {
+            "frozen_runtime_recovered_from_commit",
+            "checkpoint_bytes_unchanged",
+            "worker_evidence_bytes_unchanged",
+        }
+        recovery = payload.get("recovery_protocol")
+        recovery_path = workspace_file(recovery.get("path")) if isinstance(recovery, dict) else None
+        if recovery_path is None or not recovery_path.is_file() or file_digest(recovery_path) != str(recovery.get("sha256", "")).upper():
+            return False, "reference v4 recovery protocol binding is invalid"
+        recovery_payload = load_json(recovery_path, {}) or {}
+        if (
+            recovery_payload.get("evidence_version")
+            != "paper2-reference-budget-v4-audit-recovery-protocol-v1"
+            or payload.get("producer_commit") != recovery_payload.get("producer_commit")
+            or payload.get("producer_runtime_hashes")
+            != recovery_payload.get("producer_runtime_hashes")
+        ):
+            return False, "reference v4 frozen producer identity is invalid"
+        authorization = payload.get("authorization_request")
+        producer_request = payload.get("producer_request")
+        active = load_json(DISPATCH_REQUEST, {}) or {}
+        if authorization != {
+            "request_id": active.get("request_id"),
+            "attempt": int(active.get("attempt", 0)),
+        }:
+            return False, "reference v4 recovery authorization is not active"
+        if producer_request != {
+            "request_id": recovery_payload.get("source_request_id"),
+            "attempt": int(recovery_payload.get("source_attempt", 0)),
+        }:
+            return False, "reference v4 recovery producer lineage is invalid"
     valid, error = all_checks_true(checks, required)
     if not valid:
         return False, error

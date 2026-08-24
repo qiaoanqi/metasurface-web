@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "evidence_version": "ui-mainline-authorization-v1",
+  "authorization_scope": "register_current_ui_hashes_without_changing_scientific_runtime",
+  "authorized_by_user": true,
+  "authorized_files": [
+    {
+      "path": "ml_module.py",
+      "previous_md5": "2EF58119C0E8CC7E9969A59F659FB292",
+      "current_md5": "4759BA473120FFFCEF0503DE0B3B1A28"
+    },
+    {
+      "path": "color_utils.py",
+      "previous_sha256": "FAB75B3D457374910E68012A0B0C1196B939DCDEB06E5F886D7064A8666CFBD1",
+      "current_sha256": "389BE1B749D1D2BD85F91F72B747ACF83C2549E28F299E08F0A4ECD49903190E"
+    }
+  ],
+  "scientific_runtime_handling": "The v4 recovery auditor loads the frozen producer bytes from commit 21a8f3b and does not import the current UI color_utils.py.",
+  "training_allowed": false,
+  "holdout_allowed": false,
+  "paper1_modification_allowed": false
+}

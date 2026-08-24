@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "076261A768952FF0A712FDB714B316016709D971B732BE08A784A9876D9421C7",
-  "supervisor_sha256": "343397C62EDBC59A0849676F2A990CBFCD1C2F51CDCF9DDDEB9FC664BCD73DB9",
-  "protected_assets_revision": 38,
-  "note": "formal reference-resolution budget v4 protocol registered atomically"
+  "policy_sha256": "3C7EB43F59648F610BBB844A3F8848936581B4822E2488EEDF3766FAAA1280F9",
+  "supervisor_sha256": "5AE1AEE8E44DC1A3F330C4F4292E357F247BB7801820E5CAE2D3335EBEFF54AA",
+  "protected_assets_revision": 39,
+  "note": "formal v4 audit-only recovery and versioned UI hash registration"
 }

@@ -465,11 +465,25 @@ def finalize_v4(
 ) -> dict[str, Any]:
     checkpoint = ROOT / str(ack.get("checkpoint_path") or ".state/reference_resolution_budget_v4_checkpoint.pkl")
     evidence = ROOT / ".state/reference_resolution_budget_v4.json"
-    audit_path = ROOT / ".state/reference_resolution_budget_v4_audit.json"
-    audit = run_auditor("scripts/audit_reference_resolution_budget_v4.py", audit_path, dispatch_path)
+    workflow = next(
+        item for item in policy.get("workflow", {}).get("actions", [])
+        if item.get("action") == V4_ACTION
+    )
+    auditor_script = str(workflow.get("auditor_script") or "scripts/audit_reference_resolution_budget_v4.py")
+    audit_path = ROOT / str(workflow.get("audit_evidence") or ".state/reference_resolution_budget_v4_audit.json")
+    audit = run_auditor(auditor_script, audit_path, dispatch_path)
     active = request_identity(dispatch)
-    if audit.get("evidence_version") != "paper2-reference-budget-v4-audit":
+    if audit.get("evidence_version") not in {
+        "paper2-reference-budget-v4-audit",
+        "paper2-reference-budget-v4-audit-recovery-v1",
+    }:
         raise ValueError("unexpected formal v4 audit version")
+    if audit.get("evidence_version") == "paper2-reference-budget-v4-audit-recovery-v1":
+        if audit.get("authorization_request") != active:
+            raise ValueError("formal v4 recovery audit authorization mismatch")
+        producer = audit.get("producer_request")
+        if not isinstance(producer, dict) or producer.get("request_id") != dispatch.get("strategy_based_on"):
+            raise ValueError("formal v4 recovery audit producer lineage mismatch")
     if audit.get("training_allowed") is not False or audit.get("gate_registration_allowed") is not (audit.get("passed") is True):
         raise ValueError("formal v4 audit safety flags are invalid")
     for key, path in (("protocol", ROOT / "protocols/paper2_reference_budget_v4.json"),

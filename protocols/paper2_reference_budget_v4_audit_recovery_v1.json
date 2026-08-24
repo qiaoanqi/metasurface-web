@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-reference-budget-v4-audit-recovery-protocol-v1",
+  "purpose": "audit_only_recovery_of_completed_formal_v4_checkpoint",
+  "source_request_id": "7f41f20a7462402a8715",
+  "source_attempt": 2,
+  "producer_commit": "21a8f3b14f569f46def64e926cba276ffadcf2bc",
+  "formal_protocol": {
+    "path": "protocols/paper2_reference_budget_v4.json",
+    "sha256": "A4766BD54C55E00CC41D401A4B17CD4EC6FFD531F1082CC16383F829C22F446F"
+  },
+  "plan": {
+    "path": ".state/reference_resolution_budget_v2_plan.json",
+    "sha256": "3ADDFB222389E47ED3A757D25885344A23C5F047EDC1EEE5E008E825D50884B9"
+  },
+  "checkpoint": {
+    "path": ".state/reference_resolution_budget_v4_checkpoint.pkl",
+    "sha256": "C6936CFBFDF5049F8B4D3C112CE4571C3017B50659EA5B6D8300EA11C40BDE87",
+    "tasks": 48
+  },
+  "worker_evidence": {
+    "path": ".state/reference_resolution_budget_v4.json",
+    "sha256": "743F497548AACC9D2290B937066E8DDAB4FD5EA0445D006A221CB74EB6F69087",
+    "tasks": 48
+  },
+  "producer_runtime_hashes": {
+    "rcwa_batch.py": "8FD7CF97CE2C1BF73BACC5FAC3D5253F3BC8B21A7ECD2A1B23F0416A09D077B8",
+    "paper2_colorimetry.py": "710D81D34118AFDE4AA70037993DC3E1DBB38D7F3D9A572A09A7A8E8486AC5CB",
+    "color_utils.py": "FAB75B3D457374910E68012A0B0C1196B939DCDEB06E5F886D7064A8666CFBD1"
+  },
+  "implementation_hashes": [
+    {
+      "path": "scripts/audit_reference_resolution_budget_v4_recovery_v1.py",
+      "sha256": "6871BDC01401342C0A72DEFDA12223F1401CAA94C224B979713F4BEDA3B076CE"
+    }
+  ],
+  "current_ui_dependencies_are_not_audit_runtime": true,
+  "checkpoint_mutation_allowed": false,
+  "worker_rerun_allowed": false,
+  "training_allowed": false,
+  "holdout_allowed": false
+}

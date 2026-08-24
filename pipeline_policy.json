@@ -27,7 +27,7 @@
     },
     {
       "path": "ml_module.py",
-      "md5": "2EF58119C0E8CC7E9969A59F659FB292"
+      "md5": "4759BA473120FFFCEF0503DE0B3B1A28"
     },
     {
       "path": "train_new_materials.py",
@@ -358,13 +358,13 @@
       {
         "action": "reference_resolution_budget_v4",
         "gate": "reference_resolution_budget_v4",
-        "evidence_version": "paper2-reference-budget-v4-audit",
+        "evidence_version": "paper2-reference-budget-v4-audit-recovery-v1",
         "protocol": "protocols/paper2_reference_budget_v4.json",
         "runner": "python scripts/run_reference_resolution_budget_v4.py --n-jobs 16",
-        "auditor": "python scripts/audit_reference_resolution_budget_v4.py",
-        "auditor_script": "scripts/audit_reference_resolution_budget_v4.py",
+        "auditor": "python scripts/audit_reference_resolution_budget_v4_recovery_v1.py",
+        "auditor_script": "scripts/audit_reference_resolution_budget_v4_recovery_v1.py",
         "worker_evidence": ".state/reference_resolution_budget_v4.json",
-        "audit_evidence": ".state/reference_resolution_budget_v4_audit.json",
+        "audit_evidence": ".state/reference_resolution_budget_v4_audit_recovery_v1.json",
         "checkpoint": ".state/reference_resolution_budget_v4_checkpoint.pkl",
         "finalizer": "scripts/finalize_paper2_request.py",
         "finalization_mode": "builtin",
@@ -376,7 +376,10 @@
         "seed_reuse_geometry_index": 2,
         "chunk_size_wavelengths": 40,
         "maxtasksperchild": 1,
-        "expected_tasks": 48
+        "expected_tasks": 48,
+        "recovery_protocol": "protocols/paper2_reference_budget_v4_audit_recovery_v1.json",
+        "audit_only_recovery": true,
+        "worker_rerun_allowed": false
       }
     ],
     "required_before_training": [
@@ -542,6 +545,11 @@
       "request_id": "4218267d445f18aa0aef",
       "reason": "formal_v4_authorized",
       "resume_requires": "explicit_user_authorization"
+    },
+    "authorized_ui_mainline_registration": {
+      "path": "protocols/ui_mainline_authorization_v1.json",
+      "sha256": "947C62483202163C194AE29E592B19521782A068EDCE309EBE67D13B24E7B264",
+      "training_allowed": false
     }
   }
 }
