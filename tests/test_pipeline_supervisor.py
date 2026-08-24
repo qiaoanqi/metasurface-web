@@ -312,6 +312,108 @@ class GatePayloadVerifierTests(unittest.TestCase):
             with self.subTest(verifier=verifier.__name__):
                 self.assertFalse(verifier(payload, pool)[0])
 
+    def test_reference_v4_recovery_gate_survives_archival_and_new_active_request(self):
+        authorization = {"request_id": "v4-recovery-request", "attempt": 1}
+        producer_request = {"request_id": "v4-producer-request", "attempt": 2}
+        producer_commit = "1" * 40
+        runtime_hashes = {"frozen_runtime.py": "A" * 64}
+        protocol = self.json_binding(
+            "protocols/reference-v4.json",
+            {
+                "evidence_version": "paper2-reference-budget-v4",
+                "expected_tasks": 48,
+                "training_allowed": False,
+                "holdout_allowed": False,
+            },
+        )
+        recovery_protocol = self.json_binding(
+            "protocols/reference-v4-recovery.json",
+            {
+                "evidence_version": (
+                    "paper2-reference-budget-v4-audit-recovery-protocol-v1"
+                ),
+                "producer_commit": producer_commit,
+                "producer_runtime_hashes": runtime_hashes,
+                "source_request_id": producer_request["request_id"],
+                "source_attempt": producer_request["attempt"],
+            },
+        )
+        rows = [
+            {"geometry_index": index, "joint_dE00": 0.1}
+            for index in range(8)
+        ]
+        payload = {
+            "evidence_version": "paper2-reference-budget-v4-audit-recovery-v1",
+            "passed": True,
+            "classification": "reference_resolution_budget_v4_passed",
+            "training_allowed": False,
+            "gate_registration_allowed": True,
+            "protocol": protocol,
+            "plan": self.binding("state/reference-v4-plan.json"),
+            "checkpoint": self.binding("state/reference-v4-checkpoint.pkl"),
+            "producer": self.binding("state/reference-v4-worker.json"),
+            "producer_commit": producer_commit,
+            "producer_runtime_hashes": runtime_hashes,
+            "recovery_protocol": recovery_protocol,
+            "authorization_request": authorization,
+            "producer_request": producer_request,
+            "comparisons": {
+                "order_750_to_850_0p5nm": {
+                    "passed": True,
+                    "count": 8,
+                    "rows": copy.deepcopy(rows),
+                },
+                "spectral_850_1p0_to_0p5nm": {
+                    "passed": True,
+                    "count": 8,
+                    "rows": copy.deepcopy(rows),
+                },
+            },
+            "checks": {
+                "all_tasks_completed": True,
+                "no_task_failures": True,
+                "spectra_and_conservation_valid": True,
+                "p_s_pairing_complete": True,
+                "order_axis_converged": True,
+                "spectral_axis_converged": True,
+                "runtime_hashes_verified": True,
+                "frozen_runtime_recovered_from_commit": True,
+                "checkpoint_bytes_unchanged": True,
+                "worker_evidence_bytes_unchanged": True,
+            },
+        }
+        history = (
+            supervisor.STATE
+            / "dispatch_history"
+            / f"{authorization['request_id']}-attempt{authorization['attempt']}.json"
+        )
+        supervisor.atomic_json(
+            history,
+            {
+                "request": {
+                    **authorization,
+                    "action": "reference_resolution_budget_v4",
+                    "status": "acknowledged",
+                },
+                "final_ack": {**authorization, "status": "completed"},
+            },
+        )
+        self.authorize("multifidelity_preregistration")
+
+        passed, error = supervisor.verify_reference_resolution_budget_v4_gate(
+            payload, {"passed": True, "sha256": "B" * 64}
+        )
+        self.assertTrue(passed, error)
+
+        archived = supervisor.load_json(history)
+        archived["final_ack"]["status"] = "failed"
+        supervisor.atomic_json(history, archived)
+        passed, error = supervisor.verify_reference_resolution_budget_v4_gate(
+            payload, {"passed": True, "sha256": "B" * 64}
+        )
+        self.assertFalse(passed)
+        self.assertIn("not durably completed", error)
+
     def test_auditor_envelope_rejects_replay_worker_tamper_and_runtime_tamper(self):
         worker = {
             "schema_version": 1,

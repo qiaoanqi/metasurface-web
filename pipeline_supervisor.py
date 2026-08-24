@@ -2378,12 +2378,10 @@ def verify_reference_resolution_budget_v4_gate(
             return False, "reference v4 frozen producer identity is invalid"
         authorization = payload.get("authorization_request")
         producer_request = payload.get("producer_request")
-        active = load_json(DISPATCH_REQUEST, {}) or {}
-        if authorization != {
-            "request_id": active.get("request_id"),
-            "attempt": int(active.get("attempt", 0)),
-        }:
-            return False, "reference v4 recovery authorization is not active"
+        if not completed_request_authorized(
+            authorization, "reference_resolution_budget_v4"
+        ):
+            return False, "reference v4 recovery authorization is not durably completed"
         if producer_request != {
             "request_id": recovery_payload.get("source_request_id"),
             "attempt": int(recovery_payload.get("source_attempt", 0)),
