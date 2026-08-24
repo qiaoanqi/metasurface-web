@@ -58,7 +58,14 @@ class ActivateReplacementPoolTests(unittest.TestCase):
 
     def test_only_protocol_gates_survive_pool_activation(self):
         keep = protocol_bound_gates(self.policy)
-        self.assertEqual(keep, {"d65_colorimetry", "reference_resolution"})
+        self.assertEqual(
+            keep,
+            {
+                "d65_colorimetry",
+                "reference_resolution",
+                "reference_resolution_budget_v4",
+            },
+        )
         # build_gate_state needs real files for hashes; its filtering rule is
         # asserted directly so pool-bound gates cannot leak across activation.
         old = {

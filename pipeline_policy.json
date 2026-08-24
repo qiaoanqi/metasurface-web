@@ -379,7 +379,8 @@
         "expected_tasks": 48,
         "recovery_protocol": "protocols/paper2_reference_budget_v4_audit_recovery_v1.json",
         "audit_only_recovery": true,
-        "worker_rerun_allowed": false
+        "worker_rerun_allowed": false,
+        "binding": "solver_protocol"
       }
     ],
     "required_before_training": [

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "3C7EB43F59648F610BBB844A3F8848936581B4822E2488EEDF3766FAAA1280F9",
-  "supervisor_sha256": "5AE1AEE8E44DC1A3F330C4F4292E357F247BB7801820E5CAE2D3335EBEFF54AA",
-  "protected_assets_revision": 39,
-  "note": "formal v4 audit-only recovery and versioned UI hash registration"
+  "policy_sha256": "78E57E4D6E01C81657C943F280E91C6719C3F175EDBB5605707D7841701802C9",
+  "supervisor_sha256": "CF8C7DD0033A1FF7F2D0C068039D8F4AE6F6E82C0FF1A64D591884CDD3DBF0EF",
+  "protected_assets_revision": 40,
+  "note": "formal v4 recovery gate reconciliation contract"
 }

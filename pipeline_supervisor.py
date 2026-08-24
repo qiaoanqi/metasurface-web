@@ -2528,7 +2528,7 @@ def verify_gate_evidence(
                         if not evidence_pool_sha and isinstance(payload.get("pool"), dict):
                             evidence_pool_sha = payload["pool"].get("sha256")
                         binding = gate_specs.get(gate, {}).get("binding", "pool")
-                        if not evidence_pool_sha:
+                        if not evidence_pool_sha and binding == "pool":
                             semantic_valid = False
                             semantic_error = "evidence is not bound to the audited pool SHA256"
                         elif (
@@ -2546,7 +2546,8 @@ def verify_gate_evidence(
                             semantic_valid
                             and action_spec.get("auditor")
                             and not completed_request_authorized(
-                                payload.get("request"), action_spec.get("action", "")
+                                payload.get("request") or payload.get("authorization_request"),
+                                action_spec.get("action", ""),
                             )
                         ):
                             semantic_valid = False
