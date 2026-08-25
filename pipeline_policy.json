@@ -225,7 +225,15 @@
         "finalizer": "scripts/finalize_audited_gate.py",
         "finalization_mode": "generic",
         "binding": "pool",
-        "diagnostic_only": false
+        "diagnostic_only": false,
+        "recovery_protocol": "protocols/paper2_multifidelity_preregistration_audit_recovery_v1.json",
+        "recovery_auditor": "scripts/audit_multifidelity_preregistration_recovery_v1.py",
+        "recovery_audit_evidence": ".state/multifidelity_preregistration_v1_audit_recovery_v1.json",
+        "audit_only_recovery": true,
+        "worker_rerun_allowed": false,
+        "gate_registration_requires_completed_ack": true,
+        "recovery_protocol_sha256": "20319592943CA77C54013258D31268E1E421FE64C075099DDDC5A26C3DCE4DA0",
+        "recovery_auditor_sha256": "746ED943876B939984D81B57359DB674D79E53197069467787F19C9CEC2A7D78"
       },
       {
         "action": "reference_resolution",

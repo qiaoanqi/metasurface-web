@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "policy_sha256": "78E57E4D6E01C81657C943F280E91C6719C3F175EDBB5605707D7841701802C9",
+  "policy_sha256": "41EF752D5AA525F2BEDCD5281B6DF6B5163A7126DCFC6BB9A1BD76327C9CF18E",
   "supervisor_sha256": "3CE2321C1DE518D6F834547DDEF7ADDD55133C1CCD47D14F0C24E8ECA3646F78",
-  "protected_assets_revision": 41,
-  "note": "formal v4 archived recovery authorization persistence"
+  "protected_assets_revision": 43,
+  "note": "multifidelity recovery protocol and auditor hashes bound"
 }

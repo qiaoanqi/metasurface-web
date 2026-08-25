@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "evidence_version": "paper2-multifidelity-preregistration-audit-recovery-v1",
+  "action": "multifidelity_preregistration",
+  "recovery_revision": 1,
+  "source_audit": {
+    "path": ".state/multifidelity_preregistration_v1_audit.json",
+    "sha256": "1894CEAEDF3763DBEED9A26A9AB30800FF426E083993FC00D8F29F747A7087F1",
+    "evidence_version": "paper2-multifidelity-preregistration-audit-v1",
+    "required_classification": "multifidelity_preregistration_passed"
+  },
+  "scientific_bindings": {
+    "pool_sha256": "9B495E92B7C27FCE712E8943BAFF757A9EE9B2C9B692145F2887611DDF62EE72",
+    "plan": {
+      "path": "protocols/paper2_multifidelity_preregistration_v1.json",
+      "sha256": "015A6DE23157BAC831661379A9A4247414AC889855F94FF4FBC0B07EEF451157"
+    },
+    "cost_basis": {
+      "path": "protocols/paper2_multifidelity_cost_basis_v1.json",
+      "sha256": "3EDA8AB71EAE23AE29B9B4FFE0CDFF916E1DA1A900F7226E67847887CF762BAB"
+    },
+    "holdout_manifest": {
+      "path": ".state/reference_resolution_holdout_v1_plan.json",
+      "sha256": "B3812A34116AD62CD69BFD8AB806949F3AEEF7549702905C9BEAF38495911CFE"
+    }
+  },
+  "ui_authorization": {
+    "path": "protocols/ui_mainline_authorization_v1.json",
+    "sha256": "947C62483202163C194AE29E592B19521782A068EDCE309EBE67D13B24E7B264",
+    "required": true,
+    "scientific_runtime_imported": false
+  },
+  "control_plane": {
+    "policy_and_integrity_bound_at_runtime": true,
+    "minimum_integrity_revision": 41,
+    "gate_registration_allowed": false,
+    "ack_write_allowed": false,
+    "worker_rerun_allowed": false,
+    "training_allowed": false,
+    "holdout_allowed": false
+  },
+  "request_contract": {
+    "dispatch_status": "failed",
+    "attempt": 3,
+    "requires_matching_completed_ack": false,
+    "worker_evidence_must_be_absent": true
+  }
+}
