@@ -85,8 +85,14 @@ def spectrum_to_xyz(wavelengths_nm, reflectance):
 
 
 def xyz_to_srgb(xyz):
-    """CIE XYZ -> sRGB (gamma-corrected, clipped [0,1])."""
-    linear = SRGB_M @ xyz
+    """CIE XYZ -> sRGB for one ``(3,)`` or batch ``(..., 3)`` inputs."""
+    xyz = np.asarray(xyz, dtype=float)
+    if xyz.ndim == 0 or xyz.shape[-1] != 3:
+        raise ValueError(f"xyz_to_srgb expects shape (3,) or (..., 3), got {xyz.shape}")
+    # Keep the historical 1-D matrix product exactly unchanged; use the
+    # equivalent row-wise product for batches so arbitrary leading dimensions
+    # broadcast without transposing the caller's data.
+    linear = SRGB_M @ xyz if xyz.ndim == 1 else xyz @ SRGB_M.T
     linear = np.clip(linear, 0, 1)
     return np.where(linear <= 0.0031308, 12.92 * linear,
                     1.055 * linear ** (1 / 2.4) - 0.055)

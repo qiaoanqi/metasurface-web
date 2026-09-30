@@ -1,19 +1,81 @@
 # ===================== Streamlit 版本：超表面结构色设计系统 =====================
 from __future__ import annotations
 
-import io, os
+import io, os, json, hashlib, glob, importlib.util
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
+import html
 # NumPy 1.x/2.x compatibility
 if not hasattr(np, 'trapz'):
     np.trapz = np.trapezoid
 if not hasattr(np, 'trapezoid'):
     np.trapezoid = np.trapz
-from PIL import Image
+from PIL import Image, ImageOps
 import streamlit as st
 import logging
 import ml_module
+import ui_model_difference_contracts as model_difference_contracts
+from ui_fdtd_asset import resolve_fdtd_evidence
+from ui_cie_contracts import (
+    GamutSamples, build_cie_plot_data, evaluate_gamut, forward_provenance_caption,
+)
+from ui_engine_session import (
+    LibraryIdentity, bind_engine_library, configure_engine_far_field,
+    engine_library_matches, get_session_engine, make_local_bound_engine,
+)
+from ui_analysis_snapshots import (
+    AnalysisContext, AnalysisSnapshot, angle_payload_arrays,
+    build_angle_payload, canonical_sha256, analysis_engine_transaction,
+    EngineStateMutationError, EngineStateRestoreError,
+    SourceArtifactIdentity, load_analysis_snapshot, source_artifact_identity,
+    store_analysis_snapshot,
+)
+from ui_model_resources import (
+    BoundModelResource, ModelResourceDriftError, ModelResourceUnavailable,
+    bound_model_context, exception_has_model_resource_drift,
+    get_bound_resource, register_first_resource, resource_lock,
+    validate_bound_resource,
+)
+from ui_pattern_contracts import (
+    PATTERN_SESSION_KEY, PatternSnapshot, build_pattern_exports,
+    build_pattern_payload, load_pattern_snapshot, make_pattern_contract,
+    store_pattern_snapshot,
+)
+from ui_session_migration import (
+    BoolControlSpec, EnumControlSpec, NumericControlSpec,
+    ML_ACCEL_PREFERENCE_INITIALIZED_KEY, initialize_bool_preference_marker,
+    migrate_session_state, set_bool_value, set_numeric_value,
+    sync_bool_from_widget, sync_enum_from_widget, sync_numeric_from_widget,
+    sync_bool_preference_from_widget,
+)
 import rl_design  # RL agent for inverse design
+from ui_forward_routes import (
+    FrozenSpectrumRoute, evaluate_frozen_series, resolve_perturbation,
+    route_results_consistent, make_result_provenance, build_forward_exports,
+    ForwardResult, normalize_forward_result, sync_forward_status,
+    inverse_candidates_available, mapping_domain_contract,
+    build_mapping_cells, nearest_available_mapping_index, forward_export_basename,
+    MappingCellResult,
+)
+from ui_inverse_contracts import (
+    InverseContext, InverseRun, build_inverse_candidate,
+    candidate_parameter_updates, fp_search_cache_key,
+    invalidate_inverse_run, inverse_context_fingerprint,
+    inverse_method_registry, inverse_run_matches, serialize_inverse_run,
+)
+from ui_benchmark_contracts import (
+    BenchmarkRow,
+    benchmark_row_from_rgb,
+    validate_benchmark_cache,
+)
+
+# LLM 功能暂时隐藏；保留后端适配器，待供应商和审计边界确定后再启用。
+ENABLE_LLM_FEATURES = False
+# 三方案搜索本身是本地确定性计算，不依赖 LLM，继续保留。
+ENABLE_MULTI_SCHEME_SEARCH = True
+_FP_INVERSE_ALGORITHM_VERSION = "fp-dbr-grid-v1"
+_DUAL_MODEL_RELATIVE_PATH = "models/dual_mlp_v3_multi.onnx"
+_DUAL_MODEL_VERSION = "dual_mlp_v3_multi.onnx"
 from color_utils import (
     CIE_WAVELENGTHS as _CIE_WAVELENGTHS, CIE_X as _CIE_X, CIE_Y as _CIE_Y, CIE_Z as _CIE_Z,
     WL as _WL, CIE_NORM as _CIE_NORM, D65, SRGB_M as _SRGB_M_NP,
@@ -21,6 +83,11 @@ from color_utils import (
     srgb_to_linear, rgb_to_xyz, xyz_to_xy, rgb_to_xy,
     xyz_to_lab, rgb_to_lab, rgb_to_hex, rgb_255,
     delta_e76, delta_e2000,
+)
+from competition.reference_library import (
+    ReferenceLibraryError,
+    load_reference_library,
+    reference_condition_summary,
 )
 
 # LLM module (DeepSeek API)
@@ -55,16 +122,69 @@ def _get_plt():
     plt.rcParams['axes.unicode_minus'] = False
     return plt
 # matplotlib imported lazily to avoid cloud startup issues
-from dataclasses import dataclass
+from contextlib import nullcontext
 from typing import Tuple, List
 
 st.set_page_config(page_title="AI超表面结构色设计", layout="wide")
 
 
-# FP cavity apply-params callback (runs before rerun)
-def _apply_fp_params(wl, t):
-    st.session_state.fp_target_wl = wl
-    st.session_state.fp_t_val = t
+_PATTERN_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
+_PATTERN_SOURCE_MAX_PIXELS = 12_000_000
+_PATTERN_SOURCE_MAX_SIDE = 5_000
+_PATTERN_ALLOWED_FORMATS = {"PNG", "JPEG", "WEBP"}
+
+
+def _pattern_upload_metadata_error(file_size, image_format, width, height):
+    """Validate pattern-upload metadata before decoding or rebuilding the library."""
+    if int(file_size) > _PATTERN_UPLOAD_MAX_BYTES:
+        return "文件超过 8 MB 上限，未读取图像内容。"
+    fmt = str(image_format or "").upper()
+    if fmt not in _PATTERN_ALLOWED_FORMATS:
+        return "仅接受 PNG、JPEG 或 WebP 图像。"
+    width, height = int(width), int(height)
+    if width <= 0 or height <= 0:
+        return "图像尺寸无效。"
+    if width > _PATTERN_SOURCE_MAX_SIDE or height > _PATTERN_SOURCE_MAX_SIDE:
+        return "图像单边超过 5000 像素，未进入解码或映射。"
+    if width * height > _PATTERN_SOURCE_MAX_PIXELS:
+        return "图像超过 1200 万源像素，未进入解码或映射。"
+    return ""
+
+
+def _open_pattern_upload(uploaded_file):
+    """Open a small validated local image and return (image, metadata, error)."""
+    try:
+        file_size = getattr(uploaded_file, "size", None)
+        if file_size is None:
+            file_size = uploaded_file.getbuffer().nbytes
+        if int(file_size) > _PATTERN_UPLOAD_MAX_BYTES:
+            return None, {}, _pattern_upload_metadata_error(file_size, "PNG", 1, 1)
+
+        uploaded_file.seek(0)
+        upload_bytes = uploaded_file.read()
+        if len(upload_bytes) != int(file_size):
+            return None, {}, "图像字节长度与上传元数据不一致。"
+        upload_sha256 = hashlib.sha256(upload_bytes).hexdigest()
+        probe = Image.open(io.BytesIO(upload_bytes))
+        width, height = probe.size
+        image_format = str(probe.format or "").upper()
+        error = _pattern_upload_metadata_error(
+            file_size, image_format, width, height)
+        if error:
+            return None, {
+                "file_size": int(file_size), "format": image_format,
+                "width": int(width), "height": int(height),
+            }, error
+        probe.verify()
+
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(upload_bytes))).convert("RGB")
+        return image, {
+            "file_size": int(file_size), "format": image_format,
+            "width": int(image.width), "height": int(image.height),
+            "upload_sha256": upload_sha256,
+        }, ""
+    except Exception as exc:
+        return None, {}, f"图像无法通过完整性校验：{type(exc).__name__}。"
 
 # ===================== Constants & Helpers =====================
 # D65 imported from color_utils
@@ -78,16 +198,84 @@ from engine import (
     _single_pillar_complex, MetaSurfaceColorEngine,
 )
 
+_PILLAR_MATERIAL_OPTIONS = tuple(MaterialLibrary.pillar_materials())
+_SUBSTRATE_OPTIONS = tuple(MaterialLibrary.substrate_materials())
+_POLARIZATION_OPTIONS = ('TE (s-pol)', 'TM (p-pol)')
+_FP_MIRROR_OPTIONS = ('介质 DBR (TiO2/SiO2)', '金属 Ag (减色)')
+
+_NUMERIC_CONTROLS = {
+    "angle": NumericControlSpec(
+        "a_val", ("angle_slider", "angle_input"), 0.0, 80.0, 0.0),
+    "theta_obs": NumericControlSpec(
+        "theta_obs", ("theta_obs_slider", "theta_obs_input"), 0.0, 80.0, 0.0),
+    "na": NumericControlSpec(
+        "na_val", ("na_slider", "na_input"), 0.05, 0.95, 0.1),
+    "single_d": NumericControlSpec(
+        "d_val", ("single_d_slider", "single_d_input"), 50.0, 350.0, 180.0),
+    "single_h": NumericControlSpec(
+        "h_val", ("single_h_slider", "single_h_input"), 80.0, 600.0, 300.0),
+    "period": NumericControlSpec(
+        "p_val", (
+            "single_p_slider", "single_p_input",
+            "dual_p_slider", "dual_p_input",
+        ), 200.0, 600.0, 400.0),
+    "dual_d1": NumericControlSpec(
+        "d1_val", ("dual_d1_slider", "dual_d1_input"), 50.0, 350.0, 120.0),
+    "dual_h1": NumericControlSpec(
+        "h1_val", ("dual_h1_slider", "dual_h1_input"), 80.0, 600.0, 250.0),
+    "dual_d2": NumericControlSpec(
+        "d2_val", ("dual_d2_slider", "dual_d2_input"), 50.0, 350.0, 200.0),
+    "dual_h2": NumericControlSpec(
+        "h2_val", ("dual_h2_slider", "dual_h2_input"), 80.0, 600.0, 350.0),
+    "fp_t": NumericControlSpec(
+        "fp_t_val", ("fp_t_slider", "fp_t_input"), 50.0, 600.0, 200.0),
+    "fp_center": NumericControlSpec(
+        "fp_target_wl", ("fp_center_slider", "fp_center_input"),
+        380.0, 780.0, 450.0),
+}
+_ENUM_CONTROLS = {
+    "structure": EnumControlSpec(
+        "structure_type", "structure_type_control", ('single', 'dual', 'fp'),
+        'single', ('单柱', '双柱', 'FP 腔（Fabry-Pérot）')),
+    "material": EnumControlSpec(
+        "_pillar_material_pref", "pillar_material_control",
+        _PILLAR_MATERIAL_OPTIONS, _PILLAR_MATERIAL_OPTIONS[1]),
+    "substrate": EnumControlSpec(
+        "_substrate_pref", "substrate_control",
+        _SUBSTRATE_OPTIONS, _SUBSTRATE_OPTIONS[0]),
+    "polarization": EnumControlSpec(
+        "polarization", "polarization_control",
+        _POLARIZATION_OPTIONS, _POLARIZATION_OPTIONS[0]),
+    "fp_mirror": EnumControlSpec(
+        "fp_mirror_type", "fp_mirror_type_control",
+        _FP_MIRROR_OPTIONS, _FP_MIRROR_OPTIONS[0]),
+}
+_BOOL_CONTROLS = {
+    "far_field": BoolControlSpec("far_field", "far_field_control", False),
+    "ml_accel": BoolControlSpec("ml_accel", "ml_accel_control", False),
+}
+
+initialize_bool_preference_marker(
+    st.session_state, _BOOL_CONTROLS["ml_accel"],
+    ML_ACCEL_PREFERENCE_INITIALIZED_KEY,
+)
+migrate_session_state(
+    st.session_state, tuple(_NUMERIC_CONTROLS.values()),
+    tuple(_ENUM_CONTROLS.values()), tuple(_BOOL_CONTROLS.values()),
+)
+
 # ===================== Streamlit UI =====================
-@st.cache_resource
-def get_engine(_cache_key="v17_angular"):
-    return MetaSurfaceColorEngine()
+def get_engine():
+    """Return the mutable engine owned by this Streamlit session only."""
+    initialize_grid = st.session_state.get("structure_type") != "fp"
+    return get_session_engine(
+        st.session_state,
+        lambda: MetaSurfaceColorEngine(
+            initialize_grid_library=initialize_grid),
+    )
 
 try:
     engine = get_engine()
-    engine._enable_far_field = st.session_state.get('far_field', False)
-    engine._na = st.session_state.get('na_val', 0.1)
-    engine._theta_obs_deg = st.session_state.get('theta_obs', 0.0)
 except Exception as e:
     st.error(f"Engine init failed: {e}")
     import traceback; st.code(traceback.format_exc())
@@ -99,179 +287,1844 @@ _ml_is_v8 = False
 _dual_ml_ready = False
 _ml_tried = False
 _dual_ml_tried = False
+_ml_error = ""
+_dual_ml_error = ""
+_ml_state = {"state": "not_selected", "file_present": False, "loaded": False, "call_error": ""}
+_dual_ml_state = {"state": "not_selected", "file_present": False, "loaded": False, "call_error": ""}
 _rcwa_ml_ready = False
 _rcwa_ml_tried = False
+_rcwa_ml_error = ""
+_primary_runtime_binding = None
+_dual_runtime_binding = None
+_rcwa_runtime_binding = None
+
+
+_ANALYSIS_SOURCE_DEPENDENCIES = {
+    "dual_ml": (
+        "ui_forward_routes.py", "ml_module.py", "engine.py", "color_utils.py",
+    ),
+    "dual_physical": (
+        "ui_forward_routes.py", "torch_model.py", "engine.py", "ccm.py",
+        "color_utils.py",
+    ),
+    "fp_tmm": (
+        "ui_forward_routes.py", "fp_cavity.py", "engine.py", "color_utils.py",
+    ),
+    "single_generic": (
+        "ml_module.py", "ui_model_difference_contracts.py",
+        "ui_forward_routes.py", "color_utils.py",
+    ),
+    "single_rcwa": (
+        "ml_module.py", "ui_forward_routes.py", "color_utils.py",
+    ),
+    "single_physical": (
+        "ui_forward_routes.py", "torch_model.py", "engine.py", "ccm.py",
+        "color_utils.py",
+    ),
+}
+
+
+def _local_model_exists(relative_path):
+    return os.path.isfile(os.path.join(os.path.dirname(__file__), relative_path))
+
+
+def _ui_code_artifact_identity(relative_paths):
+    """Read current small route source bytes; never load a model/checkpoint."""
+    dependencies = (
+        "app.py", "ui_analysis_snapshots.py", "ui_model_resources.py",
+        *tuple(relative_paths),
+    )
+    return source_artifact_identity(
+        os.path.dirname(__file__), tuple(dict.fromkeys(dependencies)))
+
+
+def _ui_code_artifact_version(relative_paths):
+    return _ui_code_artifact_identity(relative_paths).version
+
+
+def _combined_analysis_artifact(*identities, **fields):
+    versions = [identity.version for identity in identities]
+    available = bool(identities) and all(identity.available for identity in identities)
+    prefix = "sha256:" if available else "unavailable:"
+    return prefix + canonical_sha256({
+        "artifact_identities": versions,
+        **fields,
+    })
+
+
+def _artifact_identity_available(version):
+    return not str(version).startswith("unavailable:")
+
+
+def _project_relative_model_path(path):
+    try:
+        root = os.path.realpath(os.path.dirname(__file__))
+        resolved = os.path.realpath(str(path))
+        relative = os.path.relpath(resolved, root).replace("\\", "/")
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    if not resolved or relative == ".." or relative.startswith("../"):
+        return ""
+    return relative
+
+
+def _session_model_paths(sessions):
+    paths = []
+    for session in tuple(sessions):
+        relative = _project_relative_model_path(
+            getattr(session, "_model_path", ""))
+        if not relative:
+            return ()
+        paths.append(relative)
+    return tuple(sorted(dict.fromkeys(paths)))
+
+
+def _primary_model_disk_identity():
+    contract = model_difference_contracts.GENERIC_ONNX_ROUTE
+    paths = (contract.model_relative_path, contract.external_data_relative_path)
+    return source_artifact_identity(
+        os.path.dirname(__file__), paths, max_bytes=64 * 1024 * 1024,
+        expected_sha256={
+            contract.model_relative_path: contract.model_sha256,
+            contract.external_data_relative_path: contract.external_data_sha256,
+        },
+    )
+
+
+def _primary_resource_context_key():
+    contract = model_difference_contracts.GENERIC_ONNX_ROUTE
+    return "generic:" + canonical_sha256({
+        "route": contract.route_id,
+        "graph": contract.model_relative_path,
+        "external_data": contract.external_data_relative_path,
+    })
+
+
+def _dual_resource_context_key():
+    return "dual:" + canonical_sha256({
+        "route": "dual_mlp", "model": _DUAL_MODEL_RELATIVE_PATH,
+    })
+
+
+def _dual_model_disk_identity():
+    return source_artifact_identity(
+        os.path.dirname(__file__), (_DUAL_MODEL_RELATIVE_PATH,),
+        max_bytes=64 * 1024 * 1024,
+    )
+
+
+def _registered_rcwa_model_paths(material, substrate):
+    """Resolve only the exact route family: wavelength model, else exact ensemble."""
+    material = str(material)
+    substrate = str(substrate)
+    wavelength_name = getattr(ml_module, "_RCWA_WL_MODELS", {}).get(material)
+    if wavelength_name:
+        return (f"models/{str(wavelength_name).replace(chr(92), '/')}",)
+    registry = getattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {})
+    patterns = registry.get((material, substrate))
+    if patterns is None:
+        patterns = getattr(ml_module, "_RCWA_MODELS", {}).get(material, ())
+    root = os.path.dirname(__file__)
+    paths = []
+    for pattern in tuple(patterns or ()):
+        pattern = str(pattern).replace("\\", "/")
+        relative_pattern = f"models/{pattern}"
+        if any(token in pattern for token in ("*", "?", "[")):
+            matches = sorted(glob.glob(os.path.join(root, *relative_pattern.split("/"))))
+            paths.extend(
+                relative for match in matches
+                if (relative := _project_relative_model_path(match))
+            )
+        elif os.path.isfile(os.path.join(root, *relative_pattern.split("/"))):
+            paths.append(relative_pattern)
+    return tuple(sorted(dict.fromkeys(paths)))
+
+
+def _rcwa_resource_context(material, substrate):
+    material = str(material)
+    substrate = str(substrate)
+    paths = _registered_rcwa_model_paths(material, substrate)
+    if getattr(ml_module, "_RCWA_WL_MODELS", {}).get(material):
+        selection_kind = "wavelength"
+    elif (material, substrate) in getattr(
+            ml_module, "_RCWA_SUBSTRATE_MODELS", {}):
+        selection_kind = "exact_pair"
+    else:
+        selection_kind = "material_fallback"
+    context_key = "rcwa:" + canonical_sha256({
+        "material": material, "substrate": substrate,
+        "selection_kind": selection_kind, "registered_paths": paths,
+    })
+    return context_key, selection_kind, paths
+
+
+def _rcwa_model_disk_identity(material, substrate):
+    paths = _registered_rcwa_model_paths(material, substrate)
+    return source_artifact_identity(
+        os.path.dirname(__file__), paths, max_bytes=64 * 1024 * 1024)
+
+
+def _current_rcwa_sessions(material, substrate):
+    wavelength = getattr(ml_module, "_RCWA_WL_SESSIONS", {}).get(str(material))
+    if wavelength is not None:
+        return (wavelength,)
+    return tuple(getattr(ml_module, "_get_rcwa_sessions", lambda *_args: ())(
+        str(material), str(substrate)))
+
+
+def _capture_runtime_binding(
+        family, context_key, requested_identity, registered_paths, sessions,
+        current_identity):
+    registered_paths = tuple(sorted(dict.fromkeys(registered_paths)))
+    if not requested_identity.available:
+        return None, requested_identity.reason or "requested model identity unavailable"
+    if not current_identity.available:
+        return None, current_identity.reason or "loaded model identity unavailable"
+    session_paths = tuple(
+        _project_relative_model_path(getattr(session, "_model_path", ""))
+        for session in tuple(sessions))
+    expected_session_paths = (
+        (registered_paths[0],) if family == "primary" else registered_paths)
+    if (
+        not session_paths or any(not path for path in session_paths)
+        or tuple(sorted(session_paths)) != tuple(sorted(expected_session_paths))
+    ):
+        return None, "loaded session path does not match the registered route"
+    if current_identity.version != requested_identity.version:
+        return None, "model bytes changed while the session was loading"
+    try:
+        candidate = BoundModelResource.create(
+            str(family), str(context_key), current_identity.version, registered_paths,
+            session_paths, tuple(sessions))
+    except ValueError as exc:
+        return None, str(exc)
+    resource = register_first_resource(candidate)
+    if (
+        resource.loaded_identity != candidate.loaded_identity
+        or resource.context_key != candidate.context_key
+        or resource.session_ids != candidate.session_ids
+        or resource.session_paths != candidate.session_paths
+    ):
+        return resource, "another runtime session is already bound for this route"
+    return resource, ""
+
+
+def _runtime_binding_issue(
+        binding, current_identity, sessions, expected_session_paths,
+        expected_context_key=None):
+    issue = validate_bound_resource(
+        binding, current_available=current_identity.available,
+        current_identity=current_identity.version,
+        current_reason=current_identity.reason,
+        expected_context_key=expected_context_key)
+    if issue:
+        return issue
+    expected_paths = tuple(sorted(dict.fromkeys(expected_session_paths)))
+    if binding.registered_paths != expected_paths:
+        return "bound resource paths differ from the registered model route"
+    active = tuple(sessions)
+    if (
+        len(active) != len(binding.session_refs)
+        or any(actual is not bound for actual, bound in zip(
+            active, binding.session_refs))
+    ):
+        return "active runtime sessions differ from the bound resource"
+    return ""
+
+
+def _dual_model_artifact_identity():
+    """Return current bytes only when they match the strong dual binding."""
+    current = _dual_model_disk_identity()
+    issue = validate_bound_resource(
+        _dual_runtime_binding, current_available=current.available,
+        current_identity=current.version, current_reason=current.reason,
+        expected_context_key=_dual_resource_context_key())
+    if issue:
+        return SourceArtifactIdentity(
+            False, "unavailable:" + canonical_sha256({
+                "route": "dual", "reason": issue,
+            }), issue, current.dependencies,
+        )
+    return SourceArtifactIdentity(
+        True, _dual_runtime_binding.loaded_identity, "", current.dependencies)
+
+
+def _rcwa_model_artifact_identity(material, substrate):
+    """Return current exact-family bytes only when they match the strong binding."""
+    current = _rcwa_model_disk_identity(material, substrate)
+    issue = validate_bound_resource(
+        _rcwa_runtime_binding, current_available=current.available,
+        current_identity=current.version, current_reason=current.reason,
+        expected_context_key=_rcwa_resource_context(material, substrate)[0])
+    if issue:
+        return SourceArtifactIdentity(
+            False,
+            "unavailable:" + canonical_sha256({
+                "route": "rcwa_surrogate", "reason": issue,
+            }),
+            issue, current.dependencies,
+        )
+    return SourceArtifactIdentity(
+        True, _rcwa_runtime_binding.loaded_identity, "", current.dependencies)
+
+
+def _primary_model_artifact_identity():
+    current = _primary_model_disk_identity()
+    issue = validate_bound_resource(
+        _primary_runtime_binding, current_available=current.available,
+        current_identity=current.version, current_reason=current.reason,
+        expected_context_key=_primary_resource_context_key())
+    if issue:
+        return SourceArtifactIdentity(
+            False, "unavailable:" + canonical_sha256({
+                "route": "generic", "reason": issue,
+            }), issue, current.dependencies)
+    return SourceArtifactIdentity(
+        True, _primary_runtime_binding.loaded_identity, "", current.dependencies)
+
+
+def _analysis_artifact_version(
+        route_id, model_version, *, structure_type=None, material=None, substrate=None):
+    """Return a route- and structure-specific immutable analysis identity."""
+    route = str(route_id)
+    structure = str(structure_type if structure_type is not None else globals().get("_structure_type", "single"))
+    if structure == "dual" and route in {"ml_surrogate", "dual ML surrogate"}:
+        dual_identity = _dual_model_artifact_identity()
+        return _combined_analysis_artifact(
+            _ui_code_artifact_identity(_ANALYSIS_SOURCE_DEPENDENCIES["dual_ml"]),
+            dual_identity,
+            structure_type="dual", route_id=route,
+            model_version=str(model_version), dual_model=dual_identity.version,
+        )
+    if structure == "dual" and route in {
+        "lorentz_fano_fallback", "dual physical fallback",
+    }:
+        return _ui_code_artifact_version(
+            _ANALYSIS_SOURCE_DEPENDENCIES["dual_physical"])
+    if structure == "dual" and route == "far_field_postprocessing":
+        return _ui_code_artifact_version(
+            _ANALYSIS_SOURCE_DEPENDENCIES["dual_physical"])
+    if structure == "fp" and route in {"fp_tmm", "FP cavity TMM"}:
+        return _ui_code_artifact_version(_ANALYSIS_SOURCE_DEPENDENCIES["fp_tmm"])
+    if structure == "single" and route in {
+        "ml_surrogate", "generic-fano-resmlp-v8-sub-onnx-only",
+        "ML surrogate (generic angle-conditioned)",
+    }:
+        contract = model_difference_contracts.GENERIC_ONNX_ROUTE
+        code_identity = _ui_code_artifact_identity(
+            _ANALYSIS_SOURCE_DEPENDENCIES["single_generic"])
+        bundle_identity = _generic_bundle_artifact_identity(contract)
+        runtime_identity = _primary_model_artifact_identity()
+        return _combined_analysis_artifact(
+            code_identity, bundle_identity, runtime_identity,
+            model=contract.model_sha256,
+            external_data=contract.external_data_sha256,
+            source_pt=contract.source_pt_sha256,
+            conversion_result=contract.conversion_result_sha256,
+            loaded_model_identity=runtime_identity.version,
+        )
+    if structure == "single" and route == "rcwa_surrogate":
+        code_identity = _ui_code_artifact_identity(
+            _ANALYSIS_SOURCE_DEPENDENCIES["single_rcwa"])
+        model_identity = _rcwa_model_artifact_identity(material, substrate)
+        return _combined_analysis_artifact(
+            code_identity, model_identity,
+            registry=getattr(ml_module, "_RCWA_MODELS", {}),
+            substrate_registry=getattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {}),
+            wavelength_registry=getattr(ml_module, "_RCWA_WL_MODELS", {}),
+            loaded_model_version=str(model_version),
+            loaded_model_identity=model_identity.version,
+        )
+    if structure == "single" and route in {"physical/far-field fallback", "far_field_postprocessing"}:
+        return _ui_code_artifact_version(
+            _ANALYSIS_SOURCE_DEPENDENCIES["single_physical"])
+    if structure == "single" and route == "lorentz_fano_fallback":
+        return _ui_code_artifact_version(
+            _ANALYSIS_SOURCE_DEPENDENCIES["single_physical"])
+    return "unavailable:" + canonical_sha256({
+        "structure_type": structure, "route_id": route,
+        "model_version": str(model_version), "reason": "unregistered_analysis_route",
+    })
+
+
+def _generic_bundle_artifact_identity(contract):
+    """Hash current generic bundle bytes and reject model files not matching evidence."""
+    paths = (
+        contract.model_relative_path,
+        contract.external_data_relative_path,
+        contract.source_pt_relative_path,
+        contract.conversion_protocol_relative_path,
+        contract.conversion_result_relative_path,
+    )
+    expected = {
+        contract.model_relative_path: contract.model_sha256,
+        contract.external_data_relative_path: contract.external_data_sha256,
+        contract.source_pt_relative_path: contract.source_pt_sha256,
+    }
+    identity = source_artifact_identity(
+        os.path.dirname(__file__), paths, max_bytes=64 * 1024 * 1024,
+        expected_sha256=expected,
+    )
+    if not identity.available:
+        return identity
+    evidence, reason = model_difference_contracts.load_conversion_evidence(
+        os.path.dirname(__file__), contract)
+    if evidence is not None:
+        return identity
+    return SourceArtifactIdentity(
+        False,
+        "unavailable:" + canonical_sha256({
+            "bundle_identity": identity.version, "evidence_error": str(reason),
+        }),
+        str(reason), identity.dependencies,
+    )
+
+
+def _difference_analysis_artifact_identity(contract):
+    code_identity = _ui_code_artifact_identity((
+        "ui_forward_routes.py", "ui_model_difference_contracts.py",
+        "torch_model.py", "ccm.py", "color_utils.py",
+    ))
+    bundle_identity = _generic_bundle_artifact_identity(contract)
+    version = _combined_analysis_artifact(
+        code_identity, bundle_identity,
+        graph=contract.model_sha256,
+        external_data=contract.external_data_sha256,
+        source_pt=contract.source_pt_sha256,
+        conversion_result=contract.conversion_result_sha256,
+    )
+    return version, code_identity, bundle_identity
+
+
+@st.cache_resource(show_spinner=False)
+def _load_model_difference_evaluator_cached(artifact_version):
+    """Freeze the exact local generic ONNX route used by model comparison."""
+    del artifact_version  # Streamlit cache key binds the frozen evaluator to source identity.
+    return model_difference_contracts.freeze_generic_onnx_evaluator(
+        os.path.dirname(__file__))
+
+
+def _model_state(relative_path, *, loaded=False, call_error="", selected=False):
+    """Return explicit local-file/load/call state for provenance and UI."""
+    present = _local_model_exists(relative_path) if relative_path else False
+    if call_error:
+        state = "call_failed"
+    elif loaded:
+        state = "loaded"
+    elif present:
+        state = "file_present_load_failed"
+    elif selected:
+        state = "file_missing"
+    else:
+        state = "not_selected"
+    return {
+        "state": state,
+        "file_present": bool(present),
+        "loaded": bool(loaded),
+        "call_error": str(call_error or ""),
+    }
+
+
+def _model_provenance(load_state, *, called=False, call_error="", state_override=None):
+    """Derive internally consistent provenance fields from load/call state."""
+    load_state = dict(load_state or {})
+    present = bool(load_state.get("file_present", False))
+    loaded = bool(load_state.get("loaded", False))
+    error = str(call_error or load_state.get("call_error", "") or "")
+    if state_override:
+        state = str(state_override)
+    elif error:
+        state = "call_failed"
+    elif called and loaded:
+        state = "loaded_and_called"
+    else:
+        state = str(load_state.get("state", "not_selected"))
+    return {
+        "model_state": state,
+        "model_file_present": present,
+        "model_loaded": loaded,
+        "model_call_error": error,
+    }
+
+
+def _load_with_restored_globals(init_fn, attribute_names):
+    """Capture one loader result while leaving process globals exactly as found."""
+    with resource_lock():
+        originals = {
+            name: getattr(ml_module, name) for name in tuple(attribute_names)
+        }
+        try:
+            ok = bool(init_fn())
+            loaded = {name: getattr(ml_module, name) for name in originals}
+            return ok, loaded
+        finally:
+            for name, value in originals.items():
+                setattr(ml_module, name, value)
+
+
+@st.cache_resource(show_spinner=False)
+def _load_primary_ml_cached(artifact_version):
+    """Load one primary session keyed by the verified graph+data identity."""
+    requested = _primary_model_disk_identity()
+    graph_path = model_difference_contracts.GENERIC_ONNX_ROUTE.model_relative_path
+    context_key = _primary_resource_context_key()
+    if not requested.available or requested.version != str(artifact_version):
+        return False, False, "本地 ONNX 身份不可用或已变化", _model_state(
+            graph_path, selected=True), None, None
+    with resource_lock():
+        existing = get_bound_resource("primary", context_key)
+        if existing is not None:
+            issue = validate_bound_resource(
+                existing, current_available=requested.available,
+                current_identity=requested.version, current_reason=requested.reason)
+            ok = not issue
+            return (
+                ok, bool(getattr(ml_module, "_ORT_IS_V8", False)), issue,
+                _model_state(graph_path, loaded=ok, call_error=issue),
+                existing.session_refs[0] if existing.session_refs else None,
+                existing,
+            )
+    try:
+        ok, loaded = _load_with_restored_globals(
+            ml_module.init_ml, ("_ORT_SESSION", "_ORT_AVAILABLE", "_ORT_IS_V8"))
+        session = loaded["_ORT_SESSION"]
+        current = _primary_model_disk_identity()
+        binding, binding_issue = _capture_runtime_binding(
+            "primary", context_key, requested, (graph_path,),
+            (session,) if session is not None else (), current)
+        ok = bool(ok and binding is not None and not binding_issue)
+        error = "" if ok else (binding_issue or "ONNX Runtime 初始化失败")
+        return ok, bool(loaded["_ORT_IS_V8"]), error, _model_state(
+            graph_path, loaded=ok, call_error="" if ok else error), session, binding
+    except Exception as exc:
+        return False, False, f"ONNX Runtime 初始化失败: {type(exc).__name__}", _model_state(
+            graph_path, call_error=type(exc).__name__), None, None
+
+
+@st.cache_resource(show_spinner=False)
+def _load_dual_ml_cached(artifact_version):
+    """Load only the ONNX asset used by the actual dual-pillar runtime."""
+    model_path = _DUAL_MODEL_RELATIVE_PATH
+    context_key = _dual_resource_context_key()
+    requested = _dual_model_disk_identity()
+    if not requested.available or requested.version != str(artifact_version):
+        return False, f"本地双柱 ONNX 身份不可用：{model_path}", _model_state(
+            model_path, selected=True), None, None
+    with resource_lock():
+        existing = get_bound_resource("dual", context_key)
+        if existing is not None:
+            issue = validate_bound_resource(
+                existing, current_available=requested.available,
+                current_identity=requested.version, current_reason=requested.reason)
+            ok = not issue
+            return (
+                ok, issue, _model_state(
+                    model_path, loaded=ok, call_error=issue),
+                existing.session_refs[0] if existing.session_refs else None,
+                existing,
+            )
+    try:
+        ok, loaded = _load_with_restored_globals(
+            ml_module.init_dual_ml,
+            ("_DUAL_ORT_SESSION", "_DUAL_ORT_AVAILABLE", "_DUAL_IS_V3"))
+        session = loaded["_DUAL_ORT_SESSION"]
+        current = _dual_model_disk_identity()
+        binding, binding_issue = _capture_runtime_binding(
+            "dual", context_key, requested, (model_path,),
+            (session,) if session is not None else (), current)
+        ok = bool(ok and binding is not None and not binding_issue)
+        error = "" if ok else (binding_issue or "双柱 ONNX 初始化失败")
+        return ok, error, _model_state(
+            model_path, loaded=ok, call_error="" if ok else error), session, binding
+    except Exception as exc:
+        return False, f"双柱 ONNX 初始化失败: {type(exc).__name__}", _model_state(
+            model_path, call_error=type(exc).__name__), None, None
+
+
+@st.cache_resource(show_spinner=False)
+def _load_rcwa_registry_cached(artifact_version, material, substrate):
+    """Load only the exact RCWA family selected for this route identity."""
+    requested = _rcwa_model_disk_identity(material, substrate)
+    context_key, _selection_kind, paths = _rcwa_resource_context(material, substrate)
+    family = "rcwa"
+    if not requested.available or requested.version != str(artifact_version):
+        return False, "RCWA exact model identity unavailable", (), False, None
+    with resource_lock():
+        existing = get_bound_resource(family, context_key)
+        if existing is not None:
+            issue = validate_bound_resource(
+                existing, current_available=requested.available,
+                current_identity=requested.version, current_reason=requested.reason)
+            is_wavelength = bool(
+                getattr(ml_module, "_RCWA_WL_MODELS", {}).get(str(material)))
+            return not issue, issue, existing.session_refs, is_wavelength, existing
+    try:
+        import onnxruntime as ort
+        sessions = tuple(
+            ort.InferenceSession(
+                os.path.join(os.path.dirname(__file__), *path.split("/")),
+                providers=["CPUExecutionProvider"])
+            for path in paths)
+        current = _rcwa_model_disk_identity(material, substrate)
+        is_wavelength = bool(
+            getattr(ml_module, "_RCWA_WL_MODELS", {}).get(str(material)))
+        binding, binding_issue = _capture_runtime_binding(
+            family, context_key, requested, paths, sessions, current)
+        ok = bool(sessions and binding is not None and not binding_issue)
+        return ok, "" if ok else (binding_issue or "本地未发现可加载的 RCWA 代理模型"), sessions, is_wavelength, binding
+    except Exception as exc:
+        return False, f"RCWA exact registry 初始化失败: {type(exc).__name__}", (), False, None
+
 
 def _ensure_ml():
-    global _ml_ready, _ml_is_v8, _ml_tried
-    if _ml_tried and _ml_ready: return
+    global _ml_ready, _ml_is_v8, _ml_tried, _ml_error, _ml_state, _primary_runtime_binding
+    if _ml_tried: return _ml_ready
     _ml_tried = True
-    try:
-        ok = ml_module.init_ml()
-        _ml_ready = ok
-        _ml_is_v8 = ml_module._ORT_IS_V8 if ok else False
-    except Exception: pass
+    identity = _primary_model_disk_identity()
+    if not identity.available:
+        _ml_ready, _ml_error = False, identity.reason
+        _ml_state = _model_state(
+            model_difference_contracts.GENERIC_ONNX_ROUTE.model_relative_path,
+            selected=True, call_error=identity.reason)
+        _primary_runtime_binding = None
+        return False
+    (
+        _ml_ready, _ml_is_v8, _ml_error, _ml_state, session,
+        _primary_runtime_binding,
+    ) = _load_primary_ml_cached(identity.version)
+    runtime_issue = _runtime_binding_issue(
+        _primary_runtime_binding, identity,
+        tuple(getattr(_primary_runtime_binding, "session_refs", ())),
+        (model_difference_contracts.GENERIC_ONNX_ROUTE.model_relative_path,),
+        _primary_resource_context_key())
+    if runtime_issue:
+        _ml_ready = False
+        _ml_error = runtime_issue
+        _ml_state = _model_state(
+            model_difference_contracts.GENERIC_ONNX_ROUTE.model_relative_path,
+            selected=True, call_error=runtime_issue)
+    if _ml_error:
+        logging.info("primary ML unavailable: %s", _ml_error)
+    return _ml_ready
 
 def _ensure_dual_ml():
-    global _dual_ml_ready, _dual_ml_tried
-    if _dual_ml_tried and _dual_ml_ready: return
+    global _dual_ml_ready, _dual_ml_tried, _dual_ml_error, _dual_ml_state, _dual_runtime_binding
+    if _dual_ml_tried: return _dual_ml_ready
     _dual_ml_tried = True
-    try:
-        _dual_ml_ready = ml_module.init_dual_ml()
-    except Exception: pass
+    identity = _dual_model_disk_identity()
+    if not identity.available:
+        _dual_ml_ready, _dual_ml_error = False, identity.reason
+        _dual_ml_state = _model_state(
+            _DUAL_MODEL_RELATIVE_PATH, selected=True, call_error=identity.reason)
+        _dual_runtime_binding = None
+        return False
+    (
+        _dual_ml_ready, _dual_ml_error, _dual_ml_state, session,
+        _dual_runtime_binding,
+    ) = _load_dual_ml_cached(identity.version)
+    runtime_issue = _runtime_binding_issue(
+        _dual_runtime_binding, identity,
+        tuple(getattr(_dual_runtime_binding, "session_refs", ())),
+        (_DUAL_MODEL_RELATIVE_PATH,), _dual_resource_context_key())
+    if runtime_issue:
+        _dual_ml_ready = False
+        _dual_ml_error = runtime_issue
+        _dual_ml_state = _model_state(
+            _DUAL_MODEL_RELATIVE_PATH, selected=True, call_error=runtime_issue)
+    if _dual_ml_error:
+        logging.info("dual ML unavailable: %s", _dual_ml_error)
+    return _dual_ml_ready
 
-def _ensure_rcwa_ml():
-    global _rcwa_ml_ready, _rcwa_ml_tried
-    if _rcwa_ml_tried and _rcwa_ml_ready: return
+def _ensure_rcwa_ml(material=None, substrate=None):
+    global _rcwa_ml_ready, _rcwa_ml_tried, _rcwa_ml_error, _rcwa_runtime_binding
+    if _rcwa_ml_tried:
+        return _rcwa_ml_ready
     _rcwa_ml_tried = True
+    material = str(material if material is not None else globals().get("material", ""))
+    substrate = str(substrate if substrate is not None else globals().get("substrate", ""))
+    identity = _rcwa_model_disk_identity(material, substrate)
+    if not identity.available:
+        _rcwa_ml_ready, _rcwa_ml_error = False, identity.reason
+        _rcwa_runtime_binding = None
+        return False
+    (
+        _rcwa_ml_ready, _rcwa_ml_error, sessions, is_wavelength,
+        _rcwa_runtime_binding,
+    ) = _load_rcwa_registry_cached(identity.version, material, substrate)
+    runtime_issue = _runtime_binding_issue(
+        _rcwa_runtime_binding, identity,
+        tuple(getattr(_rcwa_runtime_binding, "session_refs", ())),
+        _registered_rcwa_model_paths(material, substrate),
+        _rcwa_resource_context(material, substrate)[0])
+    if runtime_issue:
+        _rcwa_ml_ready = False
+        _rcwa_ml_error = runtime_issue
+    return _rcwa_ml_ready
+
+
+def _analysis_runtime_identity_issue(context):
+    """Verify context, current bytes, and the active runtime session as one identity."""
+    current_artifact = _analysis_artifact_version(
+        context.route_id, context.model_version,
+        structure_type=context.structure_type, material=context.material,
+        substrate=context.substrate)
+    if current_artifact != context.artifact_version:
+        return "analysis artifact changed after the snapshot context was created"
+    route = str(context.route_id)
+    if context.structure_type == "dual" and route in {"ml_surrogate", "dual ML surrogate"}:
+        identity = _dual_model_disk_identity()
+        return _runtime_binding_issue(
+            _dual_runtime_binding, identity,
+            tuple(getattr(_dual_runtime_binding, "session_refs", ())),
+            (_DUAL_MODEL_RELATIVE_PATH,), _dual_resource_context_key())
+    if context.structure_type == "single" and route in {
+        "ml_surrogate", "generic-fano-resmlp-v8-sub-onnx-only",
+        "ML surrogate (generic angle-conditioned)",
+    }:
+        contract = model_difference_contracts.GENERIC_ONNX_ROUTE
+        identity = _primary_model_disk_identity()
+        return _runtime_binding_issue(
+            _primary_runtime_binding, identity,
+            tuple(getattr(_primary_runtime_binding, "session_refs", ())),
+            (contract.model_relative_path,), _primary_resource_context_key())
+    if context.structure_type == "single" and route == "rcwa_surrogate":
+        identity = _rcwa_model_disk_identity(context.material, context.substrate)
+        return _runtime_binding_issue(
+            _rcwa_runtime_binding, identity,
+            tuple(getattr(_rcwa_runtime_binding, "session_refs", ())),
+            _registered_rcwa_model_paths(context.material, context.substrate),
+            _rcwa_resource_context(context.material, context.substrate)[0])
+    return ""
+
+
+def _analysis_model_artifact_version(context):
+    """Return only the runtime model identity owned by this analysis route."""
+    route = str(context.route_id)
+    if context.structure_type == "dual" and route in {
+            "ml_surrogate", "dual ML surrogate"}:
+        return (
+            _dual_runtime_binding.loaded_identity
+            if _dual_runtime_binding is not None else "not_applicable")
+    if context.structure_type == "single" and route in {
+            "ml_surrogate", "generic-fano-resmlp-v8-sub-onnx-only",
+            "ML surrogate (generic angle-conditioned)"}:
+        return (
+            _primary_runtime_binding.loaded_identity
+            if _primary_runtime_binding is not None else "not_applicable")
+    if context.structure_type == "single" and route == "rcwa_surrogate":
+        return (
+            _rcwa_runtime_binding.loaded_identity
+            if _rcwa_runtime_binding is not None else "not_applicable")
+    return "not_applicable"
+
+
+def _bound_runtime_context(structure_type, route_id, material, substrate):
+    """Install one strong resource only for the duration of a preview/analysis call."""
+    structure = str(structure_type)
+    route = str(route_id)
+    if structure == "dual" and route in {"ml_surrogate", "dual ML surrogate"}:
+        resource = _dual_runtime_binding
+        if resource is None:
+            raise ModelResourceUnavailable("dual runtime model is not bound")
+        return bound_model_context(
+            resource, ml_module,
+            {
+                "_DUAL_ORT_SESSION": resource.session_refs[0],
+                "_DUAL_ORT_AVAILABLE": True,
+                "_DUAL_IS_V3": True,
+            },
+            _dual_model_disk_identity,
+            lambda: (getattr(ml_module, "_DUAL_ORT_SESSION", None),),
+            _dual_resource_context_key(),
+        )
+    if structure == "single" and route in {
+        "ml_surrogate", "generic-fano-resmlp-v8-sub-onnx-only",
+        "ML surrogate (generic angle-conditioned)",
+    }:
+        resource = _primary_runtime_binding
+        if resource is None:
+            raise ModelResourceUnavailable("primary runtime model is not bound")
+        return bound_model_context(
+            resource, ml_module,
+            {
+                "_ORT_SESSION": resource.session_refs[0],
+                "_ORT_AVAILABLE": True,
+                "_ORT_IS_V8": True,
+            },
+            _primary_model_disk_identity,
+            lambda: (getattr(ml_module, "_ORT_SESSION", None),),
+            _primary_resource_context_key(),
+        )
+    if structure == "single" and route == "rcwa_surrogate":
+        resource = _rcwa_runtime_binding
+        if resource is None:
+            raise ModelResourceUnavailable("RCWA runtime model is not bound")
+        material = str(material)
+        substrate = str(substrate)
+        wavelength = bool(getattr(ml_module, "_RCWA_WL_MODELS", {}).get(material))
+        if wavelength:
+            installed_sessions = {}
+            installed_wavelength = {material: resource.session_refs[0]}
+        else:
+            key = (material, substrate)
+            route_key = key if key in getattr(
+                ml_module, "_RCWA_SUBSTRATE_MODELS", {}) else material
+            installed_sessions = {route_key: list(resource.session_refs)}
+            installed_wavelength = {}
+        return bound_model_context(
+            resource, ml_module,
+            {
+                "_RCWA_SESSIONS": installed_sessions,
+                "_RCWA_WL_SESSIONS": installed_wavelength,
+                "_RCWA_AVAILABLE": True,
+            },
+            lambda: _rcwa_model_disk_identity(material, substrate),
+            lambda: _current_rcwa_sessions(material, substrate),
+            _rcwa_resource_context(material, substrate)[0],
+        )
+    return nullcontext(None)
+
+
+def _rcwa_model_version(material, substrate):
+    """Return loaded surrogate files without implying direct RCWA execution."""
+    names = []
+    sessions = getattr(ml_module, "_RCWA_SESSIONS", {})
+    for key in ((material, substrate), material):
+        for session in sessions.get(key, []):
+            try:
+                names.append(os.path.basename(session._model_path))
+            except Exception:
+                names.append("loaded RCWA ensemble member")
+        if names:
+            break
+    wl_session = getattr(ml_module, "_RCWA_WL_SESSIONS", {}).get(material)
+    if wl_session is not None:
+        try:
+            names.append(os.path.basename(wl_session._model_path))
+        except Exception:
+            names.append("loaded wavelength-conditioned RCWA surrogate")
+    return ", ".join(dict.fromkeys(names)) if names else "不可用"
+
+
+def _has_rcwa_ensemble(material, substrate):
+    """Only label RGB as RCWA-trained when predict_rgb has an ensemble."""
     try:
-        ml_module.init_rcwa_ml()
-        _rcwa_ml_ready = True
+        return bool(ml_module._get_rcwa_sessions(material, substrate))
     except Exception:
-        pass
+        return False
 
 
-st.title("🎨 AI超表面结构色设计助手")
-st.caption("v5.0 | 多材料 | RCWA 电磁仿真 + ResMLP 代理模型 | CIEDE2000")
-st.caption("RCWA/ML 高保真 | TiO2 dE~2.4 | Si3N4 dE~1.5 | Al2O3 dE~1.2 | a-Si dE~4.1")
+def _render_result_provenance(provenance):
+    """Render a concise source summary with full audit evidence on demand."""
+    def esc(value):
+        return html.escape(str(value), quote=True)
+
+    # 来源徽章色：色相保持原有语义编码（绿=代理/蓝=ML/紫=远场/橙=FP/红=不可用），
+    # 只在 Oklch 里提亮到"深色文字可读"的明度，使小字对比度达 WCAG AA。
+    # 原先徽章用白字压在中等明度底上，最低只有 3.19，不达标。
+    route_colors = {
+        "rcwa_surrogate": ("#42B68C", "RCWA 训练代理（ML surrogate）"),
+        "ml_surrogate": ("#5E9FFB", "机器学习代理（ML surrogate）"),
+        "far_field_postprocessing": ("#B97BFA", "远场后处理（Far-field post-processing）"),
+        "fp_tmm": ("#E5821F", "FP 腔传输矩阵（FP cavity TMM）"),
+        "lorentz_fano_fallback": ("#CA6728", "洛伦兹/Fano 解析近似"),
+        "invalid_geometry": ("#FF6559", "几何参数不可用"),
+    }
+    color, route_label = route_colors.get(
+        provenance.get("route_id"), ("#8FA0B8", provenance.get("route_label", "未知来源"))
+    )
+    state_labels = {
+        "loaded_and_called": "模型已调用，输出通过校验",
+        "loaded": "模型已加载",
+        "not_selected": "本路线不使用模型文件",
+        "not_applicable": "不适用",
+        "file_missing": "本地模型文件缺失",
+        "file_present_load_failed": "模型文件存在，但未成功加载",
+        "call_failed": "模型调用失败",
+        "output_validation_failed": "模型输出未通过校验",
+        "invalid_geometry": "几何参数越域，未执行",
+    }
+    model_state = str(provenance.get("model_state", "not_recorded"))
+    model_state_label = state_labels.get(model_state, "状态已记录，见审计详情")
+    spectrum_ok = bool(provenance.get("spectrum_available", False))
+    result_status = "可用；颜色由该光谱计算" if spectrum_ok else "不可用；未跨模型补数"
+    rows = [
+        ("材料 / 衬底", f"{provenance['material']} / {provenance['substrate']}"),
+        ("偏振 / 入射角", f"{provenance['polarization']} / {provenance['angle_deg']:.1f}°"),
+        ("NA / 观察角", f"{provenance['na']} / {provenance['theta_obs_deg']:.1f}°"),
+        ("模型版本", provenance["model_version"]),
+        ("模型状态", model_state_label),
+        ("光谱状态", result_status),
+    ]
+    details = "".join(
+        f'<div><span style="color:var(--text-muted)">{esc(label)}</span><br>{esc(value)}</div>'
+        for label, value in rows
+    )
+    reason = provenance.get("fallback_reason") or "无回退；当前路径按配置直接执行。"
+    chain = " → ".join(provenance.get("chain", []))
+    st.markdown(
+        f"""
+        <div class="source-summary" role="status" aria-label="结果来源摘要"
+             style="border-left-color:{color}">
+          <div class="source-summary__head">
+            <strong>结果来源</strong>
+            <span style="background:{color};color:#0C0812;border-radius:999px;padding:3px 9px;
+                         font-size:12px;font-weight:600">{esc(route_label)}</span>
+            <span class="source-summary__status">{esc(result_status)}</span>
+          </div>
+          <div class="source-summary__context">
+            {esc(provenance['material'])} / {esc(provenance['substrate'])} ·
+            {esc(provenance['polarization'])} · 入射 {float(provenance['angle_deg']):.1f}° ·
+            观察 {float(provenance['theta_obs_deg']):.1f}° · NA {esc(provenance['na'])}
+          </div>
+          <div class="source-summary__context">实际链路：{esc(chain or '未执行')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.expander("查看来源、边界与证据详情", expanded=False):
+        st.caption("展开后按需加载完整链路、边界说明和模型/数据证据。")
+        if st.button("加载完整审计详情", key="load_audit_details"):
+            st.session_state["show_audit_details"] = True
+        if st.session_state.get("show_audit_details", False):
+            # Read/hash small evidence only after explicit user request.
+            asset_bits = []
+            try:
+                manifest_path = os.path.join(os.path.dirname(__file__), ".state", "pool_manifest.json")
+                d65_path = os.path.join(os.path.dirname(__file__), ".state", "d65_colorimetry_v1_r2.json")
+                with open(manifest_path, "r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                with open(d65_path, "r", encoding="utf-8") as handle:
+                    d65 = json.load(handle)
+                pool_path = manifest.get("pool_path", "unknown")
+                pool_sha = manifest.get("pool_sha256", "unknown")
+                d65_version = d65.get("evidence_version", "unknown")
+                d65_passed = bool(d65.get("passed", False))
+                asset_bits.append(f"论文2池 manifest: {pool_path} ({pool_sha[:12]}…)")
+                asset_bits.append(f"D65 evidence: {d65_version} ({'通过' if d65_passed else '未通过'})")
+                asset_bits.append("当前 UI 路由直接使用论文2池: 否；当前结果来自上方标注的模型/解析路线")
+            except Exception as exc:
+                asset_bits.append(f"证据状态不可用: {type(exc).__name__}")
+            model_files = []
+            for model_name in str(provenance.get("model_version", "")).split(","):
+                model_name = model_name.strip()
+                if not model_name or "/" in model_name or "\\" in model_name:
+                    continue
+                model_path = os.path.join(os.path.dirname(__file__), "models", model_name)
+                if os.path.isfile(model_path):
+                    try:
+                        with open(model_path, "rb") as handle:
+                            model_hash = hashlib.sha256(handle.read()).hexdigest()[:12]
+                        model_files.append(f"{model_name} sha256={model_hash}…")
+                    except OSError:
+                        model_files.append(f"{model_name} (存在但无法读取哈希)")
+                elif model_name.endswith((".onnx", ".pt")):
+                    model_files.append(f"{model_name} (本地缺失，可能回退)")
+            asset_text = "；".join(asset_bits + model_files)
+            st.markdown(
+                f"""
+                <div class="audit-details" aria-label="完整来源与证据">
+                  <div class="audit-details__grid">{details}</div>
+                  <div class="audit-details__section">
+                    <span>实际链路</span><br>{esc(chain or '未执行')}
+                  </div>
+                  <div class="audit-details__section">
+                    <span>边界 / 回退</span><br>{esc(reason)}
+                  </div>
+                  <details class="audit-details__evidence">
+                    <summary>技术证据（模型、池与色度学）</summary>
+                    <div class="audit-details__evidence-content">{esc(asset_text)}</div>
+                  </details>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def _render_reference_recheck(
+    *,
+    structure_type,
+    material,
+    substrate,
+    polarization,
+    angle_deg,
+    far_field_enabled,
+    diameter_nm,
+    height_nm,
+    period_nm,
+    forward,
+):
+    """Show an exact lookup against the audited competition RCWA reference set."""
+    st.divider()
+    st.subheader("真实 RCWA 参考复核")
+    st.caption(
+        "只读取已审核的 TiO2/SiO2/air 参考库；查询要求完整匹配几何和边界，"
+        "不插值、不写入训练数据。"
+    )
+    try:
+        reference_library = load_reference_library()
+    except ReferenceLibraryError as exc:
+        st.error(f"参考库绑定失败，已停止接入：{exc}")
+        return
+    except Exception as exc:
+        st.error(f"参考库加载异常，已停止接入：{type(exc).__name__}")
+        return
+
+    supported, support_reason = reference_library.supports_display_conditions(
+        material, substrate, polarization, angle_deg,
+        structure_type=structure_type,
+        far_field_enabled=far_field_enabled,
+    )
+    metadata = reference_library.metadata()
+    if not supported:
+        st.info(f"当前配置未进入参考查询：{support_reason}")
+        st.caption(
+            f"已绑定 {reference_library.unique_geometry_count:,} 个唯一单柱几何；"
+            f"记录 SHA256={metadata['records_sha256']}"
+        )
+        return
+
+    match = reference_library.lookup(diameter_nm, height_nm, period_nm)
+    if match is None:
+        st.info(
+            f"当前几何 D={float(diameter_nm):g} / H={float(height_nm):g} / "
+            f"P={float(period_nm):g} nm 未命中参考库。这里只接受 JSONL 中已存在的精确整数几何，"
+            "不会用最近邻或模型输出补齐。"
+        )
+        st.caption(
+            f"可查询条件：{reference_condition_summary()}；"
+            f"已审核记录 {reference_library.record_count:,} 条，唯一几何 "
+            f"{reference_library.unique_geometry_count:,} 个。"
+        )
+        return
+
+    reference_rgb = np.asarray(match.srgb_display, dtype=float)
+    reference_hex = rgb_to_hex(reference_rgb)
+    reference_r255 = rgb_255(reference_rgb)
+    record = match.record
+    st.success(
+        f"精确命中参考记录 #{record.get('index', '?')} · "
+        f"batch {record.get('batch', '?')} · D/H/P={match.geometry[0]}/{match.geometry[1]}/{match.geometry[2]} nm"
+    )
+    swatch_left, swatch_right = st.columns([1, 3])
+    with swatch_left:
+        st.markdown(
+            f"""<div style="height:86px;border-radius:10px;background:{reference_hex};
+            border:1px solid rgba(255,255,255,.28);
+            box-shadow:inset 0 1px 0 rgba(255,255,255,.25);"></div>""",
+            unsafe_allow_html=True,
+        )
+    with swatch_right:
+        st.markdown(
+            f"""**参考颜色 {reference_hex}**
+
+            RGB({reference_r255[0]}, {reference_r255[1]}, {reference_r255[2]})
+
+            XYZ({', '.join(f'{value:.6f}' for value in match.xyz_d65)})
+
+            Lab({', '.join(f'{value:.4f}' for value in match.lab_d65)})"""
+        )
+
+    st.caption(
+        "参考条件：TiO2 / SiO2 / air · TM (p-pol) · 0° · nG=151 · Nxy=256 · "
+        f"守恒最大误差 {match.max_abs_rt_error:.3e}；记录 SHA256={match.source_sha256}"
+    )
+    if not forward.spectrum_available:
+        st.warning(f"当前路线没有可用光谱，暂不能做逐波长对照：{forward.error}")
+        return
+
+    try:
+        current_wavelengths = np.asarray(forward.wavelengths_nm, dtype=float)
+        current_reflectance = np.asarray(forward.reflectance, dtype=float)
+        reference_wavelengths = match.wavelengths_nm
+        if np.array_equal(current_wavelengths, reference_wavelengths):
+            compared_reflectance = current_reflectance
+        else:
+            compared_reflectance = np.interp(
+                reference_wavelengths, current_wavelengths, current_reflectance)
+        difference = compared_reflectance - match.reflectance
+        max_abs_difference = float(np.max(np.abs(difference)))
+        rmse = float(np.sqrt(np.mean(np.square(difference))))
+        current_rgb = np.asarray(forward.rgb, dtype=float)
+        delta_e = float(delta_e2000(rgb_to_lab(current_rgb), match.lab_d65))
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("逐波长最大 |ΔR|", f"{max_abs_difference:.4f}")
+        metric_cols[1].metric("光谱 RMSE", f"{rmse:.4f}")
+        metric_cols[2].metric("当前路线 vs 参考 ΔE2000", f"{delta_e:.2f}")
+
+        plt = _get_plt()
+        figure, axes = plt.subplots(1, 2, figsize=(9.2, 3.5))
+        axes[0].plot(reference_wavelengths, match.reflectance, lw=2.0,
+                     color="#F3D259", label="审计参考 RCWA")
+        axes[0].plot(reference_wavelengths, compared_reflectance, lw=1.7,
+                     color="#5E9FFB", label="当前路线")
+        axes[0].set_title("反射光谱对照")
+        axes[0].set_xlabel("波长 (nm)")
+        axes[0].set_ylabel("反射率")
+        axes[0].set_xlim(380, 780)
+        axes[0].set_ylim(0, 1.08)
+        axes[0].grid(True, alpha=0.22)
+        axes[0].legend(fontsize=8, framealpha=0.85)
+        axes[1].plot(reference_wavelengths, difference, lw=1.5, color="#FC6B2E")
+        axes[1].axhline(0.0, color="#555", lw=0.8)
+        axes[1].set_title("当前路线 - 参考")
+        axes[1].set_xlabel("波长 (nm)")
+        axes[1].set_ylabel("ΔR")
+        axes[1].set_xlim(380, 780)
+        axes[1].grid(True, alpha=0.22)
+        figure.tight_layout()
+        st.pyplot(figure)
+        plt.close(figure)
+        st.caption(
+            "对照指标只描述当前显示路线与该条参考记录的差异；不等于代理模型的全域精度，"
+            "也不代表 nG=151 已完成收敛证明。"
+        )
+    except Exception as exc:
+        st.warning(f"参考光谱对照失败：{type(exc).__name__}")
+        return
+
+    st.download_button(
+        "下载参考复核 JSON",
+        json.dumps(
+            {
+                "reference": match.export_payload(),
+                "current_route": forward.provenance,
+                "comparison": {
+                    "max_abs_reflectance_difference": max_abs_difference,
+                    "reflectance_rmse": rmse,
+                    "delta_e2000": delta_e,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        ),
+        file_name=f"reference_recheck_D{match.geometry[0]}_H{match.geometry[1]}_P{match.geometry[2]}.json",
+        mime="application/json",
+        use_container_width=True,
+        key="download_reference_recheck",
+    )
+
+
+def _inverse_candidate_contract(method, material, substrate, polarization, angle_deg):
+    """Describe an inverse candidate's actual search route and its scientific boundary."""
+    method_key = str(method).lower()
+    if method_key in {"smart_grid", "rcwa", "rcwa surrogate", "rcwa-trained"}:
+        model_name = _rcwa_model_version(material, substrate)
+        if model_name == "不可用":
+            model_name = "不可用（未加载 RCWA 代理）"
+        return {
+            "method": "RCWA-trained ML surrogate",
+            "model": model_name,
+            "route_id": "rcwa_surrogate",
+            "boundary": "两阶段代理搜索；不是本次直接 RCWA，适用范围受训练数据约束。",
+        }
+    if method_key in {"fano", "lorentz", "lorentz/fano", "analytical"}:
+        return {
+            "method": "Lorentz/Fano analytical fallback",
+            "model": "engine.py inverse_design / torch_model.py",
+            "route_id": "lorentz_fano_fallback",
+            "boundary": "解析/半解析候选，不是直接 RCWA；需用已注册全波求解或实验独立复核。",
+        }
+    if method_key in {"dual", "dual ml", "dual surrogate"}:
+        return {
+            "method": "Dual-pillar ML surrogate",
+            "model": _DUAL_MODEL_RELATIVE_PATH,
+            "route_id": "dual_ml_surrogate",
+            "boundary": "代理候选，仅支持 SiO2 衬底；不是直接 RCWA。",
+        }
+    if method_key in {"fp", "fp tmm", "fp cavity"}:
+        return {
+            "method": "FP cavity TMM",
+            "model": "fp_cavity.py",
+            "route_id": "fp_tmm",
+            "boundary": "薄膜腔传输矩阵候选，不是 RCWA 纳米柱求解。",
+        }
+    return {
+        "method": "解析引擎候选",
+        "model": "engine.py inverse_design",
+        "route_id": "lorentz_fano_fallback",
+        "boundary": "候选排序使用现有解析/半解析引擎，不宣称直接 RCWA。",
+    }
+
+
+def _smart_grid_has_local_weights(material, substrate):
+    """Return whether smart-grid's required RCWA PyTorch weights exist locally."""
+    key = (material, substrate)
+    patterns = getattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {}).get(key)
+    if patterns is None:
+        patterns = getattr(ml_module, "_RCWA_MODELS", {}).get(material, [])
+    model_dir = os.path.join(os.path.dirname(__file__), "models")
+    return any(
+        glob.glob(os.path.join(model_dir, pattern.replace(".onnx", ".pt")))
+        for pattern in patterns
+    )
+
+
+def _smart_grid_has_matching_rcwa_session(material, substrate):
+    """Require the strong process resource registered for this exact pair."""
+    context_key, selection_kind, paths = _rcwa_resource_context(
+        material, substrate)
+    if selection_kind != "exact_pair" or _rcwa_runtime_binding is None:
+        return False
+    current = _rcwa_model_disk_identity(material, substrate)
+    return not _runtime_binding_issue(
+        _rcwa_runtime_binding, current,
+        _rcwa_runtime_binding.session_refs, paths, context_key)
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _dual_domain_manifest_verified(context, *, manifest_path=None, model_path=None):
+    """Bind dual-domain evidence to the loaded model, its hash, and this context."""
+    if context.structure_type != "dual":
+        return False
+    base_dir = os.path.dirname(__file__)
+    model_path = model_path or os.path.join(base_dir, _DUAL_MODEL_RELATIVE_PATH)
+    manifest_path = manifest_path or os.path.join(
+        base_dir, "models", "dual_mlp_v3_multi.manifest.json")
+    try:
+        loaded_session = getattr(ml_module, "_DUAL_ORT_SESSION", None)
+        loaded_path = os.path.realpath(str(getattr(loaded_session, "_model_path", "")))
+        resolved_model_path = os.path.realpath(model_path)
+        if not loaded_path or loaded_path != resolved_model_path:
+            return False
+        if not os.path.isfile(resolved_model_path):
+            return False
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        model = manifest["model"]
+        domain = manifest["training_domain"]
+        if int(manifest["schema_version"]) != 1:
+            return False
+        if manifest["model_version"] != _DUAL_MODEL_VERSION:
+            return False
+        if model["path"].replace("\\", "/") != _DUAL_MODEL_RELATIVE_PATH:
+            return False
+        expected_hash = str(model["sha256"]).strip().lower()
+        if len(expected_hash) != 64 or expected_hash != _sha256_file(resolved_model_path):
+            return False
+        for field in ("materials", "substrates", "polarizations"):
+            values = domain[field]
+            if not isinstance(values, list) or not values:
+                return False
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                return False
+        if context.material not in domain["materials"]:
+            return False
+        if context.substrate not in domain["substrates"]:
+            return False
+        if context.polarization not in domain["polarizations"]:
+            return False
+        angle_domain = domain["angle_deg"]
+        mode = angle_domain["mode"]
+        if mode == "exact":
+            angle_ok = float(context.angle_deg) in {
+                float(value) for value in angle_domain["values"]}
+        elif mode == "range":
+            angle_value = float(context.angle_deg)
+            minimum = float(angle_domain["min"])
+            maximum = float(angle_domain["max"])
+            angle_ok = minimum <= angle_value <= maximum and minimum <= maximum
+        else:
+            return False
+        return bool(angle_ok)
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
+                           dual_ready, compare_enabled, fp_mirror_type=""):
+    """Return the structure-specific registry for the current context."""
+    return inverse_method_registry(
+        context,
+        supported_material=context.material in ml_module.MATERIAL_CODES,
+        supported_substrate=context.substrate in ml_module.SUBSTRATE_CODES,
+        rcwa_ready=bool(
+            rcwa_ready and _smart_grid_has_matching_rcwa_session(
+                context.material, context.substrate)),
+        smart_weights_ready=_smart_grid_has_local_weights(
+            context.material, context.substrate),
+        primary_torch_ready=primary_torch_ready,
+        dual_ready=dual_ready,
+        dual_domain_verified=_dual_domain_manifest_verified(context),
+        compare_enabled=compare_enabled,
+        fp_mirror_type=fp_mirror_type,
+    )
+
+
+_INVERSE_RESULT_KEYS = (
+    "_sg_candidates", "_sg_d", "_sg_h", "_sg_p", "_sg_hex", "_sg_de",
+    "_gd_d", "_gd_h", "_gd_p", "_gd_hex", "_gd_de", "_gd_rgb",
+    "_dual_gd_d1", "_dual_gd_h1", "_dual_gd_d2", "_dual_gd_h2",
+    "_dual_gd_p", "_dual_gd_hex", "_dual_gd_de", "_dual_gd_rgb",
+    "_ai_candidates",
+)
+
+
+def _clear_inverse_results():
+    for key in _INVERSE_RESULT_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state.pop("_inverse_run", None)
+
+
+def _store_inverse_run(context, method_id, method_label, candidates):
+    run = InverseRun.create(context, method_id, method_label, candidates)
+    st.session_state._inverse_run = run
+    return run
+
+
+def _apply_inverse_candidate(context, candidate_structure, parameters):
+    run = st.session_state.get("_inverse_run")
+    if not inverse_run_matches(run, context):
+        return
+    updates = candidate_parameter_updates(
+        context, candidate_structure, parameters)
+    for key, value in updates.items():
+        st.session_state[key] = value
+
+
+def _candidate_context(structure_type, material, substrate, polarization, angle_deg,
+                       *, mirror_type="", n_pairs=None, algorithm_version=""):
+    context = {
+        "structure_type": str(structure_type),
+        "material": str(material),
+        "substrate": str(substrate),
+        "polarization": str(polarization),
+        "angle_deg": float(angle_deg),
+    }
+    if mirror_type:
+        context["mirror_type"] = str(mirror_type)
+    if n_pairs is not None:
+        context["n_pairs"] = int(n_pairs)
+    if algorithm_version:
+        context["algorithm_version"] = str(algorithm_version)
+    return context
+
+
+def _normalized_smart_candidates(context, candidates):
+    contract = _inverse_candidate_contract(
+        "smart_grid", context.material, context.substrate,
+        context.polarization, context.angle_deg)
+    records = []
+    for rank, candidate in enumerate(candidates, start=1):
+        _, params, rgb, de76, de2000 = candidate
+        records.append(build_inverse_candidate(
+            context,
+            method_id="smart", method_label="智能网格", rank=rank,
+            structure_type="single",
+            candidate_context=_candidate_context(
+                "single", context.material, context.substrate,
+                context.polarization, context.angle_deg),
+            route_id=contract["route_id"], route_label=contract["method"],
+            model_version=contract["model"], boundary=contract["boundary"],
+            parameters={
+                "d": params.diameter_nm, "h": params.height_nm,
+                "p": params.period_nm,
+            },
+            predicted_rgb=rgb, delta_e76=de76, delta_e2000=de2000,
+        ))
+    return tuple(records)
+
+
+def _normalized_compare_candidates(context, candidates):
+    records = []
+    for rank, (de2000, name, data, candidate_type) in enumerate(candidates, start=1):
+        if candidate_type == "meta":
+            _, params, rgb, de76, candidate_de2000 = data[0]
+            candidate_material = (
+                "TiO2 (anatase)" if "TiO2" in name else
+                "a-Si (amorphous)" if "a-Si" in name else context.material)
+            contract = _inverse_candidate_contract(
+                "analytical", candidate_material, context.substrate,
+                context.polarization, context.angle_deg)
+            records.append(build_inverse_candidate(
+                context,
+                method_id="compare", method_label="跨结构方案对比", rank=rank,
+                structure_type="single",
+                candidate_context=_candidate_context(
+                    "single", candidate_material, context.substrate,
+                    context.polarization, context.angle_deg),
+                route_id=contract["route_id"], route_label=contract["method"],
+                model_version=contract["model"], boundary=contract["boundary"],
+                parameters={
+                    "d": params.diameter_nm, "h": params.height_nm,
+                    "p": params.period_nm,
+                },
+                predicted_rgb=rgb, delta_e76=de76,
+                delta_e2000=candidate_de2000, scheme=str(name),
+            ))
+        elif candidate_type == "fp":
+            candidate_de2000, t_nm, center_nm, rgb = data
+            contract = _inverse_candidate_contract(
+                "fp", "TiO2 (cavity layer)", "SiO2 (DBR mirror stack)",
+                context.polarization, context.angle_deg)
+            records.append(build_inverse_candidate(
+                context,
+                method_id="compare", method_label="跨结构方案对比", rank=rank,
+                structure_type="fp",
+                candidate_context=_candidate_context(
+                    "fp", "TiO2 (cavity layer)", "SiO2 (DBR mirror stack)",
+                    context.polarization, context.angle_deg,
+                    mirror_type="介质 DBR (TiO2/SiO2)", n_pairs=3,
+                    algorithm_version=_FP_INVERSE_ALGORITHM_VERSION),
+                route_id=contract["route_id"], route_label=contract["method"],
+                model_version=(
+                    f"{contract['model']} | {_FP_INVERSE_ALGORITHM_VERSION}"),
+                boundary=contract["boundary"],
+                parameters={"t": t_nm, "center_wavelength": center_nm},
+                predicted_rgb=rgb, delta_e2000=candidate_de2000,
+                scheme=str(name),
+            ))
+        else:
+            raise ValueError(
+                f"unsupported compare candidate type: {candidate_type}")
+    return tuple(records)
+
+
+def _normalized_fp_candidates(context, candidates):
+    contract = _inverse_candidate_contract(
+        "fp", context.material, context.substrate,
+        context.polarization, context.angle_deg)
+    return tuple(build_inverse_candidate(
+        context,
+        method_id="fp", method_label="FP 腔搜索", rank=rank,
+        structure_type="fp",
+        candidate_context=_candidate_context(
+            "fp", context.material, context.substrate,
+            context.polarization, context.angle_deg,
+            mirror_type=context.fp_mirror_type, n_pairs=3,
+            algorithm_version=_FP_INVERSE_ALGORITHM_VERSION),
+        route_id=contract["route_id"], route_label=contract["method"],
+        model_version=f"{contract['model']} | {_FP_INVERSE_ALGORITHM_VERSION}",
+        boundary=contract["boundary"],
+        parameters={"t": t_nm, "center_wavelength": center_nm},
+        predicted_rgb=rgb, delta_e2000=de2000,
+    ) for rank, (de2000, center_nm, t_nm, rgb) in enumerate(candidates, start=1))
+
+
+def _render_inverse_exports(context):
+    run = st.session_state.get("_inverse_run")
+    if not inverse_run_matches(run, context):
+        return False
+    try:
+        exports = serialize_inverse_run(run, context)
+    except (TypeError, ValueError) as exc:
+        logging.warning("inverse export contract rejected current run: %s", exc)
+        st.warning("当前逆设计结果缺少完整追溯字段，已禁用导出；未从旧状态补造候选。")
+        return False
+    basename = f"inverse_{run.method_id}_{inverse_context_fingerprint(context)[:12]}"
+    with st.expander("📥 导出结果 (CSV/JSON)", expanded=False):
+        left, right = st.columns(2)
+        with left:
+            st.download_button(
+                "💾 导出逆设计 CSV", exports.csv_text,
+                file_name=f"{basename}.csv", mime="text/csv",
+                use_container_width=True,
+            )
+        with right:
+            st.download_button(
+                "💾 导出逆设计 JSON", exports.json_text,
+                file_name=f"{basename}.json", mime="application/json",
+                use_container_width=True,
+            )
+    return True
+
+
+def _render_inverse_context(context, route):
+    """Show the fixed search context once so candidate cards do not repeat ambiguous state."""
+    st.markdown(
+        f"""
+        <div class="inverse-context" aria-label="当前搜索配置">
+          <strong>当前搜索配置</strong>
+          <div class="inverse-context__grid">
+            <span><b>结构</b>{html.escape(context.structure_type)}</span>
+            <span><b>材料 / 衬底</b>{html.escape(context.material)} / {html.escape(context.substrate)}</span>
+            <span><b>偏振 / 入射角</b>{html.escape(context.polarization)} / {float(context.angle_deg):.1f}°</span>
+            <span><b>预览来源</b>{html.escape(route.get('route_label', 'Unknown'))}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "逆设计候选按各自搜索路径标注来源；候选 ΔE 只表示当前模型空间内的匹配度，"
+        "不替代直接 RCWA 或实验复核。"
+    )
+
+
+def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_text,
+                                   contract, material, substrate, polarization, angle_deg,
+                                   apply_key=None, apply_callback=None):
+    """Render a comparable candidate card with source, context and boundary."""
+    rgb_text = ", ".join(str(int(v)) for v in rgb_value)
+    card_color = "#2A1C12" if rank == 1 else "var(--bg-surface)"
+    st.markdown(
+        f"""
+        <div style="width:100%;max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;
+             border:1px solid var(--border-subtle);border-left:4px solid {'var(--accent)' if rank == 1 else 'var(--border-strong)'};
+             border-radius:10px;padding:12px 14px;margin:8px 0;background:{card_color};">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="font-weight:700">#{int(rank)}</span>
+            <span style="width:28px;height:28px;border-radius:6px;background:{html.escape(hex_value)};
+                         border:1px solid rgba(243,245,245,.42);display:inline-block"></span>
+            <strong>{html.escape(hex_value)}</strong>
+            <span style="color:var(--text-secondary)">RGB({html.escape(rgb_text)})</span>
+            <strong style="margin-left:auto;color:var(--accent-soft)">ΔE2000 {float(de2000):.2f}</strong>
+          </div>
+          <div style="min-width:0;margin-top:8px;font-size:12px;line-height:1.5;color:var(--text-secondary);
+                      overflow-wrap:anywhere;word-break:break-word">
+            <b style="color:var(--text-primary)">参数：</b>{html.escape(params_text)}<br>
+            <b style="color:var(--text-primary)">方法：</b>{html.escape(contract['method'])} ·
+            <b style="color:var(--text-primary)">模型：</b>{html.escape(contract['model'])}<br>
+            <span style="color:var(--text-muted)">上下文：</span>{html.escape(material)} / {html.escape(substrate)} ·
+            {html.escape(polarization)} · θ={float(angle_deg):.1f}°<br>
+            <span style="color:var(--accent-soft)">边界：</span>{html.escape(contract['boundary'])}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if apply_key and apply_callback:
+        st.button("应用此候选", key=apply_key, on_click=apply_callback, use_container_width=True)
+
+
+st.title("🎨 超表面结构色设计台")
+st.caption("竞赛展示版 · 交互设计台 · 代理模型 / 解析近似 / FP-TMM · CIEDE2000")
+st.caption("当前结果的来源、模型版本和适用边界均可在预览区审计；代理预测不等同于本次直接 RCWA。")
+st.markdown(
+    """
+    <style>
+      /* ===== 设计令牌:与 competition 展示页同源 =====
+         强调色全部取自本项目正向求解器实际可生成的结构色
+         (TiO2(anatase)/SiO2 单柱,engine.compute_spectrum 只读采样),
+         括号内为该颜色对应的纳米柱几何。 */
+      :root {
+        --bg-deep: #0C0812;
+        --bg-surface: #18121E;
+        --bg-elevated: #251F2B;
+        --border-subtle: #342D3C;
+        --border-strong: #51495C;
+        --text-primary: #F3F5F5;
+        --text-secondary: #AFB1B2;
+        --text-muted: #888B8C;
+        --accent:        #FDA765;  /* 琥珀 D=250 H=140 P=300nm */
+        --accent-strong: #FC6B2E;  /* 焰橙 D=300 H=100 P=420nm */
+        --accent-soft:   #F3D259;  /* 金   D=220 H=100 P=300nm */
+        --accent-cool:   #C191F5;  /* 紫   D=80  H=540 P=300nm */
+        --focus-ring:    #FDA765;
+        --focus-halo:    rgba(253, 167, 101, .26);
+        --scrim:         rgba(12, 8, 18, .78);
+      }
+      .block-container { padding-top: clamp(1rem, 3vw, 2rem) !important; padding-left: clamp(.75rem, 3vw, 3rem) !important; padding-right: clamp(.75rem, 3vw, 3rem) !important; }
+      [data-testid="stAppViewContainer"] { overflow-x: hidden; }
+      [data-testid="stSidebar"] * { overflow-wrap: anywhere; word-break: break-word; }
+      h1 { font-size: clamp(2rem, 3.1vw, 2.75rem) !important; line-height: 1.12 !important; overflow-wrap: anywhere; word-break: break-word; margin-bottom: .25rem !important; letter-spacing: -.02em; }
+      .competition-banner { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; margin:10px 0 14px; padding:10px 12px; border:1px solid var(--border-strong); border-left:4px solid var(--accent); border-radius:10px; background:linear-gradient(90deg, #1A1024, var(--bg-surface)); color:var(--text-primary); font-size:13px; line-height:1.5; }
+      .competition-banner strong { color:var(--accent-soft); }
+      [data-baseweb="tab-list"] { gap: 2px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -ms-overflow-style:none; }
+      [data-baseweb="tab-list"]::-webkit-scrollbar { display:none; }
+      [data-baseweb="tab"] { flex:0 0 auto; min-width:max-content; padding:7px 12px; white-space:nowrap; }
+      .workflow-hint { min-width:0; margin:8px 0 14px; color:var(--text-muted); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+      .source-summary { width:100%; max-width:100%; min-width:0; box-sizing:border-box; overflow-wrap:anywhere; word-break:break-word; border:1px solid var(--border-subtle); border-left:4px solid var(--border-strong); border-radius:10px; padding:12px 14px; margin:0 0 10px; background:var(--bg-surface); color:var(--text-primary); }
+      .source-summary__head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .source-summary__status { color:var(--text-secondary); font-size:12px; margin-left:auto; }
+      .source-summary__context { color:var(--text-muted); font-size:12px; line-height:1.5; margin-top:7px; }
+      .inverse-context { min-width:0; border:1px solid var(--border-subtle); border-radius:8px; padding:10px 12px; margin:8px 0; background:var(--bg-elevated); color:var(--text-primary); }
+      .inverse-context__grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:7px 14px; margin-top:8px; font-size:12px; }
+      .inverse-context__grid span { min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+      .inverse-context__grid b { display:block; color:var(--text-muted); font-weight:600; margin-bottom:1px; }
+      .inverse-target-card { display:flex; align-items:center; gap:16px; width:100%; min-width:0; box-sizing:border-box; border:1px solid var(--border-subtle); border-radius:8px; padding:12px; background:var(--bg-surface); color:var(--text-primary); }
+      .inverse-target-card__swatch { width:88px; height:88px; flex:0 0 88px; border-radius:8px; border:2px solid rgba(255,255,255,.35); box-shadow:0 4px 14px rgba(0,0,0,.2); }
+      .inverse-target-card__text { min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+      .inverse-target-card__hex { font-size:20px; font-weight:700; color:var(--text-primary); }
+      .inverse-target-card__rgb { margin-top:4px; color:var(--text-secondary); font-size:13px; }
+      .inverse-method-row { min-width:0; padding:5px 0 2px; }
+      .inverse-method-row strong { color:var(--text-primary); }
+      .inverse-method-row span { display:block; color:var(--text-muted); font-size:12px; line-height:1.45; overflow-wrap:anywhere; word-break:break-word; }
+      .pattern-boundary { min-width:0; border-left:4px solid var(--accent-strong); padding:9px 12px; margin:8px 0 14px; background:var(--bg-elevated); color:var(--text-primary); line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
+      .pattern-boundary strong { color:var(--text-primary); }
+      .pattern-boundary span { color:var(--text-muted); font-size:12px; }
+      .pattern-empty { min-width:0; padding:10px 0 4px; color:var(--text-secondary); line-height:1.55; }
+      .pattern-empty strong { color:var(--text-primary); }
+      .pattern-empty ol { margin:7px 0 0; padding-left:1.35rem; }
+      .pattern-empty li { margin:4px 0; }
+      .mapping-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; margin:8px 0 10px; }
+      .mapping-summary__item { min-width:0; border:1px solid var(--border-subtle); border-radius:8px; padding:9px 11px; background:var(--bg-elevated); color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+      .mapping-summary__item strong { display:block; color:var(--text-primary); margin-bottom:2px; }
+      .mapping-legend { display:flex; align-items:center; gap:8px 16px; flex-wrap:wrap; margin:7px 0 10px; color:var(--text-secondary); font-size:12px; }
+      .mapping-legend span { display:inline-flex; align-items:center; gap:6px; }
+      /* 图例"可用"色块用真实色域切片,而不是一个本系统生成不出来的蓝 */
+      .mapping-legend i { width:18px; height:14px; border-radius:3px; display:inline-block; border:1px solid var(--border-strong); background:linear-gradient(135deg,#E05100,#BB9B00,#758E47,#463757); }
+      .mapping-legend .mapping-legend__unavailable { background:var(--bg-elevated); border-style:dashed; }
+      .mapping-legend .mapping-legend__current { background:var(--bg-elevated); border:2px solid var(--accent-soft); }
+      .mapping-table-wrap { width:100%; max-width:100%; overflow-x:auto; padding:0 0 4px; scrollbar-color:var(--border-strong) var(--bg-surface); }
+      .mapping-grid { width:100%; min-width:720px; border-collapse:separate; border-spacing:4px; table-layout:fixed; }
+      .mapping-grid caption { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+      .mapping-grid th { color:var(--text-secondary); font-size:11px; font-weight:650; text-align:center; padding:3px 2px; }
+      .mapping-grid th[scope="row"] { width:64px; }
+      .mapping-cell { position:relative; box-sizing:border-box; width:100%; min-height:64px; border:1px solid rgba(255,255,255,.16); border-radius:6px; display:flex; align-items:flex-end; justify-content:center; padding:5px; overflow:hidden; outline:none; }
+      .mapping-cell:focus-visible { outline:3px solid var(--focus-ring); outline-offset:2px; }
+      .mapping-cell__value { width:100%; border-radius:4px; padding:3px 4px; background:var(--scrim); color:var(--text-primary); font-size:10px; line-height:1.25; text-align:center; text-shadow:0 1px 2px #000; }
+      .mapping-cell--unavailable { align-items:center; border:1px dashed var(--border-strong); background:var(--bg-elevated); }
+      .mapping-cell--unavailable .mapping-cell__value { background:transparent; color:var(--text-secondary); text-shadow:none; }
+      .mapping-cell--current { border:3px solid var(--accent-soft); box-shadow:0 0 0 1px var(--scrim); }
+      .mapping-cell__current-label { position:absolute; top:4px; right:4px; border-radius:3px; padding:2px 4px; background:var(--accent-soft); color:var(--bg-deep); font-size:9px; font-weight:800; line-height:1.1; }
+      .audit-details { min-width:0; overflow-wrap:anywhere; word-break:break-word; color:var(--text-primary); font-size:12px; line-height:1.5; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:10px; padding:12px 14px; }
+      .audit-details__grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px 14px; }
+      .audit-details__section { border-top:1px solid var(--border-subtle); margin-top:10px; padding:10px 0 0; color:var(--text-primary); }
+      .audit-details__section span { color:var(--text-muted); font-weight:600; }
+      .audit-details__evidence { margin-top:12px; border:1px solid var(--border-subtle); border-radius:8px; background:var(--bg-deep); overflow:hidden; }
+      .audit-details__evidence > summary { cursor:pointer; color:var(--text-primary); font-weight:600; padding:9px 10px; list-style-position:inside; }
+      .audit-details__evidence > summary:hover { background:var(--bg-elevated); }
+      .audit-details__evidence-content { border-top:1px solid var(--border-subtle); padding:10px; color:var(--text-primary); font-family:ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; overflow-x:auto; }
+      [data-testid="stExpander"] details > summary { border-color:var(--border-subtle) !important; box-shadow:none !important; }
+      [data-testid="stExpander"] details > summary:focus,
+      [data-testid="stExpander"] details > summary:focus-visible,
+      .audit-details__evidence > summary:focus,
+      .audit-details__evidence > summary:focus-visible { outline:2px solid var(--focus-ring) !important; outline-offset:2px; border-color:var(--focus-ring) !important; box-shadow:0 0 0 2px var(--focus-halo) !important; }
+      [data-testid="stButton"] button:focus,
+      [data-testid="stButton"] button:focus-visible { outline:2px solid var(--focus-ring) !important; outline-offset:2px; border-color:var(--focus-ring) !important; box-shadow:0 0 0 2px var(--focus-halo) !important; }
+      @media (max-width: 560px) {
+        .block-container { padding-top:4.25rem !important; }
+        h1 { font-size:2rem !important; line-height:1.16 !important; }
+        h3 { font-size:1.35rem !important; line-height:1.25 !important; }
+        .source-summary__status { margin-left:0; width:100%; }
+        .inverse-target-card { align-items:flex-start; gap:12px; }
+        .inverse-target-card__swatch { width:72px; height:72px; flex-basis:72px; }
+        .mapping-summary { grid-template-columns:1fr; }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    """
+    <div class="competition-banner" aria-label="竞赛展示模式">
+      <strong>竞赛展示模式</strong>
+      <span>目标颜色 → 候选搜索 → 光谱 / 色度 → 结果导出</span>
+      <span style="color:var(--text-muted)">科研训练、holdout 与控制面不在此页面运行</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    """
+    <div class="workflow-hint" aria-label="工作流">
+      工作流：侧栏设置参数 → 预览颜色与来源 → 在“光谱”页核对，或进入“逆设计”搜索候选。
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Sidebar controls
 with st.sidebar:
     st.header('⚙️ 参数控制')
-    material = st.selectbox('材料 (Pillar)', MaterialLibrary.pillar_materials(), index=1)
-    substrate = st.selectbox('衬底 (Substrate)', MaterialLibrary.substrate_materials(), index=0)
-    
-    # --- Delta-n indicator (paper Fig.2 criterion) ---
-    n_pillar = MaterialLibrary.n_at_wavelength(material, 550)
-    n_sub = MaterialLibrary.n_at_wavelength(substrate, 550)
-    delta_n = n_pillar - n_sub
-    if delta_n > 0.6:
-        dn_color, dn_label = "#27ae60", f"Delta-n = {delta_n:.2f} | Good gamut expected"
-    elif delta_n > 0.4:
-        dn_color, dn_label = "#f39c12", f"Delta-n = {delta_n:.2f} | Near cutoff, limited gamut"
-    else:
-        dn_color, dn_label = "#e74c3c", f"Delta-n = {delta_n:.2f} | Below cutoff, no structural color"
-    st.markdown(
-        f"""<div style="background:{dn_color}18; border-left:3px solid {dn_color};
-        padding:6px 10px; border-radius:4px; margin:4px 0; font-size:0.82rem;">
-        {dn_label}</div>""",
-        unsafe_allow_html=True
-    )
-    
-    polarization = st.selectbox('偏振', ['TE (s-pol)', 'TM (p-pol)'], index=0)
-    if 'a_val' not in st.session_state:
-        st.session_state.a_val = 0.0
-    col_a1, col_a2 = st.columns([3, 1])
-    with col_a1:
-        st.session_state.a_val = st.slider('入射角 (°)', 0.0, 80.0, st.session_state.a_val, 0.1)
-    with col_a2:
-        st.session_state.a_val = st.number_input('精确输入 角度', 0.0, 80.0, st.session_state.a_val, 0.1)
-    angle = st.session_state.a_val
-
-    st.divider()
-    st.header('🔭 远场传播 (角谱理论)')
-    if 'far_field' not in st.session_state:
-        st.session_state.far_field = False
-    _fp_active = st.session_state.get('structure_type', 'single') == 'fp'
-    if _fp_active:
-        st.session_state.far_field = False
-    st.session_state.far_field = st.checkbox(
-        '启用角谱远场传播 (Angular Spectrum)',
-        value=st.session_state.far_field,
-        disabled=_fp_active,
-        help='FP腔模式不需要角谱（平面薄膜无衍射）' if _fp_active else 'N×N超表面阵列FFT角谱 + NA锥积分，计算探测器实际接收光谱'
-    )
-    if 'theta_obs' not in st.session_state:
-        st.session_state.theta_obs = 0.0
-    if 'na_val' not in st.session_state:
-        st.session_state.na_val = 0.1
-    col_t1, col_t2 = st.columns([3, 1])
-    with col_t1:
-        st.session_state.theta_obs = st.slider(
-            '观察角度 θ (°)', 0.0, 80.0, st.session_state.theta_obs, 1.0,
-            disabled=not st.session_state.far_field,
-            help='观察方向偏离法线的角度, 影响角谱中心位置'
-        )
-    with col_t2:
-        st.session_state.theta_obs = st.number_input(
-            '精确 θ', 0.0, 80.0, st.session_state.theta_obs, 1.0,
-            disabled=not st.session_state.far_field
-        )
-    col_n1, col_n2 = st.columns([3, 1])
-    with col_n1:
-        st.session_state.na_val = st.slider(
-            '收集数值孔径 NA', 0.05, 0.95, st.session_state.na_val, 0.01,
-            disabled=not st.session_state.far_field,
-            help='NA=0.1人眼瞳孔, NA=0.5显微镜20×, NA=0.95油镜100×'
-        )
-    with col_n2:
-        st.session_state.na_val = st.number_input(
-            '精确 NA', 0.05, 0.95, st.session_state.na_val, 0.01,
-            disabled=not st.session_state.far_field
-        )
-    st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
-
-    st.divider()
-    _ensure_ml()
-    _ensure_dual_ml()
-    st.header("ML 加速")
-    if 'ml_accel' not in st.session_state:
-        st.session_state.ml_accel = _ml_ready
-    st.session_state.ml_accel = st.checkbox(
-        '启用 ML 代理模型 (秒级预测)',
-        value=st.session_state.ml_accel,
-        disabled=not _ml_ready,
-        help='使用神经网络代替 Lorentzian 物理模型'
-    )
-    try:
-        if _ml_ready:
-            if _ml_is_v8:
-                st.caption("模型: v8 Substrate | 7维输入(含衬底) | 256x4残差块 | 4种材料+3种衬底")
-            else:
-                st.caption("模型: v7 Multi | 6维输入 | 256x4残差块 | 4种材料")
-        else:
-            st.caption("模型: 未加载 (缺少onnxruntime或ONNX模型文件)")
-    except Exception as e:
-        st.caption(f"模型: 错误 - {e}")
-    if _dual_ml_ready:
-        st.caption("双柱 ML: DualResMLP v3 (Multi) 可用")
-
-    if _ml_ready and st.session_state.get("ml_accel", False) and material not in ml_module.MATERIAL_CODES:
-        st.warning(f"⚠️ 「{material}」不在 ML 训练数据中，ML 已自动禁用（金属/空气材料物理模型仅供参考）")
-    st.divider()
-    st.header('📏 纳米柱尺寸')
-
-    if 'structure_type' not in st.session_state:
-        st.session_state.structure_type = 'single'
-    st.session_state.structure_type = st.radio(
+    _structure_options = ['单柱', '双柱', 'FP 腔（Fabry-Pérot）']
+    st.radio(
         '📏 结构类型',
-        ['单柱 (Single)', '双柱 (Dual)', 'FP腔 (Fabry-Perot)'],
-        index=0 if st.session_state.structure_type == 'single' else (1 if st.session_state.structure_type == 'dual' else 2),
+        _structure_options,
+        key="structure_type_control",
+        on_change=sync_enum_from_widget,
+        args=(st.session_state, _ENUM_CONTROLS["structure"]),
         horizontal=True,
         help='单柱/双柱纳米柱或法布里-珀罗腔'
     )
-    _struct_map = {'单柱 (Single)': 'single', '双柱 (Dual)': 'dual', 'FP腔 (Fabry-Perot)': 'fp'}
-    st.session_state.structure_type = _struct_map[st.session_state.structure_type]
     is_fp = st.session_state.structure_type == 'fp'
     is_dual = st.session_state.structure_type == 'dual'
     st.session_state.dual_pillar = is_dual
+
+    _pillar_materials = list(_PILLAR_MATERIAL_OPTIONS)
+    _substrate_materials = list(_SUBSTRATE_OPTIONS)
+
+    st.divider()
+    if is_fp:
+        material = st.session_state._pillar_material_pref
+        substrate = st.session_state._substrate_pref
+        st.caption(
+            "FP-TMM 使用腔体内固定材料；柱材料、衬底与 Δn 控件本路线未使用。"
+            "返回单柱或双柱后恢复先前选择。"
+        )
+    else:
+        st.selectbox(
+            '柱材料', _pillar_materials, key="pillar_material_control",
+            on_change=sync_enum_from_widget,
+            args=(st.session_state, _ENUM_CONTROLS["material"]),
+        )
+        st.selectbox(
+            '衬底材料', _substrate_materials, key="substrate_control",
+            on_change=sync_enum_from_widget,
+            args=(st.session_state, _ENUM_CONTROLS["substrate"]),
+        )
+        material = st.session_state._pillar_material_pref
+        substrate = st.session_state._substrate_pref
+
+        # --- Delta-n indicator (paper Fig.2 criterion) ---
+        n_pillar = MaterialLibrary.n_at_wavelength(material, 550)
+        n_sub = MaterialLibrary.n_at_wavelength(substrate, 550)
+        delta_n = n_pillar - n_sub
+        if delta_n > 0.6:
+            dn_color, dn_label = "#27ae60", f"折射率差 Δn = {delta_n:.2f}｜预计色域较宽"
+        elif delta_n > 0.4:
+            dn_color, dn_label = "#f39c12", f"折射率差 Δn = {delta_n:.2f}｜接近截止，色域受限"
+        else:
+            dn_color, dn_label = "#e74c3c", f"折射率差 Δn = {delta_n:.2f}｜低于截止，难以形成结构色"
+        st.markdown(
+            f"""<div style="background:{dn_color}18; border-left:3px solid {dn_color};
+            padding:6px 10px; border-radius:4px; margin:4px 0; font-size:0.82rem;">
+            {dn_label}</div>""",
+            unsafe_allow_html=True
+        )
+
+    st.selectbox(
+        '偏振', list(_POLARIZATION_OPTIONS), key="polarization_control",
+        on_change=sync_enum_from_widget,
+        args=(st.session_state, _ENUM_CONTROLS["polarization"]),
+    )
+    polarization = st.session_state.polarization
+    col_a1, col_a2 = st.columns([3, 1])
+    with col_a1:
+        st.slider(
+            '入射角 (°)', 0.0, 80.0, step=0.1, key="angle_slider",
+            on_change=sync_numeric_from_widget,
+            args=(st.session_state, _NUMERIC_CONTROLS["angle"], "angle_slider"),
+        )
+    with col_a2:
+        st.number_input(
+            '精确输入 角度', 0.0, 80.0, step=0.1, key="angle_input",
+            on_change=sync_numeric_from_widget,
+            args=(st.session_state, _NUMERIC_CONTROLS["angle"], "angle_input"),
+        )
+    angle = float(st.session_state.a_val)
+
+    st.divider()
+    st.header('🔭 远场传播 (角谱理论)')
+    if is_fp:
+        st.caption(
+            "FP-TMM 是平面薄膜腔路线，本路线未使用角谱远场。"
+            f"先前远场偏好已保留为{'开启' if st.session_state.far_field else '关闭'}。"
+        )
+    else:
+        st.checkbox(
+            '启用角谱远场传播 (Angular Spectrum)', key="far_field_control",
+            on_change=sync_bool_from_widget,
+            args=(st.session_state, _BOOL_CONTROLS["far_field"]),
+            help='N×N超表面阵列FFT角谱 + NA锥积分，计算探测器实际接收光谱',
+        )
+    if not is_fp and st.session_state.far_field:
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            st.slider(
+                '观察角度 θ (°)', 0.0, 80.0, step=1.0, key="theta_obs_slider",
+                on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["theta_obs"], "theta_obs_slider"),
+                help='观察方向偏离法线的角度, 影响角谱中心位置'
+            )
+        with col_t2:
+            st.number_input(
+                '精确 θ', 0.0, 80.0, step=1.0, key="theta_obs_input",
+                on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["theta_obs"], "theta_obs_input"),
+            )
+        col_n1, col_n2 = st.columns([3, 1])
+        with col_n1:
+            st.slider(
+                '收集数值孔径 NA', 0.05, 0.95, step=0.01, key="na_slider",
+                on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["na"], "na_slider"),
+                help='NA=0.1人眼瞳孔, NA=0.5显微镜20×, NA=0.95油镜100×'
+            )
+        with col_n2:
+            st.number_input(
+                '精确 NA', 0.05, 0.95, step=0.01, key="na_input",
+                on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["na"], "na_input"),
+            )
+        st.caption('👁 NA=0.1人眼 | 🔬 NA=0.5显微镜 | 🔍 NA=0.95油镜')
+    elif not is_fp:
+        st.caption('远场未启用；启用后显示观察角度与 NA 控件。')
+
+    st.divider()
+    st.header("ML 加速")
+    _ml_loader_completed = False
+    _current_ml_ready = False
+    if (
+        not is_fp
+        and not st.session_state.far_field
+        and material in ml_module.MATERIAL_CODES
+    ):
+        if is_dual:
+            _dual_ready = bool(_ensure_dual_ml())
+            _current_ml_ready = bool(
+                _dual_ready and substrate == "SiO2 (fused silica)"
+            )
+        else:
+            _current_ml_ready = bool(_ensure_ml())
+        _ml_loader_completed = True
+    if (
+        not st.session_state[ML_ACCEL_PREFERENCE_INITIALIZED_KEY]
+        and _ml_loader_completed
+    ):
+        set_bool_value(
+            st.session_state, _BOOL_CONTROLS["ml_accel"], _current_ml_ready)
+        st.session_state[ML_ACCEL_PREFERENCE_INITIALIZED_KEY] = True
+    _ml_preference_label = '开启' if st.session_state.ml_accel else '关闭'
+    _ml_route_applicable = bool(
+        not is_fp
+        and not st.session_state.far_field
+        and material in ml_module.MATERIAL_CODES
+        and ((_dual_ml_ready and substrate == "SiO2 (fused silica)") if is_dual else _ml_ready)
+    )
+    if _ml_route_applicable:
+        _ml_control_label = (
+            '启用双柱 ML 代理模型' if is_dual
+            else '启用 ML 代理模型（快速候选预测）'
+        )
+        st.checkbox(
+            _ml_control_label, key="ml_accel_control",
+            on_change=sync_bool_preference_from_widget,
+            args=(
+                st.session_state, _BOOL_CONTROLS["ml_accel"],
+                ML_ACCEL_PREFERENCE_INITIALIZED_KEY,
+            ),
+            help='使用当前结构路线注册的神经网络代理模型',
+        )
+        if is_dual:
+            st.caption(
+                f"当前可用模型：{_DUAL_MODEL_RELATIVE_PATH}；"
+                "仅支持已注册训练域内的 SiO2 衬底。")
+        elif _ml_is_v8:
+            st.caption("当前可用模型：v8 衬底条件模型（Substrate）· 7维输入 · 4种材料 + 3种衬底。")
+        else:
+            st.caption("当前可用模型：v7 Multi · 6维输入 · 4种材料。")
+    else:
+        if is_fp:
+            _ml_inactive_reason = "FP-TMM 直接计算薄膜腔光谱"
+        elif st.session_state.far_field:
+            _ml_inactive_reason = "远场路线使用解析局部响应 + 角谱/NA 后处理"
+        elif is_dual and not _dual_ml_ready:
+            _ml_inactive_reason = f"双柱 ONNX 模型不可用（{_dual_ml_error or '未加载'}）"
+        elif is_dual and substrate != "SiO2 (fused silica)":
+            _ml_inactive_reason = "双柱 ML 仅注册 SiO2 衬底"
+        elif material not in ml_module.MATERIAL_CODES:
+            _ml_inactive_reason = f"{material} 不在 ML 注册材料中"
+        else:
+            _ml_inactive_reason = _ml_error or "本地 ML 模型不可用"
+        st.caption(
+            f"本路线未使用 ML：{_ml_inactive_reason}。"
+            f"用户 ML 偏好已保留为{_ml_preference_label}，返回适用路线后恢复。"
+        )
+    st.divider()
+    st.header('📏 纳米柱尺寸')
+    _single_geometry_invalid = False
     st.caption('单柱/双柱纳米柱或FP腔 | 双柱模式搜索空间大')
 
-    if 'd_val' not in st.session_state:
-        st.session_state.d_val = 180.0
-    if 'h_val' not in st.session_state:
-        st.session_state.h_val = 300.0
-    if 'p_val' not in st.session_state:
-        st.session_state.p_val = 400.0
-    # Dual-pillar state
-    if 'd1_val' not in st.session_state:
-        st.session_state.d1_val = 120.0
-    if 'h1_val' not in st.session_state:
-        st.session_state.h1_val = 250.0
-    if 'd2_val' not in st.session_state:
-        st.session_state.d2_val = 200.0
-    if 'h2_val' not in st.session_state:
-        st.session_state.h2_val = 350.0
     if st.session_state.dual_pillar:
         # 预验证: 在渲染滑块前先修正参数, 确保滑块显示修正后的值
         try:
@@ -284,50 +2137,87 @@ with st.sidebar:
                 material, substrate, polarization, angle
             )
             if pre._corrected:
-                st.session_state.p_val = pre.period_nm
-                st.session_state.d1_val = pre.d1_nm
-                st.session_state.d2_val = pre.d2_nm
+                set_numeric_value(
+                    st.session_state, _NUMERIC_CONTROLS["period"], pre.period_nm)
+                set_numeric_value(
+                    st.session_state, _NUMERIC_CONTROLS["dual_d1"], pre.d1_nm)
+                set_numeric_value(
+                    st.session_state, _NUMERIC_CONTROLS["dual_d2"], pre.d2_nm)
                 st.session_state._dual_correction = pre._correction_msg
                 st.session_state._prev_dual_params = (pre.d1_nm, pre.d2_nm, pre.period_nm)
         except Exception as e:
             logging.warning(f"dual param preview: {e}")
 
         # --- Dual-Pillar Controls ---
-        # Safety clamp all values before rendering widgets
-        st.session_state.d1_val = max(50.0, min(350.0, st.session_state.d1_val))
-        st.session_state.h1_val = max(80.0, min(600.0, st.session_state.h1_val))
-        st.session_state.d2_val = max(50.0, min(350.0, st.session_state.d2_val))
-        st.session_state.h2_val = max(80.0, min(600.0, st.session_state.h2_val))
-        st.session_state.p_val = max(200.0, min(600.0, st.session_state.p_val))
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
-            st.session_state.d1_val = st.slider('柱1直径 D1 (nm)', 50.0, 350.0, st.session_state.d1_val, 0.1)
+            st.slider(
+                '柱1直径 D1 (nm)', 50.0, 350.0, step=0.1,
+                key="dual_d1_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_d1"], "dual_d1_slider"),
+            )
         with col_d2:
-            st.session_state.d1_val = st.number_input('精确输入 D1', 50.0, 350.0, st.session_state.d1_val, 0.1)
+            st.number_input(
+                '精确输入 D1', 50.0, 350.0, step=0.1,
+                key="dual_d1_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_d1"], "dual_d1_input"),
+            )
 
         col_h1, col_h2 = st.columns([3, 1])
         with col_h1:
-            st.session_state.h1_val = st.slider('柱1高度 H1 (nm)', 80.0, 600.0, st.session_state.h1_val, 0.1)
+            st.slider(
+                '柱1高度 H1 (nm)', 80.0, 600.0, step=0.1,
+                key="dual_h1_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_h1"], "dual_h1_slider"),
+            )
         with col_h2:
-            st.session_state.h1_val = st.number_input('精确输入 H1', 80.0, 600.0, st.session_state.h1_val, 0.1)
+            st.number_input(
+                '精确输入 H1', 80.0, 600.0, step=0.1,
+                key="dual_h1_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_h1"], "dual_h1_input"),
+            )
 
         col_d3, col_d4 = st.columns([3, 1])
         with col_d3:
-            st.session_state.d2_val = st.slider('柱2直径 D2 (nm)', 50.0, 350.0, st.session_state.d2_val, 0.1)
+            st.slider(
+                '柱2直径 D2 (nm)', 50.0, 350.0, step=0.1,
+                key="dual_d2_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_d2"], "dual_d2_slider"),
+            )
         with col_d4:
-            st.session_state.d2_val = st.number_input('精确输入 D2', 50.0, 350.0, st.session_state.d2_val, 0.1)
+            st.number_input(
+                '精确输入 D2', 50.0, 350.0, step=0.1,
+                key="dual_d2_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_d2"], "dual_d2_input"),
+            )
 
         col_h3, col_h4 = st.columns([3, 1])
         with col_h3:
-            st.session_state.h2_val = st.slider('柱2高度 H2 (nm)', 80.0, 600.0, st.session_state.h2_val, 0.1)
+            st.slider(
+                '柱2高度 H2 (nm)', 80.0, 600.0, step=0.1,
+                key="dual_h2_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_h2"], "dual_h2_slider"),
+            )
         with col_h4:
-            st.session_state.h2_val = st.number_input('精确输入 H2', 80.0, 600.0, st.session_state.h2_val, 0.1)
+            st.number_input(
+                '精确输入 H2', 80.0, 600.0, step=0.1,
+                key="dual_h2_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["dual_h2"], "dual_h2_input"),
+            )
 
         col_p1, col_p2 = st.columns([3, 1])
         with col_p1:
-            st.session_state.p_val = st.slider('周期 P (nm)', 200.0, 600.0, st.session_state.p_val, 0.1)
+            st.slider(
+                '周期 P (nm)', 200.0, 600.0, step=0.1,
+                key="dual_p_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["period"], "dual_p_slider"),
+            )
         with col_p2:
-            st.session_state.p_val = st.number_input('精确输入 P', 200.0, 600.0, st.session_state.p_val, 0.1)
+            st.number_input(
+                '精确输入 P', 200.0, 600.0, step=0.1,
+                key="dual_p_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["period"], "dual_p_input"),
+            )
 
         diameter = st.session_state.d1_val  # for backward compat
         height = st.session_state.h1_val
@@ -343,27 +2233,40 @@ with st.sidebar:
             st.warning('⚠️ 占空比总和 {:.2f} > 0.85: 纳米柱可能重叠'.format(fill1+fill2))
     elif is_fp:
         # --- FP Cavity Controls ---
-        if 'fp_t_val' not in st.session_state:
-            st.session_state.fp_t_val = 200.0
-        if 'fp_mirror_type' not in st.session_state:
-            st.session_state.fp_mirror_type = '介质 DBR (TiO2/SiO2)'
-        if 'fp_target_wl' not in st.session_state:
-            st.session_state.fp_target_wl = 450.0
-
-        st.session_state.fp_mirror_type = st.selectbox(
-            '反射镜类型',
-            ['介质 DBR (TiO2/SiO2)', '金属 Ag (减色)'],
-            index=0 if st.session_state.fp_mirror_type.startswith('介质') else 1,
+        st.selectbox(
+            '反射镜类型', list(_FP_MIRROR_OPTIONS),
+            key="fp_mirror_type_control", on_change=sync_enum_from_widget,
+            args=(st.session_state, _ENUM_CONTROLS["fp_mirror"]),
         )
 
         if st.session_state.fp_mirror_type.startswith('介质'):
-            st.session_state.fp_target_wl = st.slider('DBR 中心波长 (nm)', 380.0, 780.0, st.session_state.fp_target_wl, 5.0)
+            col_c1, col_c2 = st.columns([3, 1])
+            with col_c1:
+                st.slider(
+                    'DBR 中心波长 (nm)', 380.0, 780.0, step=5.0,
+                    key="fp_center_slider", on_change=sync_numeric_from_widget,
+                    args=(st.session_state, _NUMERIC_CONTROLS["fp_center"], "fp_center_slider"),
+                )
+            with col_c2:
+                st.number_input(
+                    '精确中心波长', 380.0, 780.0, step=5.0,
+                    key="fp_center_input", on_change=sync_numeric_from_widget,
+                    args=(st.session_state, _NUMERIC_CONTROLS["fp_center"], "fp_center_input"),
+                )
 
         col_t1, col_t2 = st.columns([3, 1])
         with col_t1:
-            st.session_state.fp_t_val = st.slider('腔长 T (nm)', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
+            st.slider(
+                '腔长 T (nm)', 50.0, 600.0, step=1.0,
+                key="fp_t_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["fp_t"], "fp_t_slider"),
+            )
         with col_t2:
-            st.session_state.fp_t_val = st.number_input('腔长 T', 50.0, 600.0, st.session_state.fp_t_val, 1.0)
+            st.number_input(
+                '精确输入 T', 50.0, 600.0, step=1.0,
+                key="fp_t_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["fp_t"], "fp_t_input"),
+            )
         diameter = 0; height = st.session_state.fp_t_val; period = 0
         if st.session_state.fp_mirror_type.startswith('介质'):
             st.caption('FP腔 (DBR): (TiO2/SiO2)3 / TiO2(T) / (SiO2/TiO2)5 | 高饱和度')
@@ -373,27 +2276,55 @@ with st.sidebar:
         # --- Single-Pillar Controls (original) ---
         col_d1, col_d2 = st.columns([3, 1])
         with col_d1:
-            st.session_state.d_val = st.slider('直径 D (nm)', 50.0, 350.0, st.session_state.d_val, 0.1)
+            st.slider(
+                '直径 D (nm)', 50.0, 350.0, step=0.1,
+                key="single_d_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["single_d"], "single_d_slider"),
+            )
         with col_d2:
-            st.session_state.d_val = st.number_input('精确输入 D', 50.0, 350.0, st.session_state.d_val, 0.1)
+            st.number_input(
+                '精确输入 D', 50.0, 350.0, step=0.1,
+                key="single_d_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["single_d"], "single_d_input"),
+            )
         diameter = st.session_state.d_val
 
         col_h1, col_h2 = st.columns([3, 1])
         with col_h1:
-            st.session_state.h_val = st.slider('高度 H (nm)', 80.0, 600.0, st.session_state.h_val, 0.1)
+            st.slider(
+                '高度 H (nm)', 80.0, 600.0, step=0.1,
+                key="single_h_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["single_h"], "single_h_slider"),
+            )
         with col_h2:
-            st.session_state.h_val = st.number_input('精确输入 H', 80.0, 600.0, st.session_state.h_val, 0.1)
+            st.number_input(
+                '精确输入 H', 80.0, 600.0, step=0.1,
+                key="single_h_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["single_h"], "single_h_input"),
+            )
         height = st.session_state.h_val
 
         col_p1, col_p2 = st.columns([3, 1])
         with col_p1:
-            st.session_state.p_val = st.slider('周期 P (nm)', 200.0, 600.0, st.session_state.p_val, 0.1)
+            st.slider(
+                '周期 P (nm)', 200.0, 600.0, step=0.1,
+                key="single_p_slider", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["period"], "single_p_slider"),
+            )
         with col_p2:
-            st.session_state.p_val = st.number_input('精确输入 P', 200.0, 600.0, st.session_state.p_val, 0.1)
+            st.number_input(
+                '精确输入 P', 200.0, 600.0, step=0.1,
+                key="single_p_input", on_change=sync_numeric_from_widget,
+                args=(st.session_state, _NUMERIC_CONTROLS["period"], "single_p_input"),
+            )
         period = st.session_state.p_val
 
         if diameter > period:
             st.warning('⚠️ D > P：纳米柱会重叠，请调整')
+
+    _single_geometry_invalid = (
+        not is_fp and not is_dual and float(diameter) > float(period)
+    )
 
     st.divider()
     presets = {
@@ -431,23 +2362,85 @@ if st.session_state.get('dual_pillar', False):
     st.session_state._prev_dual_params = (
         st.session_state.d1_val, st.session_state.d2_val, st.session_state.p_val
     )
-elif is_fp:
-    param = MetaSurfaceParam(0, st.session_state.fp_t_val, 0, 'TiO2 (anatase)', 'SiO2 (fused silica)', polarization, angle)  # FP dummy
-else:
+elif not is_fp:
     param = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, angle)
-# Cached color lookup: avoid recomputing for same parameters
-@st.cache_data
-def _cached_physical_color(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm, dual, far_field, na, theta_obs):
-    engine._enable_far_field = far_field
-    engine._na = na
-    engine._theta_obs_deg = theta_obs
+def _cached_physical_forward(d_nm, h_nm, p_nm, mat, sub, pol, ang, d2_nm, h2_nm,
+                             dual, far_field, na, theta_obs):
+    """Return the physical route's actual spectrum; color is derived from it."""
+    configure_engine_far_field(engine, far_field, na, theta_obs)
     if dual:
         p = DualPillarParam(d1_nm=d_nm, h1_nm=h_nm, d2_nm=d2_nm, h2_nm=h2_nm,
                             period_nm=p_nm, material=mat, substrate=sub,
                             polarization=pol, angle_deg=ang)
     else:
         p = MetaSurfaceParam(d_nm, h_nm, p_nm, mat, sub, pol, ang)
-    return engine.physical_color(p)
+    return engine.compute_spectrum(p, 380, 780, 81)
+
+
+def _forward_result(wavelengths, reflectance, provenance, *, rgb=None, error=""):
+    """Normalize one route output for every UI surface and export."""
+    return normalize_forward_result(
+        wavelengths, reflectance, provenance, rgb=rgb, error=error)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_mapping_forward(
+    route_id, model_version, artifact_version, d_nm, h_nm, p_nm, material, substrate,
+    polarization, angle_deg, far_field, na, theta_obs,
+):
+    """Evaluate one map point through the selected forward family only."""
+    del model_version, artifact_version  # Both remain part of the Streamlit cache key.
+    try:
+        if route_id == "rcwa_surrogate":
+            with _bound_runtime_context(
+                    "single", "rcwa_surrogate", material, substrate):
+                spectrum = _predict_rcwa_spectrum_strict(
+                    d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
+            if spectrum is None:
+                return ForwardResult(None, None, None, {}, False, "RCWA 代理未返回光谱")
+            return _forward_result(ml_module.WL, spectrum, {})
+        if route_id == "ml_surrogate":
+            with _bound_runtime_context(
+                    "single", "ml_surrogate", material, substrate):
+                spectrum = ml_module.predict_generic_spectrum(
+                    d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
+            if spectrum is None:
+                return ForwardResult(None, None, None, {}, False, "通用 ML 代理未返回光谱")
+            return _forward_result(ml_module.WL, spectrum, {})
+        if route_id in {"lorentz_fano_fallback", "far_field_postprocessing"}:
+            wavelengths, reflectance = _cached_physical_forward(
+                d_nm, h_nm, p_nm, material, substrate, polarization, angle_deg,
+                0.0, 0.0, False, far_field, na, theta_obs)
+            return _forward_result(wavelengths, reflectance, {})
+    except (ModelResourceDriftError, ModelResourceUnavailable):
+        raise
+    except Exception as exc:
+        return ForwardResult(
+            None, None, None, {}, False,
+            f"映射路线求值失败: {type(exc).__name__}")
+    return ForwardResult(None, None, None, {}, False, f"映射不支持路线 {route_id}")
+
+
+def _predict_rcwa_spectrum_strict(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate,
+                                  predictor=None):
+    """Use only the registered RCWA surrogate; never fall through to generic ML."""
+    try:
+        if predictor is not None:
+            return predictor(d_nm, h_nm, p_nm, angle_deg=angle_deg, polarization=polarization)
+        frozen = getattr(ml_module, "freeze_rcwa_spectrum_predictor", lambda *a, **k: None)(
+            material, substrate, angle_deg)
+        if frozen is not None:
+            return frozen(d_nm, h_nm, p_nm, angle_deg=angle_deg, polarization=polarization)
+        if material in getattr(ml_module, "_RCWA_WL_SESSIONS", {}) and abs(float(angle_deg)) < 5:
+            spec = ml_module._predict_rcwa_wavelength(material, substrate, d_nm, h_nm, p_nm)
+            return None if spec is None else np.clip(spec, 0, None)
+        if ml_module._should_use_rcwa(material, substrate, angle_deg):
+            x = ml_module._build_rcwa_input(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
+            spec = ml_module._ensemble_predict(material, substrate, x)
+            return None if spec is None else np.clip(spec, 0, None)
+    except Exception as exc:
+        logging.debug("strict RCWA surrogate failed: %s", exc)
+    return None
 
 
 # FP cavity module imported from fp_cavity.py
@@ -456,91 +2449,364 @@ from fp_cavity import (
     fp_cavity_spectrum, fp_dielectric_spectrum,
 )
 
-try:
-    use_ml = st.session_state.get('ml_accel', False) and _ml_ready and not st.session_state.get('far_field', False) and material in ml_module.MATERIAL_CODES and not is_fp
-except Exception:
-    use_ml = False
-try:
-    use_dual_ml = use_ml and st.session_state.get('dual_pillar', False) and _dual_ml_ready
-except Exception:
-    use_dual_ml = False
-
-# Dual ML model does not support substrate selection (trained only on SiO2)
-# When non-default substrate: fall back to physical model
-if use_dual_ml and substrate != "SiO2 (fused silica)":
-    use_dual_ml = False
-
-if use_dual_ml:
-    d1v = st.session_state.get('d1_val', diameter)
-    h1v = st.session_state.get('h1_val', height)
-    d2v = st.session_state.get('d2_val', diameter)
-    h2v = st.session_state.get('h2_val', height)
-    ml_rgb = ml_module.predict_dual_rgb(d1v, h1v, d2v, h2v, period, angle, polarization, material)
-    if ml_rgb is not None:
-        rgb = ml_rgb
-    else:
-        rgb = _cached_physical_color(
-            round(st.session_state.d1_val, 1), round(st.session_state.h1_val, 1), round(st.session_state.p_val, 1),
-            material, substrate, polarization, round(angle, 1),
-            round(st.session_state.d2_val, 1), round(st.session_state.h2_val, 1), True,
-            st.session_state.get('far_field', False),
-            round(st.session_state.get('na_val', 0.1), 2),
-            round(st.session_state.get('theta_obs', 0.0), 1))
-elif use_ml and not st.session_state.get('dual_pillar', False):
-    ml_rgb = ml_module.predict_rgb(diameter, height, period, angle, polarization, material, substrate)
-    if ml_rgb is not None:
-        rgb = ml_rgb
-    else:
-        rgb = _cached_physical_color(
-            round(diameter, 1), round(height, 1), round(period, 1),
-            material, substrate, polarization, round(angle, 1),
-            0.0, 0.0, False,
-            st.session_state.get('far_field', False),
-            round(st.session_state.get('na_val', 0.1), 2),
-            round(st.session_state.get('theta_obs', 0.0), 1))
-else:
-    if st.session_state.get('dual_pillar', False):
-        rgb = _cached_physical_color(
-            round(st.session_state.d1_val, 1), round(st.session_state.h1_val, 1), round(st.session_state.p_val, 1),
-            material, substrate, polarization, round(angle, 1),
-            round(st.session_state.d2_val, 1), round(st.session_state.h2_val, 1), True,
-            st.session_state.get('far_field', False),
-            round(st.session_state.get('na_val', 0.1), 2),
-            round(st.session_state.get('theta_obs', 0.0), 1))
-    else:
-        rgb = _cached_physical_color(
-            round(diameter, 1), round(height, 1), round(period, 1),
-            material, substrate, polarization, round(angle, 1),
-            0.0, 0.0, False,
-            st.session_state.get('far_field', False),
-            round(st.session_state.get('na_val', 0.1), 2),
-            round(st.session_state.get('theta_obs', 0.0), 1))
-
-
-# FP mode: compute cavity spectrum color (after ML/physical fallback to prevent overwrite)
 is_dbr_fp = st.session_state.get('fp_mirror_type', '').startswith('介质')
-_fp_done = (st.session_state.structure_type == 'fp')
-if _fp_done:
+_single_ml_route_applicable = bool(
+    not is_fp
+    and not is_dual
+    and not _single_geometry_invalid
+    and st.session_state.get("ml_accel", False)
+    and _ml_ready
+    and not st.session_state.get('far_field', False)
+    and material in ml_module.MATERIAL_CODES
+)
+# The RCWA registry belongs only to an applicable single-pillar ML route.
+if _single_ml_route_applicable:
+    _ensure_rcwa_ml()
+
+_far_field_enabled = False
+if not is_fp:
+    _far_field_enabled = bool(st.session_state.get('far_field', False))
+    configure_engine_far_field(
+        engine, _far_field_enabled,
+        float(st.session_state.get("na_val", 0.1)),
+        float(st.session_state.get("theta_obs", 0.0)),
+    )
+_route_id = "lorentz_fano_fallback"
+_route_label = "Lorentz/Fano fallback"
+_route_chain = ["Lorentz/Fano + CCM analytical response"]
+_route_reason = "当前配置未启用 ML 加速。"
+_route_model_version = "torch_model.py batch_lorentzian_spectrum"
+_route_boundary = "解析/半解析近似，不是直接 RCWA"
+_route_model_state = "not_selected"
+_route_call_error = ""
+_forward = None
+
+use_dual_ml = bool(
+    is_dual
+    and st.session_state.get('ml_accel', False)
+    and _dual_ml_ready
+    and not st.session_state.get('far_field', False)
+    and material in ml_module.MATERIAL_CODES
+    and substrate == "SiO2 (fused silica)"
+)
+use_single_ml = _single_ml_route_applicable
+use_ml = use_dual_ml if is_dual else use_single_ml
+
+if is_fp:
     if is_dbr_fp:
         _twl = st.session_state.get('fp_target_wl', 450.0)
-        _wls, _refl = fp_dielectric_spectrum(st.session_state.fp_t_val, _twl, 3, 5, angle, polarization.startswith('TE'))
+        _wls, _refl = fp_dielectric_spectrum(
+            st.session_state.fp_t_val, _twl, 3, 5, angle,
+            polarization.startswith('TE'))
     else:
-        _wls, _refl = fp_cavity_spectrum(st.session_state.fp_t_val, angle, polarization.startswith('TE'))
-    rgb = spectrum_to_srgb(_wls, _refl)
+        _wls, _refl = fp_cavity_spectrum(
+            st.session_state.fp_t_val, angle, polarization.startswith('TE'))
+    _forward = _forward_result(_wls, _refl, {})
+    _route_id = "fp_tmm"
+    _route_label = "FP cavity TMM"
+    _route_chain = ["FP cavity transfer-matrix spectrum", "CIE D65 colorimetry"]
+    _route_reason = (
+        "FP 腔使用顶层互斥 TMM 路线；未进入纳米柱代理、解析或远场路径。")
+    _route_model_version = "fp_cavity.py"
+    _route_boundary = "薄膜腔 TMM，不是 RCWA 纳米柱求解"
+    _route_model_state = "not_applicable"
+elif _single_geometry_invalid:
+    _forward = ForwardResult(None, None, None, {}, False, "单柱几何越域：D > P")
+    _route_id = "invalid_geometry"
+    _route_label = "Invalid geometry"
+    _route_chain = []
+    _route_reason = f"几何不可行：D={float(diameter):g} 大于 P={float(period):g}；已停止正向计算。"
+    _route_model_version = "未执行"
+    _route_boundary = "单柱要求 D ≤ P；当前配置不在模型/物理域内"
+    _route_model_state = "invalid_geometry"
+    _route_call_error = _route_reason
+    _forward = ForwardResult(None, None, None, {}, False, _route_reason)
+elif is_dual:
+    if use_dual_ml:
+        d1v = st.session_state.get('d1_val', diameter)
+        h1v = st.session_state.get('h1_val', height)
+        d2v = st.session_state.get('d2_val', diameter)
+        h2v = st.session_state.get('h2_val', height)
+        try:
+            with _bound_runtime_context(
+                    "dual", "ml_surrogate", material, substrate):
+                ml_spec = ml_module.predict_dual_spectrum(
+                    d1v, h1v, d2v, h2v, period, angle, polarization,
+                    material, substrate)
+        except Exception as exc:
+            logging.warning("dual ML spectrum failed: %s", exc)
+            _route_call_error = type(exc).__name__
+            ml_spec = None
+        if ml_spec is not None:
+            _route_id = "ml_surrogate"
+            _route_label = "ML surrogate"
+            _route_chain = [_DUAL_MODEL_RELATIVE_PATH, "CIE D65 colorimetry"]
+            _route_reason = "无回退；双柱 ML 模型已成功加载并返回预测。"
+            _route_model_state = "loaded_and_called"
+            _route_model_version = _DUAL_MODEL_RELATIVE_PATH
+            _route_boundary = "代理预测，不是直接 RCWA；仅支持 SiO2 衬底"
+            _forward = _forward_result(ml_module.WL, ml_spec, {})
+        else:
+            _route_reason = "双柱 ML 模型调用失败或未返回光谱，已回退到解析/半解析引擎。"
+            _route_model_state = "call_failed"
+    else:
+        if st.session_state.get('far_field', False):
+            _route_id = "far_field_postprocessing"
+            _route_label = "Far-field post-processing"
+            _route_chain = [
+                "Lorentz/Fano + CCM analytical response",
+                "angular-spectrum NA integration",
+            ]
+            _route_reason = "启用远场后，双柱 ML 直通禁用，使用解析局部响应与远场后处理。"
+            _route_model_version = "engine.py _dual_far_field_spectrum"
+            _route_boundary = "远场后处理链，不是直接 RCWA"
+        elif not st.session_state.get('ml_accel', False):
+            _route_reason = "用户未启用双柱 ML 加速，使用解析/半解析引擎。"
+            _route_model_state = "not_selected"
+        elif not _dual_ml_ready:
+            _route_reason = f"双柱 ML 未使用：{_dual_ml_error or '双柱 ONNX 模型不可用'}；当前使用解析/半解析引擎。"
+            _route_model_state = _dual_ml_state.get("state", "file_present_load_failed")
+        elif substrate != "SiO2 (fused silica)":
+            _route_reason = "双柱 ML 仅支持 SiO2 衬底，当前组合使用解析/半解析引擎。"
+    if _forward is None:
+        _wls, _refl = _cached_physical_forward(
+            round(st.session_state.d1_val, 1), round(st.session_state.h1_val, 1), round(st.session_state.p_val, 1),
+            material, substrate, polarization, round(angle, 1),
+            round(st.session_state.d2_val, 1), round(st.session_state.h2_val, 1), True,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
+        _forward = _forward_result(_wls, _refl, {})
+else:
+    if use_single_ml:
+        _rcwa_route_eligible = bool(
+            _rcwa_ml_ready and _rcwa_runtime_binding is not None
+            and abs(float(angle)) < 5
+        )
+        _rcwa_spectrum_predictor = None
+        try:
+            if _rcwa_route_eligible:
+                with _bound_runtime_context(
+                        "single", "rcwa_surrogate", material, substrate):
+                    _rcwa_spectrum_predictor = ml_module.freeze_rcwa_spectrum_predictor(
+                        material, substrate, angle)
+                    ml_spec = _predict_rcwa_spectrum_strict(
+                        diameter, height, period, angle, polarization, material,
+                        substrate, predictor=_rcwa_spectrum_predictor)
+            else:
+                with _bound_runtime_context(
+                        "single", "ml_surrogate", material, substrate):
+                    ml_spec = ml_module.predict_generic_spectrum(
+                        diameter, height, period, angle, polarization, material,
+                        substrate)
+        except Exception as exc:
+            logging.warning("ML spectrum failed: %s", exc)
+            _route_call_error = type(exc).__name__
+            ml_spec = None
+        _single_rcwa_route = bool(
+            _rcwa_route_eligible and _rcwa_spectrum_predictor is not None)
+        if ml_spec is not None:
+            if _single_rcwa_route:
+                _route_id = "rcwa_surrogate"
+                _route_label = "RCWA-trained ML surrogate"
+                _route_chain = ["RCWA-trained ensemble", "CIE D65 colorimetry"]
+                _route_model_version = ", ".join(
+                    os.path.basename(path)
+                    for path in _rcwa_runtime_binding.session_paths)
+                _route_boundary = "RCWA 训练代理，不是本次直接 RCWA 求解"
+                _route_reason = "无回退；RCWA 代理已成功加载并返回预测。"
+                _route_model_state = "loaded_and_called"
+            else:
+                _route_id = "ml_surrogate"
+                _route_label = "ML surrogate"
+                _route_chain = ["forward_mlp_v8_sub", "CIE D65 colorimetry"]
+                _route_model_version = "forward_mlp_v8_sub.onnx"
+                _route_boundary = "代理预测，不是直接 RCWA"
+                _route_reason = "无回退；通用 ML 已成功加载并返回预测。"
+                _route_model_state = "loaded_and_called"
+            _forward = _forward_result(ml_module.WL, ml_spec, {})
+        else:
+            _route_reason = "ML 代理调用失败或未返回光谱，已回退到解析/半解析引擎。"
+            _route_model_state = "call_failed"
+    else:
+        if st.session_state.get('far_field', False):
+            _route_id = "far_field_postprocessing"
+            _route_label = "Far-field post-processing"
+            _route_chain = ["Lorentz/Fano + CCM analytical response", "angular-spectrum NA integration"]
+            _route_reason = "启用远场后，当前实现禁用 ML 直通，先计算局部响应再做角谱/NA 后处理。"
+            _route_model_version = "engine.py _far_field_spectrum"
+            _route_boundary = "远场后处理链，不是直接 RCWA"
+        elif not st.session_state.get('ml_accel', False):
+            _route_reason = "用户未启用 ML 加速，使用解析/半解析引擎。"
+            _route_model_state = "not_selected"
+        elif not _ml_ready:
+            _route_reason = f"ML 模型不可用或未加载，使用解析/半解析引擎。原因：{_ml_error or '未知'}"
+            _route_model_state = _ml_state.get("state", "load_failed")
+        elif material not in ml_module.MATERIAL_CODES:
+            _route_reason = f"材料 {material} 不在 ML 训练集合内，使用解析/半解析引擎。"
+    if _forward is None:
+        _wls, _refl = _cached_physical_forward(
+            round(diameter, 1), round(height, 1), round(period, 1),
+            material, substrate, polarization, round(angle, 1),
+            0.0, 0.0, False,
+            st.session_state.get('far_field', False),
+            round(st.session_state.get('na_val', 0.1), 2),
+            round(st.session_state.get('theta_obs', 0.0), 1))
+        _forward = _forward_result(_wls, _refl, {})
 
-# Ensure RCWA ML models are loaded
-_ensure_rcwa_ml()
+# A non-None model return still must pass spectrum and color validation.
+if (_forward is not None and _route_model_state == "loaded_and_called"
+        and not _forward.spectrum_available):
+    _route_model_state = "output_validation_failed"
+    _route_call_error = _forward.error
+
+_provenance_material = "TiO2 (cavity layer)" if is_fp else material
+_provenance_substrate = (
+    "SiO2 (DBR mirror stack)" if is_fp and is_dbr_fp
+    else "Ag (metal mirrors)" if is_fp
+    else substrate
+)
+if is_fp:
+    _structure_type = "fp"
+    _mirror_type = str(st.session_state.fp_mirror_type)
+    _t_nm = float(st.session_state.fp_t_val)
+    if is_dbr_fp:
+        _structure_label = "FP-DBR 腔"
+        _center_nm = float(st.session_state.get("fp_target_wl", 450.0))
+        _geometry = {
+            "T_nm": _t_nm,
+            "center_wavelength_nm": _center_nm,
+            "top_pairs": 3.0,
+            "bottom_pairs": 5.0,
+        }
+        _geometry_summary = (
+            f"T={_t_nm:g} nm, center={_center_nm:g} nm, DBR pairs=3/5")
+        _stack_identity = (
+            "(TiO2/SiO2)^3 / TiO2(T) / (SiO2/TiO2)^5")
+    else:
+        _structure_label = "FP-Ag 腔"
+        _geometry = {"T_nm": _t_nm, "top_ag_nm": 30.0}
+        _geometry_summary = f"T={_t_nm:g} nm, top Ag=30 nm, bottom Ag=bulk"
+        _stack_identity = "Ag(30 nm) / TiO2(T) / Ag(bulk)"
+elif is_dual:
+    _structure_type = "dual"
+    _structure_label = "双柱"
+    _mirror_type = ""
+    _stack_identity = ""
+    _geometry = {
+        "D1_nm": float(st.session_state.d1_val),
+        "H1_nm": float(st.session_state.h1_val),
+        "D2_nm": float(st.session_state.d2_val),
+        "H2_nm": float(st.session_state.h2_val),
+        "P_nm": float(period),
+    }
+    _geometry_summary = (
+        f"D1={_geometry['D1_nm']:g} nm, H1={_geometry['H1_nm']:g} nm, "
+        f"D2={_geometry['D2_nm']:g} nm, H2={_geometry['H2_nm']:g} nm, "
+        f"P={_geometry['P_nm']:g} nm")
+else:
+    _structure_type = "single"
+    _structure_label = "单柱"
+    _mirror_type = ""
+    _stack_identity = ""
+    _geometry = {
+        "D_nm": float(diameter),
+        "H_nm": float(height),
+        "P_nm": float(period),
+    }
+    _geometry_summary = (
+        f"D={_geometry['D_nm']:g} nm, H={_geometry['H_nm']:g} nm, "
+        f"P={_geometry['P_nm']:g} nm")
+_result_provenance = make_result_provenance(
+    _route_id, _route_label, _route_chain, _route_boundary, _route_reason,
+    _route_model_version, _provenance_material, _provenance_substrate, polarization, angle,
+    round(float(st.session_state.get('na_val', 0.1)), 2) if _far_field_enabled else "未启用",
+    float(st.session_state.get('theta_obs', 0.0)) if _far_field_enabled else 0.0,
+    structure_type=_structure_type,
+    structure_label=_structure_label,
+    geometry=_geometry,
+    geometry_summary=_geometry_summary,
+    mirror_type=_mirror_type,
+    stack_identity=_stack_identity,
+)
+_active_model_resource = (
+    _dual_runtime_binding if _structure_type == "dual" and _route_id == "ml_surrogate"
+    else _primary_runtime_binding if _structure_type == "single" and _route_id == "ml_surrogate"
+    else _rcwa_runtime_binding if _structure_type == "single" and _route_id == "rcwa_surrogate"
+    else None
+)
+_result_provenance["model_artifact_version"] = (
+    _active_model_resource.loaded_identity
+    if _active_model_resource is not None else "not_applicable")
+if _route_id in {"ml_surrogate", "rcwa_surrogate"}:
+    _model_fields = _model_provenance(
+        _dual_ml_state if is_dual else _ml_state,
+        called=_route_model_state == "loaded_and_called",
+        call_error=_route_call_error, state_override=_route_model_state)
+else:
+    _model_fields = {
+        "model_state": _route_model_state,
+        "model_file_present": "not_applicable",
+        "model_loaded": "not_applicable",
+        "model_call_error": _route_call_error,
+    }
+_result_provenance.update(_model_fields)
+if _forward is None:
+    _forward = ForwardResult(None, None, None, _result_provenance, False, "当前路由未生成结果")
+else:
+    _forward.provenance.update(_result_provenance)
+_result_provenance = sync_forward_status(_forward).provenance
+
+
+def _make_analysis_context(
+    analysis_type, sampling, *, route_id=None, model_version=None,
+    artifact_version=None, registry_version="ui-analysis-registry-v1",
+    angle_deg=None,
+):
+    """Freeze every user-visible input before an expensive analysis runs."""
+    context_route = str(route_id if route_id is not None else _route_id)
+    context_model = str(
+        model_version if model_version is not None else _route_model_version)
+    return AnalysisContext.create(
+        analysis_type,
+        structure_type=_structure_type,
+        geometry=dict(_geometry),
+        material=str(_provenance_material),
+        substrate=str(_provenance_substrate),
+        polarization=str(polarization),
+        angle_deg=float(angle if angle_deg is None else angle_deg),
+        route_id=context_route,
+        model_version=context_model,
+        artifact_version=str(
+            artifact_version
+            if artifact_version is not None
+            else _analysis_artifact_version(
+                context_route, context_model, structure_type=_structure_type,
+                material=_provenance_material, substrate=_provenance_substrate)),
+        registry_version=str(registry_version),
+        far_field_enabled=bool(_far_field_enabled),
+        na=float(st.session_state.get("na_val", 0.1)),
+        theta_obs_deg=float(st.session_state.get("theta_obs", 0.0)),
+        sampling=dict(sampling),
+    )
+
+
+rgb = _forward.rgb
+if rgb is None:
+    rgb = np.array([0.0, 0.0, 0.0], dtype=float)
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🔬 预览", "🎯 逆设计", "🖼️ 图案",
-    "📊 映射", "🌈 光谱"
+    "预览", "逆设计", "图案", "映射", "光谱"
 ])
 
 # Tab 1: 实时预览
 with tab1:
-    hex_color = rgb_to_hex(rgb)
+    _color_available = bool(_forward.spectrum_available and _forward.rgb is not None)
+    hex_color = rgb_to_hex(rgb) if _color_available else "#251F2B"
     r255, g255, b255 = rgb_255(rgb)
+
+    _render_result_provenance(_forward.provenance)
 
     # --- Correction hint for dual-pillar ---
     if st.session_state.get('dual_pillar', False):
@@ -559,57 +2825,72 @@ with tab1:
     else:
         param_info = f"D={diameter:.0f}nm  H={height:.0f}nm  P={period:.0f}nm"
     st.markdown(f"""
-    <div style="display:flex;align-items:center;gap:24px;padding:20px;
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:16px;
                 background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                 border-radius:16px;margin-bottom:20px;">
-      <div style="width:130px;height:130px;background:{hex_color};
+      <div style="width:clamp(88px,30vw,130px);height:clamp(88px,30vw,130px);background:{hex_color};
                   border-radius:16px;box-shadow:0 8px 32px {hex_color}66,
                   inset 0 1px 0 rgba(255,255,255,0.3);flex-shrink:0;"></div>
-      <div style="color:#e0e0e0;">
-        <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{hex_color}</div>
-        <div style="font-size:14px;opacity:0.85;">RGB({r255}, {g255}, {b255})</div>
+      <div style="color:#e0e0e0;min-width:0;overflow-wrap:anywhere;word-break:break-word;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{"不可用" if not _color_available else hex_color}</div>
+        <div style="font-size:14px;opacity:0.85;">{"当前路由未生成可用颜色" if not _color_available else f"RGB({r255}, {g255}, {b255})"}</div>
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
-          {st.session_state.get('fp_mirror_type', material) if is_fp else material} on {substrate}<br>
+          {(_forward.provenance.get('material', material) if is_fp else material)} on {(_forward.provenance.get('substrate', substrate) if is_fp else substrate)}<br>
           {param_info}<br>
           {polarization} &nbsp; &theta;={angle:.0f}&deg;
         </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # --- AI Analysis (DeepSeek LLM) ---
-    col_ai1, col_ai2 = st.columns([3, 1])
-    with col_ai2:
-        ai_clicked = st.button(u"🤖 AI 分析", key="ai_analyze_color", use_container_width=True,
-                     help=u"使用 DeepSeek 大模型分析当前颜色结果")
-    if ai_clicked:
-        with st.spinner(u"AI 分析中..."):
-            params = {}
-            if is_fp:
-                params = {u"腔长 T": f"{st.session_state.fp_t_val:.0f}nm",
-                          u"反射镜": st.session_state.get('fp_mirror_type', 'DBR')}
-            else:
-                params = {u"D": f"{diameter:.0f}nm", u"H": f"{height:.0f}nm", u"P": f"{period:.0f}nm"}
-            params[u"材料"] = material
-            params[u"衬底"] = substrate
-            params[u"偏振"] = polarization
-            params[u"角度"] = f"{angle:.0f}°"
-            result = analyze_color(hex_color, params)
-            st.session_state._ai_result = result
-        st.rerun()
-    if st.session_state.get('_ai_result'):
-        st.info(st.session_state._ai_result)
-        if st.button('✕ 清除', key='clear_ai_result'):
-            st.session_state.pop('_ai_result', None)
-            st.rerun()
-
-    # --- Color gamut notice (non-FP only) ---
-    if not is_fp and "TiO2" in material:
-        st.info(
-        "TiO2 纳米柱在当前参数范围（D 60-267nm, H 80-600nm）内无法产生高饱和青蓝色或纯红色。"
-        "这是 Lorentzian 模型和 RCWA 严格仿真共同验证的物理限制。"
-        "提示：1) 切换到 a-Si/Si3N4 材料获得更宽色域  2) 或使用下方 FP 腔模式。"
+    _render_reference_recheck(
+        structure_type=_structure_type,
+        material=material,
+        substrate=substrate,
+        polarization=polarization,
+        angle_deg=angle,
+        far_field_enabled=_far_field_enabled,
+        diameter_nm=diameter,
+        height_nm=height,
+        period_nm=period,
+        forward=_forward,
     )
+    st.caption("下一步：查看“光谱”页核对输出，或进入“逆设计”页匹配目标色；导出入口在侧栏。")
+
+    # --- AI Analysis (temporarily hidden) ---
+    if ENABLE_LLM_FEATURES:
+        col_ai1, col_ai2 = st.columns([3, 1])
+        with col_ai2:
+            ai_clicked = st.button(u"🤖 AI 分析", key="ai_analyze_color", use_container_width=True,
+                         help=u"使用配置的大模型分析当前颜色结果")
+        if ai_clicked:
+            with st.spinner(u"AI 分析中..."):
+                params = {}
+                if is_fp:
+                    params = {u"腔长 T": f"{st.session_state.fp_t_val:.0f}nm",
+                              u"反射镜": st.session_state.get('fp_mirror_type', 'DBR')}
+                else:
+                    params = {u"D": f"{diameter:.0f}nm", u"H": f"{height:.0f}nm", u"P": f"{period:.0f}nm"}
+                params[u"材料"] = material
+                params[u"衬底"] = substrate
+                params[u"偏振"] = polarization
+                params[u"角度"] = f"{angle:.0f}°"
+                result = analyze_color(hex_color, params)
+                st.session_state._ai_result = result
+            st.rerun()
+        if st.session_state.get('_ai_result'):
+            st.info(st.session_state._ai_result)
+            if st.button('✕ 清除', key='clear_ai_result'):
+                st.session_state.pop('_ai_result', None)
+                st.rerun()
+
+    # --- Color gamut notice (audited single-pillar scope only) ---
+    if not is_fp and not is_dual and material == "TiO2 (anatase)":
+        st.info(
+            "既有审计覆盖的 TiO2 单柱范围（D 60-267 nm，H 80-600 nm）内，"
+            "未覆盖高饱和青蓝色或纯红色。该提示不代表当前全部控制范围，"
+            "也不代表本次运行执行了直接 RCWA 验证。"
+            "提示：1) 切换到 a-Si/Si3N4 材料；2) 在侧栏顶部将结构类型切换为 FP 腔。"
+        )
 
     # --- Pillar visualization with pure CSS (non-FP only) ---
     if not is_fp:
@@ -649,82 +2930,424 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
 
-    # Parameter sensitivity: +/-5nm tolerance (non-FP only)
+    # Parameter sensitivity: explicit, session-local snapshot (non-FP only).
     if not is_fp:
         st.divider()
-        st.subheader("参数灵敏度 (工艺容差 +/-5nm)")
-        try:
-            import torch_model as _tm_sens
-            import torch as _torch_sens
-            tol = 5.0
-            params = [
-                ("D", diameter, height, period, "diameter"),
-                ("H", diameter, height, period, "height"),
-                ("P", diameter, height, period, "period"),
-            ]
-            cols = st.columns(4)
-            cols[0].markdown("**参数**")
-            cols[1].markdown(f"**-{tol:.0f}nm**")
-            cols[2].markdown("**当前**")
-            cols[3].markdown(f"**+{tol:.0f}nm**")
-        
-            for label, d_val, h_val, p_val, which in params:
-                if which == "diameter":
-                    d_lo, d_hi = max(50, d_val-tol), min(350, d_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_lo]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_hi]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
-                elif which == "height":
-                    h_lo, h_hi = max(80, h_val-tol), min(600, h_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_lo]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_hi]), _torch_sens.tensor([p_val]), material=material, substrate=substrate)
+        st.subheader("参数灵敏度 (工艺容差 +/-5 nm)")
+        tol = 5.0
+        if is_dual:
+            base_geometry = {
+                "d1": float(st.session_state.get("d1_val", diameter)),
+                "h1": float(st.session_state.get("h1_val", height)),
+                "d2": float(st.session_state.get("d2_val", diameter)),
+                "h2": float(st.session_state.get("h2_val", height)),
+                "p": float(period),
+            }
+            params = [("D1", "d1"), ("H1", "h1"), ("D2", "d2"), ("H2", "h2"), ("P", "p")]
+        else:
+            base_geometry = {"d": float(diameter), "h": float(height), "p": float(period)}
+            params = [("D", "d"), ("H", "h"), ("P", "p")]
+        _sensitivity_context = _make_analysis_context(
+            "sensitivity",
+            {"tolerance_nm": tol, "fields": [key for _, key in params], "sides": [-1, 1]},
+            registry_version="sensitivity-domain-v1",
+        )
+        _sensitivity_artifact_available = _artifact_identity_available(
+            _sensitivity_context.artifact_version)
+        _sensitivity_runtime_issue = _analysis_runtime_identity_issue(
+            _sensitivity_context)
+        _sensitivity_execution_available = bool(
+            _forward.spectrum_available and _sensitivity_artifact_available
+            and not _sensitivity_runtime_issue)
+        _sensitivity_load = load_analysis_snapshot(st.session_state, _sensitivity_context)
+        run_sensitivity = st.button(
+            "运行 / 加载当前灵敏度分析", key="run_sensitivity_analysis",
+            use_container_width=True,
+            disabled=not _sensitivity_execution_available,
+        )
+        if not _sensitivity_artifact_available:
+            st.info("灵敏度分析源码身份不可用；旧结果已隐藏，当前不会运行或跨路线补数。")
+        elif _sensitivity_runtime_issue:
+            st.info(
+                f"灵敏度分析模型会话身份不可用：{_sensitivity_runtime_issue}；"
+                "旧结果已隐藏，当前不会运行 evaluator。")
+        if _sensitivity_load.state == "stale":
+            st.warning("灵敏度快照已陈旧；当前参数或路线已变化，旧结果已隐藏。")
+        elif _sensitivity_load.state == "invalid":
+            st.warning("灵敏度快照未通过完整性校验，旧结果已隐藏。")
+        elif _sensitivity_load.state == "missing":
+            st.info("点击按钮后才计算当前路线的工艺扰动；普通页面刷新不会运行分析。")
+
+        if (
+            run_sensitivity and _sensitivity_load.state != "fresh"
+            and _sensitivity_execution_available
+            and not _analysis_runtime_identity_issue(_sensitivity_context)
+        ):
+            _analysis_material = str(material)
+            _analysis_substrate = str(substrate)
+            _analysis_polarization = str(polarization)
+            _analysis_angle = float(angle)
+            _analysis_far_field = bool(_sensitivity_context.far_field_enabled)
+            _analysis_na = float(_sensitivity_context.na)
+            _analysis_theta = float(_sensitivity_context.theta_obs_deg)
+            _analysis_route_id = str(_route_id)
+            _analysis_route_label = str(_route_label)
+            _analysis_is_dual = bool(is_dual)
+            _analysis_use_dual_ml = bool(use_dual_ml)
+            _analysis_rcwa_predictor = globals().get("_rcwa_spectrum_predictor")
+
+            def _sensitivity_forward(geometry):
+                if not geometry:
+                    return None
+                if _analysis_is_dual:
+                    if _analysis_route_id == "ml_surrogate" and _analysis_use_dual_ml:
+                        with _bound_runtime_context(
+                                "dual", "ml_surrogate", _analysis_material,
+                                _analysis_substrate):
+                            spec = ml_module.predict_dual_spectrum(
+                                geometry["d1"], geometry["h1"], geometry["d2"], geometry["h2"],
+                                geometry["p"], _analysis_angle, _analysis_polarization,
+                                _analysis_material, _analysis_substrate)
+                        return _forward_result(ml_module.WL, spec, {}) if spec is not None else None
+                    wls, refl = _cached_physical_forward(
+                        geometry["d1"], geometry["h1"], geometry["p"],
+                        _analysis_material, _analysis_substrate, _analysis_polarization,
+                        _analysis_angle, geometry["d2"], geometry["h2"], True,
+                        _analysis_far_field, _analysis_na, _analysis_theta)
+                    return _forward_result(wls, refl, {})
+                if _analysis_route_id == "rcwa_surrogate":
+                    with _bound_runtime_context(
+                            "single", "rcwa_surrogate", _analysis_material,
+                            _analysis_substrate):
+                        spec = _predict_rcwa_spectrum_strict(
+                            geometry["d"], geometry["h"], geometry["p"],
+                            _analysis_angle, _analysis_polarization, _analysis_material,
+                            _analysis_substrate, predictor=_analysis_rcwa_predictor)
+                    return _forward_result(ml_module.WL, spec, {}) if spec is not None else None
+                if _analysis_route_id == "ml_surrogate":
+                    with _bound_runtime_context(
+                            "single", "ml_surrogate", _analysis_material,
+                            _analysis_substrate):
+                        spec = ml_module.predict_generic_spectrum(
+                            geometry["d"], geometry["h"], geometry["p"],
+                            _analysis_angle, _analysis_polarization,
+                            _analysis_material, _analysis_substrate)
+                    return _forward_result(ml_module.WL, spec, {}) if spec is not None else None
+                wls, refl = _cached_physical_forward(
+                    geometry["d"], geometry["h"], geometry["p"],
+                    _analysis_material, _analysis_substrate, _analysis_polarization,
+                    _analysis_angle, 0.0, 0.0, False, _analysis_far_field,
+                    _analysis_na, _analysis_theta)
+                return _forward_result(wls, refl, {})
+
+            _store_sensitivity_snapshot = True
+            try:
+                with (
+                    analysis_engine_transaction(engine, st.session_state),
+                    _bound_runtime_context(
+                        _sensitivity_context.structure_type,
+                        _sensitivity_context.route_id,
+                        _sensitivity_context.material,
+                        _sensitivity_context.substrate),
+                ):
+                    _sensitivity_route = FrozenSpectrumRoute(
+                        _analysis_route_id, _analysis_route_label,
+                        lambda geometry: _sensitivity_forward(geometry))
+                    base_lab = rgb_to_lab(np.asarray(rgb, dtype=float))
+                    snapshot_rows = []
+                    for label, key in params:
+                        resolved = [
+                            resolve_perturbation(base_geometry, key, -tol),
+                            resolve_perturbation(base_geometry, key, tol),
+                        ]
+                        routed = evaluate_frozen_series(
+                            _sensitivity_route,
+                            [{"geometry": resolved[0][0]}, {"geometry": resolved[1][0]}],
+                        )
+                        route_ok = route_results_consistent(_analysis_route_id, routed)
+                        if not route_ok:
+                            routed = [(_analysis_route_id, None), (_analysis_route_id, None)]
+                        sides = {}
+                        for side_name, (_, result), (_, resolution) in zip(
+                            ("lower", "upper"), routed, resolved,
+                        ):
+                            if (
+                                route_ok and resolution.status == "available"
+                                and result is not None and result.spectrum_available
+                                and result.rgb is not None
+                            ):
+                                varied_rgb = np.asarray(result.rgb, dtype=float)
+                                sides[side_name] = {
+                                    "status": "available",
+                                    "requested_value": resolution.requested_value,
+                                    "evaluated_value": resolution.evaluated_value,
+                                    "actual_delta_nm": resolution.actual_delta_nm,
+                                    "rgb": varied_rgb.tolist(),
+                                    "delta_e2000": float(delta_e2000(base_lab, rgb_to_lab(varied_rgb))),
+                                    "reason": "",
+                                }
+                            else:
+                                sides[side_name] = {
+                                    "status": "unavailable",
+                                    "requested_value": resolution.requested_value,
+                                    "evaluated_value": None, "actual_delta_nm": None,
+                                    "rgb": None, "delta_e2000": None,
+                                    "reason": (
+                                        resolution.reason if resolution.status != "available"
+                                        else "冻结路线未返回可用结果" if route_ok
+                                        else "分析路线身份不一致"),
+                                }
+                        snapshot_rows.append({"label": label, "field": key, **sides})
+                    _sensitivity_payload = {
+                        "status": "available", "reason": "",
+                        "base_rgb": np.asarray(rgb, dtype=float).tolist(),
+                        "route_id": _analysis_route_id,
+                        "analysis_artifact_version": (
+                            _sensitivity_context.artifact_version),
+                        "model_artifact_version": (
+                            _analysis_model_artifact_version(_sensitivity_context)),
+                        "rows": snapshot_rows,
+                    }
+            except (ModelResourceDriftError, ModelResourceUnavailable) as exc:
+                logging.error("sensitivity model resource drift: %s", exc)
+                st.session_state.pop(_sensitivity_context.session_key, None)
+                st.error("灵敏度分析模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+                _store_sensitivity_snapshot = False
+            except EngineStateRestoreError as exc:
+                logging.error("sensitivity engine restore failed: %s", exc)
+                st.session_state.pop(_sensitivity_context.session_key, None)
+                st.error("灵敏度分析会话引擎恢复失败；旧结果已清除，本次结果未保存。")
+                _store_sensitivity_snapshot = False
+            except EngineStateMutationError as exc:
+                logging.error("sensitivity engine mutation restored: %s", exc)
+                _sensitivity_payload = {
+                    "status": "unavailable",
+                    "reason": "会话引擎状态被分析修改；已恢复原状态，本次结果因完整性失败而作废",
+                }
+            except Exception as exc:
+                if exception_has_model_resource_drift(exc):
+                    logging.error("sensitivity business error with model drift: %s", exc)
+                    st.session_state.pop(_sensitivity_context.session_key, None)
+                    st.error("灵敏度分析模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+                    _store_sensitivity_snapshot = False
                 else:
-                    d_min = max(d_val, 50); p_lo = max(d_min*1.2, p_val-tol); p_hi = min(600, p_val+tol)
-                    sp_lo = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_lo]), material=material, substrate=substrate)
-                    sp_hi = _tm_sens.batch_lorentzian_spectrum(_torch_sens.tensor([d_val]), _torch_sens.tensor([h_val]), _torch_sens.tensor([p_hi]), material=material, substrate=substrate)
-            
-                rgb_lo = _tm_sens.batch_spectrum_to_rgb(sp_lo).squeeze().numpy()
-                rgb_hi = _tm_sens.batch_spectrum_to_rgb(sp_hi).squeeze().numpy()
-                hex_lo = rgb_to_hex(rgb_lo); hex_hi = rgb_to_hex(rgb_hi)
-                de_lo = np.sqrt(np.sum((rgb - rgb_lo)**2))
-                de_hi = np.sqrt(np.sum((rgb - rgb_hi)**2))
-            
-                c1, c2, c3, c4 = st.columns(4)
-                c1.markdown(f"**{label}**")
-                c2.markdown(f'<div style="width:40px;height:24px;background:{hex_lo};border-radius:4px;"></div><small>ΔE={de_lo:.3f}</small>', unsafe_allow_html=True)
-                c3.markdown(f'<div style="width:40px;height:24px;background:{hex_color};border-radius:4px;border:2px solid white;"></div>', unsafe_allow_html=True)
-                c4.markdown(f'<div style="width:40px;height:24px;background:{hex_hi};border-radius:4px;"></div><small>ΔE={de_hi:.3f}</small>', unsafe_allow_html=True)
-            st.caption("工艺容差 ±5nm 下的颜色偏差 (ΔE < 0.02 肉眼不可分辨)")
-        except Exception:
-            st.caption("灵敏度分析需 PyTorch（云端暂不支持，请本地运行）")
+                    logging.warning("sensitivity analysis failed: %s", exc)
+                    _sensitivity_payload = {
+                        "status": "unavailable",
+                        "reason": f"当前路线分析失败：{type(exc).__name__}",
+                    }
+            _post_sensitivity_issue = _analysis_runtime_identity_issue(
+                _sensitivity_context)
+            if _post_sensitivity_issue:
+                st.session_state.pop(_sensitivity_context.session_key, None)
+                st.error(
+                    "灵敏度分析期间模型/源码身份发生变化；本次结果未保存。")
+                _store_sensitivity_snapshot = False
+            if _store_sensitivity_snapshot:
+                store_analysis_snapshot(
+                    st.session_state,
+                    AnalysisSnapshot.create(_sensitivity_context, _sensitivity_payload),
+                )
+            _sensitivity_load = load_analysis_snapshot(st.session_state, _sensitivity_context)
+
+        if _sensitivity_load.state == "fresh" and _sensitivity_execution_available:
+            _sensitivity_payload = _sensitivity_load.snapshot.payload
+            if _sensitivity_payload["status"] == "unavailable":
+                st.warning(f"灵敏度分析不可用：{_sensitivity_payload['reason']}。未跨路线补数。")
+            else:
+                cols = st.columns(4)
+                cols[0].markdown("**参数**")
+                cols[1].markdown(f"**-{tol:.0f}nm**")
+                cols[2].markdown("**当前**")
+                cols[3].markdown(f"**+{tol:.0f}nm**")
+                base_hex = rgb_to_hex(_sensitivity_payload["base_rgb"])
+                for row in _sensitivity_payload["rows"]:
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.markdown(f"**{row['label']}**")
+                    c3.markdown(
+                        f'<div style="width:40px;height:24px;background:{base_hex};border-radius:4px;border:2px solid white;"></div>',
+                        unsafe_allow_html=True)
+                    for column, entry in ((c2, row["lower"]), (c4, row["upper"])):
+                        if entry["status"] != "available":
+                            column.markdown(
+                                f"<small>不可用<br>请求 {entry['requested_value']:.1f}nm</small>",
+                                unsafe_allow_html=True)
+                        else:
+                            varied_hex = rgb_to_hex(entry["rgb"])
+                            column.markdown(
+                                f'<div style="width:40px;height:24px;background:{varied_hex};border-radius:4px;"></div>'
+                                f'<small>ΔE00={entry["delta_e2000"]:.2f}<br>实际 {entry["evaluated_value"]:.1f}nm '
+                                f'(Δ={entry["actual_delta_nm"]:+.1f}nm)</small>',
+                                unsafe_allow_html=True)
+                st.caption(
+                    f"固定模型路线：{_route_label}；快照 fingerprint={_sensitivity_context.fingerprint[:12]}…；"
+                    "色差为 CIEDE2000（ΔE00），未把单一数值当作通用感知阈值。"
+                )
 
 # Tab 2: Inverse Design
 with tab2:
-    st.subheader("选择目标颜色，自动匹配最优纳米柱参数")
-    st.caption("侧边栏的 D/H/P 不影响逆设计，仅材料、衬底、偏振、入射角有效 | 智能网格仅优化单柱 (D,H,P)，双柱请手动微调")
+    st.subheader("逆设计")
+    st.caption("先确认目标色与搜索配置，再运行一个推荐方法；候选仍需独立物理复核。")
 
-    dual_gd_btn = False
-    col_pick, col_btn = st.columns([3, 1])
+    col_pick, col_target = st.columns([1, 2])
     with col_pick:
-        picker_hex = st.color_picker("目标颜色", "#80c8ff")
-    with col_btn:
-        st.markdown("<br>", unsafe_allow_html=True)
-        smart_btn = st.button('🎯 智能网格', use_container_width=True, help='两阶段智能搜索: RCWA/ML粗网格→精网格, ~2-8s, 精度最高')
-        gd_btn = st.button('🎯 单柱梯度', use_container_width=True, help='单柱批量梯度下降, ~3-5秒, 需torch')
-        dual_gd_btn = st.button('🎯 双柱梯度', use_container_width=True, help='双柱联合优化 (开发中)')
-        ai_btn = st.button('📊 三方案对比', use_container_width=True,
-                         help='同时试 TiO2 / a-Si / FP腔，自动选最优')
+        picker_hex = st.color_picker("目标颜色", "#80c8ff", key="inverse_target_picker")
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
-    st.caption(f"RGB({target_r}, {target_g}, {target_b})  |  {picker_hex}")
-    if "TiO2" in material and target_b > 150 and target_b > target_r + 20 and target_b > target_g + 20:
-        st.caption("💡 TiO₂ 做不出高饱和蓝/青色，建议切换到 **a-Si** 材料或使用 **FP 腔模式**")
-    elif "TiO2" in material and target_r > 180 and target_r > target_g + 30 and target_r > target_b + 30:
+    with col_target:
+        st.markdown(
+            f"""
+            <div class="inverse-target-card" aria-label="目标颜色 {html.escape(picker_hex)} RGB {target_r} {target_g} {target_b}">
+              <span class="inverse-target-card__swatch" style="background:{html.escape(picker_hex)}"></span>
+              <div class="inverse-target-card__text">
+                <div style="color:var(--text-muted);font-size:12px;font-weight:600">目标颜色</div>
+                <div class="inverse-target-card__hex">{html.escape(picker_hex.upper())}</div>
+                <div class="inverse-target-card__rgb">RGB({target_r}, {target_g}, {target_b})</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    _inverse_structure = "fp" if is_fp else "dual" if is_dual else "single"
+    if _inverse_structure == "single":
+        _inverse_geometry_valid = not _single_geometry_invalid
+    elif _inverse_structure == "dual":
+        _inverse_geometry_valid = bool(
+            float(st.session_state.d1_val) < float(period)
+            and float(st.session_state.d2_val) < float(period)
+        )
+    else:
+        _inverse_geometry_valid = bool(50.0 <= float(st.session_state.fp_t_val) <= 600.0)
+    _inverse_material = str(
+        _forward.provenance.get("material", material) if is_fp else material)
+    _inverse_substrate = str(
+        _forward.provenance.get("substrate", substrate) if is_fp else substrate)
+    _inverse_context = InverseContext(
+        structure_type=_inverse_structure,
+        material=_inverse_material,
+        substrate=_inverse_substrate,
+        polarization=str(polarization),
+        angle_deg=float(angle),
+        target_rgb=(target_r, target_g, target_b),
+        target_hex=picker_hex,
+        preview_route_id=str(_forward.provenance.get("route_id", "unknown")),
+        preview_model_version=str(
+            _forward.provenance.get("model_version", "unknown")),
+        geometry_valid=_inverse_geometry_valid,
+        fp_mirror_type=(
+            str(st.session_state.get("fp_mirror_type", "")) if is_fp else ""),
+    )
+    _previous_inverse_run = st.session_state.get("_inverse_run")
+    _context_was_initialized = bool(
+        st.session_state.get("_inverse_context_initialized", False))
+    if _previous_inverse_run is not None and invalidate_inverse_run(
+            _previous_inverse_run, _inverse_context) is None:
+        _clear_inverse_results()
+        st.session_state.pop("_inverse_run", None)
+        st.info("搜索上下文已变化；旧候选、应用按钮与导出已失效并隐藏。")
+    elif not _context_was_initialized:
+        _clear_inverse_results()
+        st.session_state.pop("_inverse_run", None)
+    st.session_state._inverse_context_initialized = True
+    _render_inverse_context(_inverse_context, _forward.provenance)
+
+    _method_states = _inverse_method_states(
+        context=_inverse_context,
+        rcwa_ready=_rcwa_ml_ready,
+        primary_torch_ready=(
+            _local_model_exists("models/forward_mlp_v8_sub.pt")
+            and importlib.util.find_spec("torch") is not None
+        ),
+        dual_ready=_dual_ml_ready,
+        compare_enabled=ENABLE_MULTI_SCHEME_SEARCH,
+        fp_mirror_type=st.session_state.get("fp_mirror_type", ""),
+    )
+    _preferred_order = {
+        "single": ["smart", "single"],
+        "dual": ["dual"],
+        "fp": ["fp"],
+    }[_inverse_structure]
+    _primary_method = next(
+        (key for key in _preferred_order if _method_states[key].available),
+        _preferred_order[0],
+    )
+    _primary_state = _method_states[_primary_method]
+    primary_btn = st.button(
+        f"开始搜索 · {_primary_state.label}",
+        type="primary",
+        use_container_width=True,
+        disabled=not _primary_state.available,
+        help=_primary_state.summary,
+    )
+    st.caption(f"推荐方法：{_primary_state.summary}。{_primary_state.reason}")
+
+    smart_btn = primary_btn if _primary_method == "smart" else False
+    gd_btn = primary_btn if _primary_method == "single" else False
+    dual_gd_btn = primary_btn if _primary_method == "dual" else False
+    fp_search_btn = primary_btn if _primary_method == "fp" else False
+    ai_btn = primary_btn if _primary_method == "compare" else False
+    with st.expander("其他搜索方法与可用性", expanded=False):
+        for _method_key in _preferred_order:
+            if _method_key == _primary_method:
+                continue
+            _method = _method_states[_method_key]
+            _method_text, _method_action = st.columns([3, 1])
+            with _method_text:
+                st.markdown(
+                    f"""
+                    <div class="inverse-method-row">
+                      <strong>{html.escape(_method.label)}</strong>
+                      <span>{html.escape(_method.summary)}</span>
+                      <span>{html.escape(_method.reason)}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with _method_action:
+                _clicked = st.button(
+                    _method.label,
+                    key=f"inverse_secondary_{_method_key}",
+                    use_container_width=True,
+                    disabled=not _method.available,
+                    help=_method.reason,
+                )
+            if _method_key == "smart":
+                smart_btn = _clicked
+            elif _method_key == "single":
+                gd_btn = _clicked
+            elif _method_key == "dual":
+                dual_gd_btn = _clicked
+            elif _method_key == "fp":
+                fp_search_btn = _clicked
+
+    if "compare" in _method_states:
+        _compare_method = _method_states["compare"]
+        with st.expander("跨结构比较（不作为推荐主方法）", expanded=False):
+            st.caption(f"{_compare_method.summary}。{_compare_method.reason}")
+            ai_btn = st.button(
+                _compare_method.label, key="inverse_cross_structure_compare",
+                use_container_width=True,
+                disabled=not _compare_method.available,
+                help=_compare_method.reason,
+            )
+
+    if _inverse_structure == "single" and "TiO2" in material and target_b > 150 and target_b > target_r + 20 and target_b > target_g + 20:
+        st.caption("TiO₂ 难以覆盖高饱和蓝/青色；可切换到 **a-Si**，或在侧栏顶部选择 **FP 腔**。")
+    elif _inverse_structure == "single" and "TiO2" in material and target_r > 180 and target_r > target_g + 30 and target_r > target_b + 30:
         st.caption("💡 TiO₂ 做不出纯红色，建议切换到 **a-Si** + Si₃N₄ 衬底")
 
     target_rgb_norm = np.array([target_r, target_g, target_b]) / 255.0
 
-    if smart_btn:
+    if not _inverse_context.geometry_valid:
+        if _inverse_structure == "single":
+            st.error("当前单柱参数无效：D > P 会导致纳米柱越过单元边界。已禁用逆设计候选和结果导出，请先调小 D 或增大 P。")
+        else:
+            st.error("当前结构参数无效；已禁用逆设计候选和结果导出，请先修正侧栏几何参数。")
+
+    if smart_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
         with st.spinner("🎯 智能网格搜索中 (两阶段: 粗→精)..."):
             try:
                 result = ml_module.smart_grid_search(
@@ -732,7 +3355,7 @@ with tab2:
                     angle_deg=angle, polarization=polarization,
                     coarse_n=12, top_k=5, fine_steps=5, fine_range=6.0
                 )
-                if result is None or len(result) == 0:
+                if not inverse_candidates_available(result):
                     st.warning("智能网格搜索不可用: 需要 RCWA/ML 模型")
                 else:
                     # result is list of (None, MetaSurfaceParam, [r,g,b], de76, de2000)
@@ -753,29 +3376,29 @@ with tab2:
                     st.session_state._sg_de = float(de_sg)
                     st.session_state._sg_rgb = tuple(rc)
                     st.session_state._sg_candidates = result
-                    st.success(f"🎯 智能网格完成! {hex_sg} | ΔE2000={de_sg:.1f}")
-                    c1sg, c2sg = st.columns([1, 3])
-                    with c1sg:
-                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_sg};border-radius:12px;"></div>', unsafe_allow_html=True)
-                    with c2sg:
-                        st.markdown(f"**{hex_sg}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_sg:.1f}nm  H={h_sg:.1f}nm  P={p_sg:.1f}nm  \nΔE2000 = {de_sg:.1f} (智能网格)", unsafe_allow_html=False)
-
-                    # Apply button
+                    _store_inverse_run(
+                        _inverse_context, "smart", "智能网格",
+                        _normalized_smart_candidates(_inverse_context, result))
+                    st.success(f"🎯 智能网格完成 · 最佳候选 {hex_sg} · ΔE2000={de_sg:.1f}")
+                    _sg_contract = _inverse_candidate_contract(
+                        "smart_grid", material, substrate, polarization, angle
+                    )
                     def _apply_sg_cb():
-                        st.session_state.d_val = float(st.session_state._sg_d)
-                        st.session_state.h_val = float(st.session_state._sg_h)
-                        st.session_state.p_val = float(st.session_state._sg_p)
-                    st.button("✔️ 应用智能网格结果", on_click=_apply_sg_cb, key="apply_sg_result", use_container_width=True)
-
-                    # Top-3 candidates
-                    if len(result) > 1:
-                        st.caption("🎯 目标颜色")
-                        st.markdown(f'<span style="display:inline-block;width:28px;height:28px;background:{picker_hex};border-radius:4px;border:2px solid #ccc;vertical-align:middle;margin-right:8px;"></span> **{picker_hex}**  RGB({target_r}, {target_g}, {target_b})', unsafe_allow_html=True)
-                        st.caption("✅ Top3 匹配结果")
-                        for idx, cand in enumerate(result[:3]):
-                            cb = cand[1]
-                            c_hex = f"#{max(0,min(255,int(cand[2][0]*255))):02x}{max(0,min(255,int(cand[2][1]*255))):02x}{max(0,min(255,int(cand[2][2]*255))):02x}"
-                            st.markdown(f'<span style="display:inline-block;width:24px;height:24px;background:{c_hex};border-radius:4px;border:1px solid #999;vertical-align:middle;margin-right:8px;"></span> #{idx+1} **{c_hex}** &nbsp;|&nbsp; D={cb.diameter_nm:.0f} H={cb.height_nm:.0f} P={cb.period_nm:.0f} &nbsp;|&nbsp; ΔE={cand[4]:.1f}', unsafe_allow_html=True)
+                        _apply_inverse_candidate(
+                            _inverse_context, "single",
+                            {"d": d_sg, "h": h_sg, "p": p_sg})
+                    st.caption(f"目标色：{picker_hex} · RGB({target_r}, {target_g}, {target_b})")
+                    st.caption("候选比较（同一材料 / 衬底 / 偏振 / 入射角）")
+                    for idx, cand in enumerate(result[:3]):
+                        cb = cand[1]
+                        c_hex = f"#{max(0,min(255,int(cand[2][0]*255))):02x}{max(0,min(255,int(cand[2][1]*255))):02x}{max(0,min(255,int(cand[2][2]*255))):02x}"
+                        _render_inverse_candidate_card(
+                            idx + 1, c_hex, [int(cand[2][0] * 255), int(cand[2][1] * 255), int(cand[2][2] * 255)],
+                            cand[4], f"D={cb.diameter_nm:.1f}nm · H={cb.height_nm:.1f}nm · P={cb.period_nm:.1f}nm",
+                            _sg_contract, material, substrate, polarization, angle,
+                            apply_key="apply_sg_result" if idx == 0 else None,
+                            apply_callback=_apply_sg_cb if idx == 0 else None,
+                        )
 
                     de2k_val = de_sg
                     if de2k_val > 20:
@@ -784,7 +3407,8 @@ with tab2:
             except Exception as e:
                 st.warning(f"智能网格搜索失败: {e}")
 
-    if gd_btn:
+    if gd_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
         with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
             try:
                 # torch autograd (fast with optimized torch on server)
@@ -795,7 +3419,11 @@ with tab2:
                 if result is None:
                     st.warning("单柱梯度不可用: 需要ONNX模型")
                 else:
-                    d_gd, h_gd, p_gd, pred_rgb, loss = result
+                    if len(result) == 6 and isinstance(result[0], str):
+                        _gd_method, d_gd, h_gd, p_gd, pred_rgb, loss = result
+                    else:
+                        _gd_method = "fano"
+                        d_gd, h_gd, p_gd, pred_rgb, loss = result
                     rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
                     hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
                     from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
@@ -806,23 +3434,43 @@ with tab2:
                     st.session_state._gd_hex = hex_gd
                     st.session_state._gd_de = float(de_gd)
                     st.session_state._gd_rgb = tuple(rc)
-                    st.success(f"🎉 单柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
-                    c1gd, c2gd = st.columns([1, 3])
-                    with c1gd:
-                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
-                    with c2gd:
-                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD={d_gd:.1f}nm  H={h_gd:.1f}nm  P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (单柱梯度优化)")
+                    _gd_contract = _inverse_candidate_contract(
+                        _gd_method,
+                        material, substrate, polarization, angle
+                    )
+                    _store_inverse_run(
+                        _inverse_context, "single", "单柱梯度",
+                        (build_inverse_candidate(
+                            _inverse_context,
+                            method_id="single", method_label="单柱梯度", rank=1,
+                            structure_type="single",
+                            candidate_context=_candidate_context(
+                                "single", material, substrate, polarization, angle),
+                            route_id=_gd_contract["route_id"],
+                            route_label=_gd_contract["method"],
+                            model_version=_gd_contract["model"],
+                            boundary=_gd_contract["boundary"],
+                            parameters={"d": d_gd, "h": h_gd, "p": p_gd},
+                            predicted_rgb=pred_rgb, delta_e2000=de_gd,
+                        ),))
+                    st.success(f"🎉 单柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    _render_inverse_candidate_card(
+                        1, hex_gd, rc, de_gd,
+                        f"D={d_gd:.1f}nm · H={h_gd:.1f}nm · P={p_gd:.1f}nm",
+                        _gd_contract, material, substrate, polarization, angle,
+                    )
                     def _apply_gd_cb():
-                        st.session_state.d_val = float(st.session_state._gd_d)
-                        st.session_state.h_val = float(st.session_state._gd_h)
-                        st.session_state.p_val = float(st.session_state._gd_p)
-                    st.button("✔️ 应用结果", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
+                        _apply_inverse_candidate(
+                            _inverse_context, "single",
+                            {"d": d_gd, "h": h_gd, "p": p_gd})
+                    st.button("应用此候选", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
                     st.caption("✳️ 梯度优化找到最优解，如果不满意，可用RL搜索作为起点重新优化")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"单柱梯度优化失败: {e}")
 
-    if st.session_state.get('dual_pillar', False) and dual_gd_btn:
+    if _inverse_structure == "dual" and dual_gd_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
         with st.spinner("📊 双柱梯度优化中 (numpy Adam, ~3-5秒)..."):
             try:
                 # numpy finite-difference (no torch needed)
@@ -846,39 +3494,76 @@ with tab2:
                     st.session_state._dual_gd_hex = hex_gd
                     st.session_state._dual_gd_de = float(de_gd)
                     st.session_state._dual_gd_rgb = tuple(rc)
-                    st.success(f"🎉 双柱梯度优化完成! {hex_gd} | ΔE2000={de_gd:.1f}")
-                    c1gd, c2gd = st.columns([1, 3])
-                    with c1gd:
-                        st.markdown(f'<div style="width:64px;height:64px;background:{hex_gd};border-radius:12px;"></div>', unsafe_allow_html=True)
-                    with c2gd:
-                        st.markdown(f"**{hex_gd}**  RGB({rc[0]}, {rc[1]}, {rc[2]})  \nD1={d1_gd:.1f}nm H1={h1_gd:.1f}nm D2={d2_gd:.1f}nm H2={h2_gd:.1f}nm P={p_gd:.1f}nm  \nΔE2000 = {de_gd:.1f} (双柱梯度优化)")
+                    _dual_contract = _inverse_candidate_contract(
+                        "dual", material, substrate, polarization, angle
+                    )
+                    _store_inverse_run(
+                        _inverse_context, "dual", "双柱梯度",
+                        (build_inverse_candidate(
+                            _inverse_context,
+                            method_id="dual", method_label="双柱梯度", rank=1,
+                            structure_type="dual",
+                            candidate_context=_candidate_context(
+                                "dual", material, substrate, polarization, angle),
+                            route_id=_dual_contract["route_id"],
+                            route_label=_dual_contract["method"],
+                            model_version=_dual_contract["model"],
+                            boundary=_dual_contract["boundary"],
+                            parameters={
+                                "d1": d1_gd, "h1": h1_gd, "d2": d2_gd,
+                                "h2": h2_gd, "p": p_gd,
+                            },
+                            predicted_rgb=pred_rgb, delta_e2000=de_gd,
+                        ),))
+                    st.success(f"🎉 双柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    _render_inverse_candidate_card(
+                        1, hex_gd, rc, de_gd,
+                        f"D1={d1_gd:.1f}nm · H1={h1_gd:.1f}nm · D2={d2_gd:.1f}nm · H2={h2_gd:.1f}nm · P={p_gd:.1f}nm",
+                        _dual_contract, material, substrate, polarization, angle,
+                    )
                     def _apply_dual_gd_cb():
-                        st.session_state.d_val = float(st.session_state._dual_gd_d1)
-                        st.session_state.h_val = float(st.session_state._dual_gd_h1)
-                        st.session_state.d1_val = float(st.session_state._dual_gd_d1)
-                        st.session_state.h1_val = float(st.session_state._dual_gd_h1)
-                        st.session_state.d2_val = float(st.session_state._dual_gd_d2)
-                        st.session_state.h2_val = float(st.session_state._dual_gd_h2)
-                        st.session_state.p_val = float(st.session_state._dual_gd_p)
-                    st.button("✔️ 应用双柱结果", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
+                        _apply_inverse_candidate(
+                            _inverse_context, "dual",
+                            {"d1": d1_gd, "h1": h1_gd, "d2": d2_gd,
+                             "h2": h2_gd, "p": p_gd})
+                    st.button("应用此候选", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
                     st.caption("✳️ 梯度优化找到最优解5参数(D1,H1,D2,H2,P)，如果不满意，可手动微调")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化失败: {e}")
-    if ai_btn:
+    if ai_btn and _inverse_structure == "single" and _inverse_context.geometry_valid:
+        _clear_inverse_results()
         with st.spinner("🤖 三方案并行搜索中 (TiO2 / a-Si / FP腔)..."):
             candidates = []
+            _compare_far_field = bool(_far_field_enabled)
+            _compare_na = float(st.session_state.get("na_val", 0.1))
+            _compare_theta = float(st.session_state.get("theta_obs", 0.0))
+            _compare_engine = None
             # TiO2
             try:
-                engine.rebuild_library("TiO2 (anatase)", substrate, polarization, angle)
-                r = engine.inverse_design(target_rgb_norm)
+                _compare_engine = make_local_bound_engine(
+                    MetaSurfaceColorEngine,
+                    LibraryIdentity(
+                        "TiO2 (anatase)", substrate, polarization, float(angle),
+                        _compare_far_field, _compare_na, _compare_theta,
+                    ),
+                )
+                r = _compare_engine.inverse_design(target_rgb_norm)
                 if r:
                     candidates.append((r[0][4], "TiO2 纳米柱", r, "meta"))
             except Exception as e: logging.warning(f"AI TiO2: {e}")
             # a-Si
             try:
-                engine.rebuild_library("a-Si (amorphous)", substrate, polarization, angle)
-                r = engine.inverse_design(target_rgb_norm)
+                if _compare_engine is None:
+                    _compare_engine = MetaSurfaceColorEngine()
+                bind_engine_library(
+                    _compare_engine,
+                    LibraryIdentity(
+                        "a-Si (amorphous)", substrate, polarization, float(angle),
+                        _compare_far_field, _compare_na, _compare_theta,
+                    ),
+                )
+                r = _compare_engine.inverse_design(target_rgb_norm)
                 if r:
                     candidates.append((r[0][4], "a-Si 纳米柱", r, "meta"))
             except Exception as e: logging.warning(f"AI a-Si: {e}")
@@ -903,8 +3588,12 @@ with tab2:
             # Sort and store
             candidates.sort(key=lambda x: x[0])
             st.session_state._ai_candidates = candidates
+            if candidates:
+                _store_inverse_run(
+                    _inverse_context, "compare", "跨结构方案对比",
+                    _normalized_compare_candidates(_inverse_context, candidates))
             # AI commentary
-            if _LLM_AVAILABLE and candidates:
+            if ENABLE_LLM_FEATURES and _LLM_AVAILABLE and candidates:
                 try:
                     best_name = candidates[0][1]
                     best_de = candidates[0][0]
@@ -913,325 +3602,64 @@ with tab2:
                 except Exception as e: logging.warning(f"ai: {e}")
             st.rerun()
 
-    if False:  # run_btn (网格搜索) deprecated, use smart_btn
-        # Result cache: skip search for previously-searched colors
-        cache_key = (target_r, target_g, target_b, material, substrate, polarization, angle)
-        if "search_cache" not in st.session_state:
-            st.session_state.search_cache = {}
-
-        if cache_key in st.session_state.search_cache:
-            st.session_state.top3_results = st.session_state.search_cache[cache_key]
-            st.success("从缓存加载，瞬间完成!")
-        else:
-            engine.rebuild_library(material, substrate, polarization, angle)
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            def update_progress(current, total, label):
-                pct = min(current / max(total, 1), 1.0)
-                progress_bar.progress(pct)
-                status_text.caption(f"{label}: {current}/{total}")
-
-            st.session_state.top3_results = engine.inverse_design(target_rgb_norm, update_progress)
-            st.session_state.search_cache[cache_key] = st.session_state.top3_results
-            # Save to history
-            if "search_history" not in st.session_state:
-                st.session_state.search_history = []
-            best = st.session_state.top3_results[0]
-            entry = {
-                "target_hex": picker_hex,
-                "target_rgb": (target_r, target_g, target_b),
-                "matched_hex": rgb_to_hex(best[2]),
-                "matched_rgb": rgb_255(best[2]),
-                "D": best[1].diameter_nm,
-                "H": best[1].height_nm,
-                "P": best[1].period_nm,
-                "dE": best[4],
-            }
-            st.session_state.search_history.insert(0, entry)
-            st.session_state.search_history = st.session_state.search_history[:10]
-            progress_bar.progress(1.0)
-            status_text.caption("搜索完成!")
-    # --- Export results ---
-    _has_results = ('top3_results' in st.session_state or '_gd_d' in st.session_state
-                    or '_dual_gd_d1' in st.session_state or 'fp_search_cache' in st.session_state)
-    if _has_results:
-        with st.expander("📥 导出结果 (CSV/JSON)", expanded=False):
-            import io as _io, json as _json
-            rows = []
-            if 'top3_results' in st.session_state:
-                for i, (_, bp, brgb, bde, bde2k) in enumerate(st.session_state.top3_results):
-                    hx = rgb_to_hex(brgb)
-                    r, g, b = rgb_255(brgb)
-                    rows.append({
-                        "类型": "网格搜索", "排名": i+1,
-                        "hex": hx, "R": r, "G": g, "B": b,
-                        "D(nm)": round(bp.diameter_nm, 1), "H(nm)": round(bp.height_nm, 1),
-                        "P(nm)": round(bp.period_nm, 1),
-                        "ΔE76": round(bde, 1), "ΔE2000": round(bde2k, 1)
-                    })
-            if '_gd_d' in st.session_state:
-                gd_rgb = st.session_state.get('_gd_rgb', (0,0,0))
-                rows.append({
-                    "类型": "单柱梯度", "排名": "-",
-                    "hex": st.session_state.get('_gd_hex', ''),
-                    "R": gd_rgb[0], "G": gd_rgb[1], "B": gd_rgb[2],
-                    "D(nm)": round(st.session_state._gd_d, 1),
-                    "H(nm)": round(st.session_state._gd_h, 1),
-                    "P(nm)": round(st.session_state._gd_p, 1),
-                    "ΔE76": "-",
-                    "ΔE2000": round(st.session_state.get('_gd_de', 0), 1)
-                })
-            if '_dual_gd_d1' in st.session_state:
-                dg_rgb = st.session_state.get('_dual_gd_rgb', (0,0,0))
-                rows.append({
-                    "类型": "双柱梯度", "排名": "-",
-                    "hex": st.session_state.get('_dual_gd_hex', ''),
-                    "R": dg_rgb[0], "G": dg_rgb[1], "B": dg_rgb[2],
-                    "D1(nm)": round(st.session_state._dual_gd_d1, 1),
-                    "H1(nm)": round(st.session_state._dual_gd_h1, 1),
-                    "D2(nm)": round(st.session_state._dual_gd_d2, 1),
-                    "H2(nm)": round(st.session_state._dual_gd_h2, 1),
-                    "P(nm)": round(st.session_state._dual_gd_p, 1),
-                    "ΔE76": "-",
-                    "ΔE2000": round(st.session_state.get('_dual_gd_de', 0), 1)
-                })
-            if 'fp_search_cache' in st.session_state:
-                for ck, top3 in st.session_state.fp_search_cache.items():
-                    for rank, (de, wl, t, rgb_val) in enumerate(top3):
-                        hx = rgb_to_hex(rgb_val)
-                        r, g, b = rgb_255(rgb_val)
-                        rows.append({
-                            "类型": "FP腔", "排名": f"#{rank+1}",
-                            "hex": hx, "R": r, "G": g, "B": b,
-                            "T(nm)": round(t, 1), "λ_c(nm)": round(wl, 1),
-                            "ΔE2000": round(de, 1)
-                        })
-
-            if rows:
-                csv_buf = _io.StringIO()
-                json_buf = _io.StringIO()
-                all_keys = list(rows[0].keys())
-                csv_buf.write(",".join(all_keys) + chr(10))
-                for row in rows:
-                    csv_buf.write(",".join(str(row.get(k, "")) for k in all_keys) + chr(10))
-                _json.dump(rows, json_buf, ensure_ascii=False, indent=2)
-
-                c_exp1, c_exp2 = st.columns(2)
-                with c_exp1:
-                    st.download_button("💾 导出 CSV", csv_buf.getvalue(),
-                        "metasurface_results.csv", "text/csv", use_container_width=True)
-                with c_exp2:
-                    st.download_button("💾 导出 JSON", json_buf.getvalue(),
-                        "metasurface_results.json", "application/json", use_container_width=True)
+    # --- Export results: valid InverseRun is the only source of truth. ---
+    _valid_inverse_run = inverse_run_matches(
+        st.session_state.get("_inverse_run"), _inverse_context)
 
     # --- AI smart search results ---
-    if '_ai_candidates' in st.session_state:
+    if _valid_inverse_run and '_ai_candidates' in st.session_state:
         st.markdown("---")
-        st.markdown("**📊 三方案对比 结果**")
+        st.markdown("**📊 三方案对比结果**")
+        st.caption("候选按 ΔE2000 排序；每张卡保留独立方法来源和适用边界。")
         for rank, (de, name, data, typ) in enumerate(st.session_state._ai_candidates):
-            marker = "🏆" if rank == 0 else ""
             if typ == "meta":
                 _, bp, brgb, _, _ = data[0]
                 hx = rgb_to_hex(brgb)
                 r,g,b = rgb_255(brgb)
-                st.markdown(f"""
-                <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;
-                            background:{'#e8f5e9' if rank==0 else '#f5f5f5'};margin:4px 0;">
-                <div style="width:40px;height:40px;background:{hx};border-radius:8px;"></div>
-                <div style="flex:1;">
-                <b>{marker} {name}</b> &nbsp; {hx} RGB({r},{g},{b})<br>
-                <span style="font-size:12px;opacity:0.7;">D={bp.diameter_nm:.0f}nm H={bp.height_nm:.0f}nm P={bp.period_nm:.0f}nm</span>
-                </div>
-                <b style="color:#22aa22;">ΔE={de:.1f}</b>
-                </div>
-                """, unsafe_allow_html=True)
+                _candidate_material = (
+                    "TiO2 (anatase)" if "TiO2" in name else
+                    "a-Si (amorphous)" if "a-Si" in name else material
+                )
+                _contract = _inverse_candidate_contract(
+                    "analytical", _candidate_material, substrate, polarization, angle
+                )
+                _render_inverse_candidate_card(
+                    rank + 1, hx, [r, g, b], de,
+                    f"D={bp.diameter_nm:.1f}nm · H={bp.height_nm:.1f}nm · P={bp.period_nm:.1f}nm",
+                    _contract, _candidate_material, substrate, polarization, angle,
+                )
             else:
                 de_val, ft, fw, frgb = data
                 hx = rgb_to_hex(frgb)
                 r,g,b = rgb_255(frgb)
-                st.markdown(f"""
-                <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;
-                            background:{'#e8f5e9' if rank==0 else '#f5f5f5'};margin:4px 0;">
-                <div style="width:40px;height:40px;background:{hx};border-radius:8px;"></div>
-                <div style="flex:1;">
-                <b>{marker} {name}</b> &nbsp; {hx} RGB({r},{g},{b})<br>
-                <span style="font-size:12px;opacity:0.7;">T={ft}nm | λ<sub>c</sub>={fw}nm</span>
-                </div>
-                <b style="color:#22aa22;">ΔE={de:.1f}</b>
-                </div>
-                """, unsafe_allow_html=True)
+                _contract = _inverse_candidate_contract(
+                    "fp", name, substrate, polarization, angle
+                )
+                _render_inverse_candidate_card(
+                    rank + 1, hx, [r, g, b], de,
+                    f"T={ft:.1f}nm · λc={fw:.1f}nm",
+                    _contract, "TiO2/SiO2 DBR", substrate, polarization, angle,
+                )
         if st.button('✕ 清除结果', key='clear_ai_results'):
             st.session_state.pop('_ai_candidates', None)
             st.rerun()
 
-    if 'top3_results' in st.session_state:
-        if st.button('✕ 清除结果', key='clear_results'):
-            for k in ['top3_results', '_rl_d', '_gd_d', '_gd_hex', '_gd_de', '_gd_rgb', '_dual_gd_d1', '_dual_gd_h1', '_dual_gd_d2', '_dual_gd_h2', '_dual_gd_p', '_dual_gd_hex', '_dual_gd_de', '_dual_gd_rgb', 'search_history']:
-                st.session_state.pop(k, None)
-            st.rerun()
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("**🎯 目标颜色**")
-            hex_t = rgb_to_hex(target_rgb_norm)
-            st.markdown(f"""
-            <div style="width:100px;height:100px;background:{hex_t};
-                        border-radius:12px;box-shadow:0 4px 16px {hex_t}44;
-                        border:2px solid rgba(255,255,255,0.1);margin:0 auto;"></div>
-            <p style="text-align:center;margin-top:6px;font-size:13px;">{hex_t}<br>RGB({target_r}, {target_g}, {target_b})</p>
-            """, unsafe_allow_html=True)
-
-        with col_b:
-            st.markdown("**✅ Top3 匹配结果**")
-            # Build radio options
-            options = []
-            for i, (_, bp, brgb, bde, bde2k) in enumerate(st.session_state.top3_results):
-                hx = rgb_to_hex(brgb)
-                r, g, b = rgb_255(brgb)
-                lbl = f"#{i+1} {hx} | D={bp.diameter_nm:.0f} H={bp.height_nm:.0f} P={bp.period_nm:.0f} | ΔE={bde2k:.1f}"
-                options.append(lbl)
-            choice = st.radio("选择结果", options, horizontal=False, index=0,
-                              key=f'result_choice_{picker_hex}')
-            idx = options.index(choice)
-            best_param, matched_rgb, de_val, de2k_val = st.session_state.top3_results[idx][1], st.session_state.top3_results[idx][2], st.session_state.top3_results[idx][3], st.session_state.top3_results[idx][4]
-            hex_m = rgb_to_hex(matched_rgb)
-            mr, mg, mb = rgb_255(matched_rgb)
-
-        st.markdown(f"""
-        <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;">
-          <div style="width:60px;height:60px;background:{hex_m};border-radius:8px;
-                      box-shadow:0 3px 12px {hex_m}44;border:1px solid rgba(255,255,255,0.1);"></div>
-          <div style="font-size:14px;">
-            <b>{hex_m}</b> &nbsp; RGB({mr}, {mg}, {mb})<br>
-            <span style="font-size:12px;opacity:0.7;">D={best_param.diameter_nm:.1f}nm H={best_param.height_nm:.1f}nm P={best_param.period_nm:.1f}nm</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.caption(f"ΔE2000 = {de2k_val:.1f} (主要指标，<2 人眼不可分辨)  |  dE76 = {de_val:.1f}")
-        # --- 智能标注：大色差原因分析 ---
-        if de2k_val > 10:
-            target_b_hint = target_b / 255.0
-            target_is_blue = target_b > 180 and target_b > target_r + 30 and target_b > target_g + 30
-            if "TiO2" in material and target_is_blue:
-                st.warning(
-                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，因为 TiO₂ 纳米柱在当前参数范围"
-                    "内做不出高饱和蓝/青色。建议：1) 切换到 **a-Si (amorphous)** 材料 "
-                    "2) 或使用下方 **FP 腔模式** 来实现蓝色。"
-                )
-            elif "TiO2" in material and target_r > 180 and target_r > target_g + 30 and target_r > target_b + 30:
-                st.warning(
-                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，因为 TiO₂ 纳米柱做不出纯红色。"
-                    "建议：切换到 **a-Si (amorphous)** + Si₃N₄ 衬底获得更宽色域。"
-                )
-            elif de2k_val > 30:
-                st.warning(
-                    f"⚠️ ΔE={de2k_val:.0f} 色差很大，该目标颜色可能超出当前材料色域。"
-                    "尝试：1) 换材料 (a-Si 色域更宽)  2) 换 FP 腔模式  3) 选色域内的目标色。"
-                )
-
-        # Copyable parameters
-        param_text = f"D={best_param.diameter_nm:.1f}nm  H={best_param.height_nm:.1f}nm  P={best_param.period_nm:.1f}nm"
-        st.code(param_text, language=None)
-
-        # --- Spectral comparison chart ---
-        st.markdown("📊 光谱对比")
-        wls_m, refl_m = engine.compute_spectrum(best_param)
-        target_xy = rgb_to_xy(target_rgb_norm)
-        locus_xy = np.array([xyz_to_xy(np.array([_CIE_X[i], _CIE_Y[i], _CIE_Z[i]])) for i in range(81)])
-        dists_locus = np.sum((locus_xy - target_xy)**2, axis=1)
-        dominant_idx = int(np.argmin(dists_locus))
-        target_peak_wl = float(_CIE_WAVELENGTHS[dominant_idx])
-        sigma_ideal = 15.0
-        wls_ideal = np.linspace(380, 780, 200)
-        refl_ideal = 1.0 / (1.0 + ((wls_ideal - target_peak_wl) / sigma_ideal)**2)
-        refl_m_norm = refl_m / (refl_m.max() if refl_m.max() > 1e-12 else 1.0)
-
-        fig_spec, ax_spec = _get_plt().subplots(figsize=(6, 3))
-        ax_spec.plot(wls_ideal, refl_ideal, "#80c8ff", linewidth=2, label="理想目标光谱")
-        ax_spec.plot(wls_m, refl_m_norm, "#007e97", linewidth=2, label="匹配计算光谱")
-        ax_spec.axvline(target_peak_wl, color="#80c8ff", linestyle="--", alpha=0.5)
-        ax_spec.axvline(wls_m[np.argmax(refl_m_norm)], color="#007e97", linestyle="--", alpha=0.5)
-        ax_spec.annotate(f"目标峰值 {target_peak_wl:.0f}nm", xy=(target_peak_wl, 0.95),
-                         fontsize=8, color="#80c8ff", ha="center")
-        ax_spec.annotate(f"匹配峰值 {wls_m[np.argmax(refl_m_norm)]:.0f}nm",
-                         xy=(wls_m[np.argmax(refl_m_norm)], 0.85),
-                         fontsize=8, color="#007e97", ha="center")
-        ax_spec.set_xlabel("Wavelength (nm)")
-        ax_spec.set_ylabel("Normalized Reflectance")
-        ax_spec.set_xlim(380, 780)
-        ax_spec.set_ylim(0, 1.1)
-        ax_spec.legend(fontsize=8, loc="upper right")
-        ax_spec.grid(True, alpha=0.3)
-        fig_spec.tight_layout()
-        st.pyplot(fig_spec)
-        _get_plt().close(fig_spec)
-
-    # Search history
-    if "search_history" in st.session_state and st.session_state.search_history:
-        st.divider()
-        st.caption("📋 搜索历史 (最近10次)")
-        cols_h = st.columns([1, 1, 2, 3, 1, 1])
-        cols_h[0].caption("目标")
-        cols_h[1].caption("匹配")
-        cols_h[2].caption("参数")
-        cols_h[3].caption("")
-        cols_h[4].caption("ΔE")
-        cols_h[5].caption("")
-        for hi, h in enumerate(st.session_state.search_history):
-            c0, c1, c2, c3, c4, c5 = st.columns([1, 1, 2, 3, 1, 1])
-            with c0:
-                st.markdown(f'<div style="width:24px;height:24px;background:{h["target_hex"]};border-radius:4px;border:1px solid #fff3;"></div>', unsafe_allow_html=True)
-            with c1:
-                st.markdown(f'<div style="width:24px;height:24px;background:{h["matched_hex"]};border-radius:4px;border:1px solid #fff3;"></div>', unsafe_allow_html=True)
-            with c2:
-                st.caption(f"D={h['D']:.0f} H={h['H']:.0f} P={h['P']:.0f}")
-            with c3:
-                st.caption(f"{h['target_hex']}  {h['matched_hex']}")
-            with c4:
-                st.caption(f"{h['dE']:.1f}")
-            with c5:
-                if st.button("查看", key=f"hist_{hi}"):
-                    st.session_state.history_view = h
-                    st.rerun()
-
-    # Show history detail if selected
-    if "history_view" in st.session_state and st.session_state.history_view:
-        hv = st.session_state.history_view
-        st.divider()
-        st.markdown(f"**历史回看: {hv['target_hex']} → {hv['matched_hex']}**")
-        col_h1, col_h2 = st.columns(2)
-        with col_h1:
-            st.markdown(f'<div style="width:80px;height:80px;background:{hv["target_hex"]};border-radius:12px;"></div>', unsafe_allow_html=True)
-            st.caption(f"目标 {hv['target_hex']}")
-        with col_h2:
-            st.markdown(f'<div style="width:80px;height:80px;background:{hv["matched_hex"]};border-radius:12px;"></div>', unsafe_allow_html=True)
-            st.caption(f"匹配 {hv['matched_hex']}")
-        st.code(f"D={hv['D']:.1f}nm  H={hv['H']:.1f}nm  P={hv['P']:.1f}nm")
-        st.caption(f"ΔE2000 = {hv['dE']:.1f}")
-        if st.button("关闭回看"):
-            st.session_state.pop("history_view", None)
-            st.rerun()
-
-    # --- FP Cavity Inverse Search ---
-    if is_fp:
-        st.divider()
-        st.subheader("FP腔 自动寻色")
-        st.caption("扫描 DBR 中心波长 + 腔长 T，匹配目标颜色")
-        col_fp1, col_fp2 = st.columns([3, 1])
-        with col_fp1:
-            fp_target_hex = st.color_picker("FP目标颜色", "#80c8ff", key="fp_target_picker")
-        with col_fp2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            fp_search_btn = st.button("FP腔搜索", use_container_width=True)
-            st.caption("预计搜索时间约 30 秒（粗扫 550 组 + 精细 300 组）")
-
+    # --- FP Cavity Inverse Search: uses the shared target and primary action. ---
+    if is_fp and fp_search_btn:
+        _clear_inverse_results()
+        st.caption("FP 搜索使用页面顶部同一目标色；扫描 DBR 中心波长与腔长 T。")
+        fp_target_hex = picker_hex
         if fp_search_btn:
             fp_tr = int(fp_target_hex[1:3], 16)
             fp_tg = int(fp_target_hex[3:5], 16)
             fp_tb = int(fp_target_hex[5:7], 16)
 
             # --- Cache check ---
-            cache_key = (fp_tr, fp_tg, fp_tb, int(angle), polarization)
+            cache_key = fp_search_cache_key(
+                _inverse_context,
+                mirror_type=st.session_state.get("fp_mirror_type", ""),
+                algorithm_version=_FP_INVERSE_ALGORITHM_VERSION,
+            )
             if "fp_search_cache" not in st.session_state:
                 st.session_state.fp_search_cache = {}
             if cache_key in st.session_state.fp_search_cache:
@@ -1295,6 +3723,11 @@ with tab2:
                 st.session_state.fp_search_cache[cache_key] = top3
                 status_text.caption(f"搜索完成! 粗扫 {total} + 精细 {len(fine_results)-3} 组")
 
+            if top3:
+                _store_inverse_run(
+                    _inverse_context, "fp", "FP 腔搜索",
+                    _normalized_fp_candidates(_inverse_context, top3))
+
             for rank, (de, wl, t, rgb) in enumerate(top3):
                 hex_c = rgb_to_hex(rgb)
                 r255, g255, b255 = rgb_255(rgb)
@@ -1304,78 +3737,499 @@ with tab2:
                         st.markdown(f'<div style="width:50px;height:50px;background:{hex_c};border-radius:8px;"></div>', unsafe_allow_html=True)
                     with c2:
                         st.markdown(f"**#{rank+1} {hex_c}** | ΔE2000={de:.1f} | λ₀={wl:.0f}nm T={t:.0f}nm | RGB({r255},{g255},{b255})")
-                        st.button(f"应用此参数 #{rank+1}", key=f"fp_apply_{rank}", on_click=_apply_fp_params, args=(wl, t))
+                        st.button(
+                            "应用此候选", key=f"fp_apply_{rank}",
+                            on_click=_apply_inverse_candidate,
+                            args=(
+                                _inverse_context, "fp",
+                                {"t": t, "center_wavelength": wl},
+                            ),
+                        )
+
+    # The sole export renderer runs after every search branch, including FP.
+    _render_inverse_exports(_inverse_context)
 
 
 # Tab 3: Pattern Generation
 with tab3:
-    st.subheader("上传图片，生成超表面纳米柱图案")
-    uploaded = st.file_uploader("选择图片", type=["png", "jpg", "jpeg", "bmp"])
+    st.subheader("独立单柱解析近似图案工具")
+    _pattern_contract = make_pattern_contract(
+        structure_type=_structure_type,
+        structure_identity=_structure_label,
+        material=material,
+        substrate=substrate,
+        angle_deg=float(angle),
+        far_field_enabled=bool(_far_field_enabled),
+    )
+    st.markdown(
+        f"""
+        <div class="pattern-boundary" role="status" aria-label="图案映射来源边界">
+          <strong>固定合同：single · TE · 0° · no-far-field · scalar analytical</strong><br>
+          <span>精确材料键：{html.escape(material)} / {html.escape(substrate)}。
+          本工具不继承预览 ML、偏振或角度，不支持双柱或 FP，也不是逐像素直接 RCWA。</span><br>
+          <span>模型：{html.escape(_pattern_contract.model_version)} ·
+          registry：{html.escape(_pattern_contract.registry_version[:24])}…</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "图像只在当前本机 Python 进程中处理；不会调用 DeepSeek 或上传到外部服务。"
+        "可用结果包含缩放原图、映射图和 D/H/P 三张参数图。"
+    )
+    st.markdown(
+        """
+        <div class="pattern-empty">
+          <strong>输入与计算边界</strong>
+          <ol>
+            <li>上传 PNG / JPEG / WebP：单文件不超过 8 MB，源图不超过 1200 万像素且单边不超过 5000 px。</li>
+            <li>选择输出最长边 20-64 像素；建议 32-48。映射按目标像素 64 个、颜色库 4096 条分块穷举，单块理论临时工作区不超过 16 MiB，不构造“全部像素 × 全颜色库”矩阵。</li>
+            <li>最近邻排序使用 Lab 三维平方欧氏距离，与 ΔE76 的排序等价；这不是 ΔE00。重复或等距颜色保持颜色库中最早索引优先。</li>
+            <li>点击“生成图案”后才构建 operation-local 颜色库并逐像素匹配；不会修改主会话 engine。</li>
+            <li>只有 CCM 精确注册键可用；禁止 fuzzy、材料单项、默认系数或衬底替代。</li>
+            <li>输出是解析近似候选，仍需另行全波或实验复核。</li>
+          </ol>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if not _pattern_contract.available:
+        st.warning(f"图案工具不可用：{_pattern_contract.reason}")
+        if PATTERN_SESSION_KEY in st.session_state:
+            st.warning("旧图案快照与当前结构或固定合同不一致，已视为 stale；结果和导出均已隐藏。")
+            st.session_state.pop(PATTERN_SESSION_KEY, None)
+        st.caption("上传、生成、旧结果和导出均已隐藏；不会自动切换全局结构或计算路线。")
+    else:
+        uploaded = st.file_uploader(
+            "选择图像",
+            type=["png", "jpg", "jpeg", "webp"],
+            max_upload_size=8,
+            key="pattern_upload_v1",
+            help="PNG、JPEG 或 WebP；<=8 MB，<=1200 万像素，单边<=5000 px。",
+        )
 
-    if uploaded:
-        engine.rebuild_library(material, substrate, polarization, angle)
-        image = Image.open(uploaded)
-        max_s = st.slider("最大分辨率", 20, 120, 60)
+        if uploaded is None:
+            st.info("尚未选择图像。上传并通过校验后，分辨率和生成操作才会出现。")
+        else:
+            image, upload_meta, upload_error = _open_pattern_upload(uploaded)
+            if upload_error:
+                st.error(f"图像未通过校验：{upload_error}")
+            else:
+                st.success(
+                    f"图像已通过校验：{upload_meta['format']} · "
+                    f"{upload_meta['width']}×{upload_meta['height']} px · "
+                    f"{upload_meta['file_size'] / 1024:.1f} KiB · "
+                    f"SHA-256 {upload_meta['upload_sha256'][:12]}…"
+                )
+                preview_col, settings_col = st.columns([1, 2])
+                with preview_col:
+                    st.image(image, caption="本地输入预览", width=220)
+                with settings_col:
+                    max_s = st.slider(
+                        "输出最长边 (px)", 20, 64, 48,
+                        key="pattern_max_size_v1",
+                        help="保持原始宽高比缩放；较高分辨率增加逐像素匹配时间。",
+                    )
+                    st.caption(
+                        f"最长边将缩放到不超过 {max_s}px；每个输出像素映射为一组 D/H/P 候选。"
+                    )
+                    generate_pattern = st.button(
+                        "生成图案", type="primary", use_container_width=True,
+                        key="generate_pattern_v1")
 
-        if st.button("🎨 生成图案", use_container_width=True):
-            with st.spinner("逐像素匹配最优纳米柱参数..."):
-                orig, mapped, params_arr = engine.image_to_metasurface_map(image, max_s)
+                _pattern_load = load_pattern_snapshot(
+                    st.session_state, _pattern_contract,
+                    upload_meta["upload_sha256"], max_s,
+                )
+                if _pattern_load.state == "stale":
+                    st.warning("图案快照已陈旧；上传、尺寸或精确合同已变化，旧结果和导出已隐藏。")
+                    st.session_state.pop(PATTERN_SESSION_KEY, None)
+                elif _pattern_load.state == "invalid":
+                    st.warning("图案快照未通过 schema、同源或哈希校验，旧结果和导出已隐藏。")
+                    st.session_state.pop(PATTERN_SESSION_KEY, None)
 
-            fig3, (ax_o, ax_m, ax_d) = _get_plt().subplots(1, 3, figsize=(14, 4))
-            ax_o.imshow(orig); ax_o.set_title("原图"); ax_o.axis("off")
-            ax_m.imshow(mapped); ax_m.set_title("颜色映射图"); ax_m.axis("off")
-            im = ax_d.imshow(params_arr[:,:,0], cmap="viridis")
-            ax_d.set_title("直径 (nm)"); ax_d.axis("off")
-            _get_plt().colorbar(im, ax=ax_d, fraction=0.046)
-            fig3.tight_layout()
-            st.pyplot(fig3); _get_plt().close(fig3)
+                if generate_pattern and _pattern_load.state == "fresh":
+                    st.success("已复用当前 fingerprint 的 session-local 图案快照；未重新 bind 或 map。")
+                elif generate_pattern:
+                    _store_pattern_result = True
+                    try:
+                        with analysis_engine_transaction(engine, st.session_state):
+                            with st.spinner("构建隔离的单柱解析近似颜色库并逐像素匹配..."):
+                                _pattern_identity = LibraryIdentity(
+                                    material, substrate, "TE (s-pol)", 0.0,
+                                    False, 0.1, 0.0,
+                                )
+                                _pattern_engine = MetaSurfaceColorEngine(
+                                    use_disk_grid_cache=False)
+                                bind_engine_library(_pattern_engine, _pattern_identity)
+                                if not engine_library_matches(_pattern_engine, _pattern_identity):
+                                    raise RuntimeError("隔离图案颜色库身份校验失败")
+                                orig, mapped, params_arr = (
+                                    _pattern_engine.image_to_metasurface_map(image, max_s))
+                        _pattern_payload = build_pattern_payload(
+                            _pattern_contract, upload_meta["upload_sha256"], max_s,
+                            orig, mapped, params_arr,
+                        )
+                        _pattern_snapshot = PatternSnapshot.create(
+                            _pattern_contract, upload_meta["upload_sha256"], max_s,
+                            _pattern_payload,
+                        )
+                    except EngineStateRestoreError as exc:
+                        logging.error("pattern main-engine restore failed: %s", exc)
+                        st.session_state.pop(PATTERN_SESSION_KEY, None)
+                        st.error("图案生成后主会话 engine 恢复失败；旧结果已清除，本次结果未保存。")
+                        _store_pattern_result = False
+                    except EngineStateMutationError as exc:
+                        logging.error("pattern polluted main engine but was restored: %s", exc)
+                        st.session_state.pop(PATTERN_SESSION_KEY, None)
+                        st.error("图案生成触及了主会话 engine；状态已恢复，本次结果因完整性失败而作废。")
+                        _store_pattern_result = False
+                    except Exception as exc:
+                        logging.warning("pattern mapping failed: %s", exc)
+                        st.session_state.pop(PATTERN_SESSION_KEY, None)
+                        st.error(f"图案生成失败：{type(exc).__name__}。未保存部分结果。")
+                        _store_pattern_result = False
+                    if _store_pattern_result:
+                        store_pattern_snapshot(st.session_state, _pattern_snapshot)
+                    _pattern_load = load_pattern_snapshot(
+                        st.session_state, _pattern_contract,
+                        upload_meta["upload_sha256"], max_s,
+                    )
 
-            mean_err = float(np.mean(np.linalg.norm(orig - mapped, axis=2)))
-            st.info(f"图案: {params_arr.shape[1]}×{params_arr.shape[0]} 像素 | 平均 RGB 误差: {mean_err:.4f}")
+                if _pattern_load.state == "fresh":
+                    _pattern_snapshot = _pattern_load.snapshot
+                    _pattern_payload = _pattern_snapshot.payload
+                    orig = np.asarray(_pattern_payload["original_rgb"], dtype=float)
+                    mapped = np.asarray(_pattern_payload["mapped_rgb"], dtype=float)
+                    params_arr = np.asarray(_pattern_payload["parameters_nm"], dtype=float)
+                    result_left, result_right = st.columns(2)
+                    with result_left:
+                        st.image(orig, caption="缩放原图", width="stretch")
+                    with result_right:
+                        st.image(mapped, caption="解析近似映射图", width="stretch")
+
+                    fig_params, axes_params = _get_plt().subplots(1, 3, figsize=(12, 3.4))
+                    for axis, channel, title in zip(
+                        axes_params, range(3), ("D (nm)", "H (nm)", "P (nm)")):
+                        image_map = axis.imshow(params_arr[:, :, channel], cmap="viridis")
+                        axis.set_title(title)
+                        axis.axis("off")
+                        _get_plt().colorbar(image_map, ax=axis, fraction=0.046)
+                    fig_params.tight_layout()
+                    st.pyplot(fig_params)
+                    _get_plt().close(fig_params)
+
+                    st.info(
+                        f"输出 {params_arr.shape[1]}×{params_arr.shape[0]} 像素 · "
+                        f"平均归一化 sRGB 欧氏误差 {_pattern_payload['mean_srgb_error']:.4f} · "
+                        f"fingerprint {_pattern_snapshot.fingerprint[:12]}…"
+                    )
+                    try:
+                        _pattern_exports = build_pattern_exports(_pattern_snapshot)
+                    except (TypeError, ValueError) as exc:
+                        logging.warning("pattern export contract rejected snapshot: %s", exc)
+                        st.error("图案快照导出校验失败；所有导出已禁用。")
+                    else:
+                        export_png, export_csv, export_json = st.columns(3)
+                        basename = f"pattern_{_pattern_snapshot.fingerprint[:12]}"
+                        with export_png:
+                            st.download_button(
+                                "下载 mapped PNG", _pattern_exports.mapped_png,
+                                file_name=f"{basename}_mapped.png", mime="image/png",
+                                use_container_width=True,
+                            )
+                        with export_csv:
+                            st.download_button(
+                                "下载像素 CSV", _pattern_exports.csv_bytes,
+                                file_name=f"{basename}_pixels.csv", mime="text/csv",
+                                use_container_width=True,
+                            )
+                        with export_json:
+                            st.download_button(
+                                "下载 metadata JSON", _pattern_exports.metadata_json,
+                                file_name=f"{basename}_metadata.json", mime="application/json",
+                                use_container_width=True,
+                            )
 
 # Tab 4: Color Palette
 with tab4:
     st.subheader("D-H 颜色映射")
 
-    # Sample a grid of D/H values for the current material
+    # Preserve the registered numerical grid; only its presentation is
+    # transposed so diameter runs across the wider desktop axis.
     d_sample = np.linspace(80, 300, 8)
     h_sample = np.linspace(200, 600, 6)
 
-    # Build HTML color grid
-    rows_html = '<table style="border-collapse:collapse;width:auto;max-width:100%;">'
-    rows_html += '<tr><th style="padding:2px 4px;color:#888;font-size:10px;">D/H</th>'
-    for h in h_sample:
-        rows_html += f'<th style="padding:2px 4px;color:#888;font-size:10px;">{h:.0f}</th>'
-    rows_html += '</tr>'
+    _mapping_route_id = str(_forward.provenance.get("route_id", ""))
+    if is_dual:
+        _mapping_route_id = "dual_pillar_mapping_not_registered"
+    elif is_fp:
+        _mapping_route_id = "fp_cavity_mapping_not_registered"
+    _mapping_contract = mapping_domain_contract(
+        material, substrate, _mapping_route_id)
+    _mapping_route_label = str(_forward.provenance.get("route_label", _mapping_route_id))
+    _mapping_model_version = str(_forward.provenance.get("model_version", "不可用"))
+    _mapping_current = {
+        "d": float(diameter), "h": float(height), "p": float(period),
+    }
+    _mapping_registry_version = canonical_sha256({
+        "available": _mapping_contract.available,
+        "domains": _mapping_contract.domains,
+        "boundary": _mapping_contract.boundary,
+        "reason": _mapping_contract.reason,
+        "version": "mapping-domain-registry-v1",
+    })
+    _mapping_artifact_version = _analysis_artifact_version(
+        _mapping_route_id, _mapping_model_version, structure_type=_structure_type,
+        material=_provenance_material, substrate=_provenance_substrate)
+    _mapping_artifact_available = _artifact_identity_available(_mapping_artifact_version)
+    _mapping_context = _make_analysis_context(
+        "mapping",
+        {
+            "domain_registry_version": "mapping-domain-registry-v1",
+            "d_values_nm": d_sample.tolist(), "h_values_nm": h_sample.tolist(),
+            "period_nm": float(period), "sample_count": int(d_sample.size * h_sample.size),
+        },
+        route_id=_mapping_route_id, model_version=_mapping_model_version,
+        artifact_version=_mapping_artifact_version,
+        registry_version=_mapping_registry_version,
+    )
+    _mapping_runtime_issue = _analysis_runtime_identity_issue(_mapping_context)
+    _mapping_execution_available = bool(
+        _mapping_contract.available and _mapping_artifact_available
+        and not _mapping_runtime_issue)
+    _mapping_load = load_analysis_snapshot(st.session_state, _mapping_context)
+    run_mapping = st.button(
+        "运行 / 加载当前 D-H 映射", key="run_mapping_analysis",
+        use_container_width=True,
+        disabled=not _mapping_execution_available,
+    )
+    if not _mapping_contract.available:
+        st.info(f"当前映射不可用：{_mapping_contract.reason}")
+        if (
+            not is_dual and not is_fp
+            and _mapping_route_id in {"rcwa_surrogate", "ml_surrogate"}
+            and material == "TiO2 (anatase)"
+            and substrate == "SiO2 (fused silica)"
+        ):
+            st.caption(
+                "如需查看有代码证据的解析 D-H 映射，可在侧栏关闭 ML。"
+                "这会切换计算路线，不会把代理模型的适用域借给解析路线。")
+    if not _mapping_artifact_available:
+        st.info("D-H 映射源码身份不可用；旧结果已隐藏，当前不会运行 evaluator。")
+    elif _mapping_runtime_issue:
+        st.info(
+            f"D-H 映射模型会话身份不可用：{_mapping_runtime_issue}；"
+            "旧结果已隐藏，当前不会运行 evaluator。")
+    if _mapping_load.state == "stale":
+        st.warning("D-H 映射快照已陈旧；当前参数、路线或采样域已变化，旧结果已隐藏。")
+    elif _mapping_load.state == "invalid":
+        st.warning("D-H 映射快照未通过完整性校验，旧结果已隐藏。")
+    elif (
+        _mapping_load.state == "missing" and _mapping_contract.available
+        and _mapping_artifact_available
+    ):
+        st.info("点击按钮后才计算 48 个映射格；普通页面刷新不会运行 mapping evaluator。")
 
-    # Try numpy batch acceleration for color map
-    try:
-        import torch_model as _tm
-        # Use batch_color_map_grid which properly meshes D and H
-        _rgb_grid = _tm.batch_color_map_grid(d_sample, h_sample, float(period))
-        _rgb_grid = _rgb_grid.reshape(len(d_sample), len(h_sample), 3)
-        _use_torch = True
-    except Exception as e:
-        logging.debug(f"torch batch color map: {e}")
-        _use_torch = False
+    if (
+        run_mapping and _mapping_load.state != "fresh"
+        and _mapping_execution_available
+        and not _analysis_runtime_identity_issue(_mapping_context)
+    ):
+        _map_route = str(_mapping_route_id)
+        _map_model = str(_mapping_model_version)
+        _map_material = str(material)
+        _map_substrate = str(substrate)
+        _map_polarization = str(polarization)
+        _map_angle = float(angle)
+        _map_far_field = bool(_mapping_context.far_field_enabled)
+        _map_na = float(_mapping_context.na)
+        _map_theta = float(_mapping_context.theta_obs_deg)
 
-    for di, d in enumerate(d_sample):
-        rows_html += f'<tr><td style="padding:2px 4px;color:#888;font-size:10px;font-weight:600;">{d:.0f}</td>'
-        for hi, h in enumerate(h_sample):
-            if _use_torch:
-                test_rgb = _rgb_grid[di, hi].numpy()
+        def _evaluate_map_geometry(geometry):
+            return _cached_mapping_forward(
+                _map_route, _map_model, _mapping_context.artifact_version,
+                geometry["d"], geometry["h"], geometry["p"],
+                _map_material, _map_substrate, _map_polarization, _map_angle,
+                _map_far_field, _map_na, _map_theta,
+            )
+
+        _store_mapping_snapshot = True
+        try:
+            with (
+                analysis_engine_transaction(engine, st.session_state),
+                _bound_runtime_context(
+                    _mapping_context.structure_type, _mapping_context.route_id,
+                    _mapping_context.material, _mapping_context.substrate),
+            ):
+                _computed_cells = build_mapping_cells(
+                    d_sample, h_sample, float(period),
+                    _mapping_contract, _evaluate_map_geometry)
+                _cell_payload = []
+                for hi in range(len(h_sample)):
+                    for di in range(len(d_sample)):
+                        cell = _computed_cells[(hi, di)]
+                        if cell is not None and cell.status == "available":
+                            _cell_payload.append({
+                                "hi": hi, "di": di, "status": "available",
+                                "rgb": np.asarray(cell.rgb, dtype=float).tolist(), "reason": "",
+                            })
+                        else:
+                            _cell_payload.append({
+                                "hi": hi, "di": di, "status": "unavailable", "rgb": None,
+                                "reason": cell.reason if cell is not None else _mapping_contract.reason,
+                            })
+                _mapping_payload = {
+                    "status": "available", "reason": "",
+                    "d_values": d_sample.tolist(), "h_values": h_sample.tolist(),
+                    "route_id": _map_route, "boundary": _mapping_contract.boundary,
+                    "analysis_artifact_version": _mapping_context.artifact_version,
+                    "model_artifact_version": (
+                        _analysis_model_artifact_version(_mapping_context)),
+                    "cells": _cell_payload,
+                }
+        except (ModelResourceDriftError, ModelResourceUnavailable) as exc:
+            logging.error("mapping model resource drift: %s", exc)
+            st.session_state.pop(_mapping_context.session_key, None)
+            st.error("D-H 映射模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+            _store_mapping_snapshot = False
+        except EngineStateRestoreError as exc:
+            logging.error("mapping engine restore failed: %s", exc)
+            st.session_state.pop(_mapping_context.session_key, None)
+            st.error("D-H 映射会话引擎恢复失败；旧结果已清除，本次结果未保存。")
+            _store_mapping_snapshot = False
+        except EngineStateMutationError as exc:
+            logging.error("mapping engine mutation restored: %s", exc)
+            _mapping_payload = {
+                "status": "unavailable",
+                "reason": "会话引擎状态被分析修改；已恢复原状态，本次结果因完整性失败而作废",
+            }
+        except Exception as exc:
+            if exception_has_model_resource_drift(exc):
+                logging.error("mapping business error with model drift: %s", exc)
+                st.session_state.pop(_mapping_context.session_key, None)
+                st.error("D-H 映射模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+                _store_mapping_snapshot = False
             else:
-                test_param = MetaSurfaceParam(d, h, period, material, substrate, polarization, angle)
-                test_rgb = engine.physical_color(test_param)
-            hex_t = rgb_to_hex(test_rgb)
-            tr, tg, tb = rgb_255(test_rgb)
-            rows_html += f'<td style="padding:2px;"><div title="D={d:.0f}nm H={h:.0f}nm RGB({tr},{tg},{tb})" style="width:35px;height:28px;background:{hex_t};border-radius:4px;border:1px solid rgba(255,255,255,0.08);"></div></td>'
-        rows_html += '</tr>'
-    rows_html += '</table>'
+                logging.warning("mapping analysis failed: %s", exc)
+                _mapping_payload = {
+                    "status": "unavailable", "reason": f"映射计算失败：{type(exc).__name__}",
+                }
+        _post_mapping_issue = _analysis_runtime_identity_issue(_mapping_context)
+        if _post_mapping_issue:
+            st.session_state.pop(_mapping_context.session_key, None)
+            st.error("D-H 映射期间模型/源码身份发生变化；本次结果未保存。")
+            _store_mapping_snapshot = False
+        if _store_mapping_snapshot:
+            store_analysis_snapshot(
+                st.session_state, AnalysisSnapshot.create(_mapping_context, _mapping_payload))
+        _mapping_load = load_analysis_snapshot(st.session_state, _mapping_context)
 
-    st.markdown(rows_html, unsafe_allow_html=True)
-    st.caption(f"🔴: {material} | ⚪: {substrate} | 周期 P={period:.0f}nm")
-    st.caption("⬅️: 高度 H (nm) | ⬇️: 直径 D (nm)")
+    if _mapping_load.state == "fresh" and _mapping_execution_available:
+        _mapping_payload = _mapping_load.snapshot.payload
+        if _mapping_payload["status"] == "unavailable":
+            st.warning(f"D-H 映射不可用：{_mapping_payload['reason']}。未跨路线补数。")
+        else:
+            _mapping_cells = {
+                (cell["hi"], cell["di"]): MappingCellResult(
+                    "available", np.asarray(cell["rgb"], dtype=float), "", None)
+                if cell["status"] == "available"
+                else MappingCellResult("unavailable_execution", None, cell["reason"], None)
+                for cell in _mapping_payload["cells"]
+            }
+            _mapping_current_domain_ok = bool(
+                _mapping_contract.available and not is_dual and not is_fp
+                and all(
+                    float(_mapping_contract.domains[key][0]) <= _mapping_current[key]
+                    <= float(_mapping_contract.domains[key][1])
+                    for key in ("d", "h", "p")
+                )
+            )
+            _mapping_current_displayed = bool(
+                _mapping_current_domain_ok
+                and float(d_sample[0]) <= _mapping_current["d"] <= float(d_sample[-1])
+                and float(h_sample[0]) <= _mapping_current["h"] <= float(h_sample[-1])
+            )
+            _mapping_available_indices = sorted(
+                index for index, cell in _mapping_cells.items()
+                if cell.status == "available")
+            _mapping_current_index = (
+                nearest_available_mapping_index(
+                    _mapping_current["d"], _mapping_current["h"],
+                    d_sample, h_sample, _mapping_cells)
+                if _mapping_current_displayed else None)
+            _mapping_focus_index = (
+                _mapping_current_index if _mapping_current_index is not None
+                else (_mapping_available_indices[0] if _mapping_available_indices else None))
+            if _mapping_current_index is not None:
+                _nearest_h = float(h_sample[_mapping_current_index[0]])
+                _nearest_d = float(d_sample[_mapping_current_index[1]])
+                _mapping_position_text = (
+                    f"当前 D/H 位于注册域内；黄色边框标出最近可用采样格 D={_nearest_d:.0f} nm、"
+                    f"H={_nearest_h:.0f} nm，不代表参数已吸附到该格。")
+            elif not _mapping_current_domain_ok:
+                _mapping_position_text = "当前 D/H/P 至少一项位于注册域外。"
+            elif not _mapping_available_indices:
+                _mapping_position_text = "本快照 48 个采样格均不可用。"
+            else:
+                _mapping_position_text = "当前参数未对应到本页离散显示范围。"
+
+            _route_text = html.escape(f"{_mapping_route_label}（{_mapping_model_version}）")
+            _boundary_text = html.escape(_mapping_contract.boundary)
+            rows_html = (
+                '<div class="mapping-summary" role="status" aria-live="polite">'
+                '<div class="mapping-summary__item"><strong>当前参数</strong>'
+                f'D={_mapping_current["d"]:.1f} nm · H={_mapping_current["h"]:.1f} nm · '
+                f'P={_mapping_current["p"]:.1f} nm<br>{html.escape(_mapping_position_text)}</div>'
+                '<div class="mapping-summary__item"><strong>映射来源与边界</strong>'
+                f'{_route_text}<br>{_boundary_text}</div></div>'
+                '<div class="mapping-legend" role="list" aria-label="映射图例">'
+                '<span role="listitem"><i></i>可用：显示 RGB 与来源</span>'
+                '<span role="listitem"><i class="mapping-legend__unavailable"></i>不可用：未生成伪颜色</span>'
+                '<span role="listitem"><i class="mapping-legend__current"></i>当前参数最近可用采样格</span>'
+                '</div><div class="mapping-table-wrap" role="region" aria-label="D-H 颜色映射表，可横向滚动" tabindex="0">'
+                '<table class="mapping-grid"><caption>D-H 颜色映射；列为直径 D，行为高度 H</caption>'
+                '<thead><tr><th scope="col">H（行）<br>D（列）</th>')
+            for d in d_sample:
+                rows_html += f'<th scope="col">D {d:.0f}<br>nm</th>'
+            rows_html += '</tr></thead><tbody>'
+            for hi, h in enumerate(h_sample):
+                rows_html += f'<tr><th scope="row">H {h:.0f}<br>nm</th>'
+                for di, d in enumerate(d_sample):
+                    cell = _mapping_cells[(hi, di)]
+                    is_current = bool(_mapping_current_index == (hi, di) and cell.status == "available")
+                    _cell_tabindex = 0 if _mapping_focus_index == (hi, di) else -1
+                    current_class = " mapping-cell--current" if is_current else ""
+                    current_attribute = ' aria-current="true"' if is_current else ""
+                    current_badge = '<span class="mapping-cell__current-label">当前邻近可用格</span>' if is_current else ""
+                    if cell.status == "available":
+                        hex_t = rgb_to_hex(cell.rgb)
+                        tr, tg, tb = rgb_255(cell.rgb)
+                        label = html.escape(
+                            f"可用；D={d:.0f} nm，H={h:.0f} nm，RGB({tr}, {tg}, {tb})；来源={_mapping_route_label}",
+                            quote=True)
+                        rows_html += (
+                            f'<td><div class="mapping-cell{current_class}" data-status="available" '
+                            f'role="img" tabindex="{_cell_tabindex}" aria-label="{label}" title="{label}"'
+                            f'{current_attribute} style="background:{hex_t};">{current_badge}'
+                            f'<span class="mapping-cell__value">D {d:.0f} · H {h:.0f}<br>{hex_t}</span></div></td>')
+                    else:
+                        label = html.escape(
+                            f"不可用；D={d:.0f} nm，H={h:.0f} nm；原因：{cell.reason}", quote=True)
+                        rows_html += (
+                            f'<td><div class="mapping-cell mapping-cell--unavailable{current_class}" '
+                            f'data-status="unavailable" role="img" tabindex="{_cell_tabindex}" aria-label="{label}" '
+                            f'title="{label}"{current_attribute}>{current_badge}'
+                            f'<span class="mapping-cell__value">不可用<br>D {d:.0f} · H {h:.0f}</span></div></td>')
+                rows_html += '</tr>'
+            rows_html += '</tbody></table></div>'
+            st.markdown(rows_html, unsafe_allow_html=True)
+            st.caption(
+                f"快照 fingerprint={_mapping_context.fingerprint[:12]}…；"
+                f"可用格来源：{_mapping_route_label}（{_mapping_model_version}）；"
+                "标为“不可用”的格子未生成伪颜色。")
+    st.caption(f"材料：{material} | 衬底：{substrate} | 周期 P={period:.0f}nm")
+    st.caption("横轴：直径 D (nm)｜纵轴：高度 H (nm)")
     # CIE 1931 chromaticity diagram (v5.1 - color-filled + wavelength labels)
     st.divider()
     st.subheader("CIE 1931 色度图")
@@ -1547,42 +4401,22 @@ with tab4:
                            ha="center", va="center", zorder=5,
                            bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.7))
 
-        from color_utils import CIE_X as _cie_x_full, CIE_Y as _cie_y_full, CIE_Z as _cie_z_full
-
-        # Compute xy from spectrum
+        # Derive the current point from the same validated ForwardResult used by
+        # the preview, spectrum plot, and CSV export.
         try:
-            import torch_model as _tm2
-            import torch as _torch
-            _cie_x = _cie_x_full
-            _cie_y = _cie_y_full
-            _cie_z = _cie_z_full
-            _wl = np.linspace(380, 780, 81)
-            if st.session_state.get("dual_pillar", False):
-                sp = _tm2.batch_dual_pillar_spectrum(
-                    _torch.tensor([st.session_state.d1_val]), _torch.tensor([st.session_state.h1_val]),
-                    _torch.tensor([st.session_state.d2_val]), _torch.tensor([st.session_state.h2_val]),
-                    _torch.tensor([st.session_state.p_val]),
-                    material=material, substrate=substrate
-                )
+            if _forward.spectrum_available:
+                _xyz = np.asarray(spectrum_to_xyz(_forward.wavelengths_nm, _forward.reflectance), dtype=float)
+                _xy = xyz_to_xy(_xyz)
+                px, py = float(_xy[0]), float(_xy[1])
+                if np.isfinite(px) and np.isfinite(py):
+                    ax.plot(px, py, "o", color="#FF1744", markersize=9, markeredgecolor="white", markeredgewidth=1.2, zorder=6)
+                    ax.annotate(f"({px:.3f}, {py:.3f})", (px, py),
+                               textcoords="offset points", xytext=(10, 10),
+                               fontsize=8, color="#333", zorder=6)
             else:
-                sp = _tm2.batch_lorentzian_spectrum(
-                    _torch.tensor([diameter]), _torch.tensor([height]), _torch.tensor([period]),
-                    material=material, substrate=substrate
-                )
-            sp_np = sp.squeeze().detach().numpy()
-            Xv = np.trapz(sp_np * _cie_x, _wl)
-            Yv = np.trapz(sp_np * _cie_y, _wl)
-            Zv = np.trapz(sp_np * _cie_z, _wl)
-            total = Xv + Yv + Zv
-            if total > 0:
-                px, py = Xv / total, Yv / total
-                # Solid red dot (no white edge, academic style)
-                ax.plot(px, py, "o", color="#FF1744", markersize=9, markeredgecolor="white", markeredgewidth=1.2, zorder=6)
-                ax.annotate(f"({px:.3f}, {py:.3f})", (px, py),
-                           textcoords="offset points", xytext=(10, 10),
-                           fontsize=8, color="#333", zorder=6)
+                st.caption(f"当前路由没有可用光谱，无法标注色度点：{_forward.error}")
         except Exception as e:
-            logging.debug(f"chromaticity annotate: {e}")
+            st.caption(f"色度点计算失败：{e}")
 
         ax.set_xlim(0, 0.80)
         ax.set_ylim(0, 0.90)
@@ -1604,103 +4438,91 @@ with tab5:
 
     with col_spec:
         st.subheader("反射光谱 (380-780 nm)")
-        if is_fp:
-            if is_dbr_fp:
-                wls, refl = fp_dielectric_spectrum(st.session_state.fp_t_val, st.session_state.get("fp_target_wl", 450.0), 3, 5, angle, polarization.startswith("TE"))
-            else:
-                wls, refl = fp_cavity_spectrum(st.session_state.fp_t_val, angle, polarization.startswith("TE"))
-        else:
-            wls, refl = engine.compute_spectrum(param, 380, 780, 81)
+        st.caption(forward_provenance_caption(_forward.provenance))
+        wls, refl = _forward.wavelengths_nm, _forward.reflectance
+        if not _forward.spectrum_available:
+            st.warning(f"当前结果没有可用光谱，无法绘制：{_forward.error}")
+            wls, refl = np.array([]), np.array([])
 
-        fig5, ax5 = _get_plt().subplots(figsize=(10, 4))
+        # A less panoramic aspect ratio keeps axes and labels legible when the
+        # two-column layout stacks onto a narrow mobile viewport.
+        fig5, ax5 = _get_plt().subplots(figsize=(8, 5))
         # Color the spectrum curve with the actual computed color
-        hex_c = rgb_to_hex(rgb)
-        ax5.plot(wls, refl, color="#333", lw=2.5,
-                 label=f"D={diameter:.0f} H={height:.0f}nm")
-        ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
-        ax5.set_xlabel("Wavelength (nm)")
-        ax5.set_ylabel("Reflectance")
-        ax5.set_title(f"Spectrum: {material} on {substrate}")
+        hex_c = rgb_to_hex(_forward.rgb) if _forward.spectrum_available else "#777777"
+        if len(wls):
+            ax5.plot(wls, refl, color="#333", lw=2.5,
+                     label=str(_forward.provenance.get("geometry_summary") or "unknown"))
+            ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
+        ax5.set_xlabel("波长 (nm)")
+        ax5.set_ylabel("反射率")
+        ax5.set_title("反射光谱")
         ax5.set_xlim(380, 780)
         ax5.set_ylim(0, 1.08)
+        ax5.set_xticks(np.arange(380, 781, 80))
+        ax5.tick_params(axis="both", labelsize=8)
         ax5.grid(True, alpha=0.25)
-        ax5.legend(loc='upper right')
-        fig5.tight_layout()
+        if len(wls):
+            ax5.legend(loc="upper right", fontsize=8, framealpha=0.85)
+        fig5.tight_layout(pad=1.1)
         st.pyplot(fig5); _get_plt().close(fig5)
 
     with col_cie:
         st.subheader("CIE 1931 色度图")
-        # Draw CIE 1931 chromaticity diagram with current color point
-        fig_cie, ax_cie = _get_plt().subplots(figsize=(5, 5))
-
-        # Spectrum locus (from CIE data)
-        x_xy = _CIE_X / (_CIE_X + _CIE_Y + _CIE_Z + 1e-12)
-        y_xy = _CIE_Y / (_CIE_X + _CIE_Y + _CIE_Z + 1e-12)
-        ax_cie.plot(x_xy, y_xy, 'k-', lw=1.2, alpha=0.8)
-        ax_cie.fill(x_xy, y_xy, alpha=0.05, color='gray')
-
-        # sRGB gamut triangle
-        srgb_primaries_xy = np.array([[0.64, 0.33], [0.30, 0.60], [0.15, 0.06], [0.64, 0.33]])
-        ax_cie.plot(srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
-                    'k--', lw=0.8, alpha=0.5, label='sRGB gamut')
-
-        # Multi-material metasurface gamut (TiO2 + Si3N4 + Al2O3 + a-Si)
-        materials_gamut = [
-            ("TiO2 (anatase)", "#ff6b35"),
-            ("Si3N4 (nitride)", "#4ecdc4"),
-            ("Al2O3 (sapphire)", "#45b7d1"),
-            ("a-Si (amorphous)", "#f9ca24"),
-        ]
-        for mat_name, mat_color in materials_gamut:
-            try:
-                from engine import MetaEngine
-                _engine_gamut = MetaEngine(mat_name, substrate, polarization, angle)
-                if len(_engine_gamut.grid_xy) > 0:
-                    sample_step = max(1, len(_engine_gamut.grid_xy) // 800)
-                    gx = _engine_gamut.grid_xy[::sample_step, 0]
-                    gy = _engine_gamut.grid_xy[::sample_step, 1]
-                    ax_cie.scatter(gx, gy, c=mat_color, s=1, alpha=0.12, label=f'{mat_name.split(chr(32))[0]} gamut')
-            except Exception:
-                pass
-        if len(engine.grid_xy) > 0:
-            sample_step = max(1, len(engine.grid_xy) // 2000)
-            gx = engine.grid_xy[::sample_step, 0]
-            gy = engine.grid_xy[::sample_step, 1]
-            ax_cie.scatter(gx, gy, c='#ff6b35', s=1, alpha=0.15, label='TiO2 gamut')
-        ax_cie.legend(fontsize=6, loc='lower left')
-
-        # D65 white point
-        ax_cie.plot(0.3127, 0.3290, 'k+', ms=8, alpha=0.5)
-
-        # Current color point
-        xy = rgb_to_xy(rgb)
-        ax_cie.plot(xy[0], xy[1], 'o', color=hex_c, ms=10,
-                    markeredgecolor='white', markeredgewidth=1.5)
-        ax_cie.plot(xy[0], xy[1], 'o', color=hex_c, ms=14, alpha=0.3)
-
-        ax_cie.set_xlabel('x')
-        ax_cie.set_ylabel('y')
-        ax_cie.set_title(f'CIE 1931 xy: ({xy[0]:.4f}, {xy[1]:.4f})')
-        ax_cie.set_xlim(0, 0.75)
-        ax_cie.set_ylim(0, 0.85)
-        ax_cie.set_aspect('equal')
-        ax_cie.grid(True, alpha=0.2)
-        fig_cie.tight_layout()
-        st.pyplot(fig_cie)
-        _get_plt().close(fig_cie)
+        st.caption(forward_provenance_caption(_forward.provenance))
+        try:
+            _cie_plot = build_cie_plot_data(_forward, _CIE_X, _CIE_Y, _CIE_Z)
+        except Exception as exc:
+            st.error(f"CIE 标准轨迹不可用：{type(exc).__name__}: {exc}")
+            _cie_plot = None
+        if _cie_plot is not None:
+            fig_cie, ax_cie = _get_plt().subplots(figsize=(5, 5))
+            locus = _cie_plot.spectral_locus_xy
+            ax_cie.plot(
+                locus[:, 0], locus[:, 1], "k-", lw=1.2, alpha=0.8,
+                label="CIE 1931 光谱轨迹",
+            )
+            ax_cie.fill(locus[:, 0], locus[:, 1], alpha=0.05, color="gray")
+            srgb_primaries_xy = _cie_plot.srgb_triangle_xy
+            ax_cie.plot(
+                srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
+                "k--", lw=0.8, alpha=0.5, label="sRGB 色域",
+            )
+            ax_cie.plot(0.3127, 0.3290, "k+", ms=8, alpha=0.5, label="D65")
+            if _cie_plot.current.available:
+                xy = _cie_plot.current.xy
+                ax_cie.plot(
+                    xy[0], xy[1], "o", color=hex_c, ms=10,
+                    markeredgecolor="white", markeredgewidth=1.5,
+                    label="当前规范结果",
+                )
+                ax_cie.plot(xy[0], xy[1], "o", color=hex_c, ms=14, alpha=0.3)
+                ax_cie.set_title(f"CIE 1931 xy: ({xy[0]:.4f}, {xy[1]:.4f})")
+            else:
+                ax_cie.set_title("CIE 1931 xy：当前点不可用")
+                st.warning(f"当前 CIE 点不可用，未绘制占位点：{_cie_plot.current.reason}")
+            ax_cie.set_xlabel("x")
+            ax_cie.set_ylabel("y")
+            ax_cie.set_xlim(0, 0.75)
+            ax_cie.set_ylim(0, 0.85)
+            ax_cie.set_aspect("equal")
+            ax_cie.grid(True, alpha=0.2)
+            ax_cie.legend(fontsize=6, loc="lower left")
+            fig_cie.tight_layout()
+            st.pyplot(fig_cie)
+            _get_plt().close(fig_cie)
 
 
-    # === Material gamut comparison (physical model) ===
+    # === Declared-route gamut comparison ===
     st.divider()
-    st.subheader("材料色域对比")
+    st.subheader("模型路线色域对比")
 
     @st.cache_data
-    def _physical_gamut_xy(material, substrate):
-        """Compute gamut using RCWA/ML model (not approximate grid)."""
+    def _lorentz_fano_gamut_points(material, substrate):
+        """Sample the declared Lorentz/Fano analytical approximation."""
         try:
             import torch_model as _tm
-        except Exception:
-            return np.zeros((0, 2))
+        except Exception as exc:
+            raise RuntimeError("torch_model unavailable") from exc
         D = np.arange(60, 340, 20, dtype=np.float32)
         H = np.arange(100, 580, 40, dtype=np.float32)
         P = np.arange(220, 580, 40, dtype=np.float32)
@@ -1732,71 +4554,92 @@ with tab5:
         return np.array(xy_list) if xy_list else np.zeros((0, 2))
 
     @st.cache_data
-    def _fp_physical_gamut_xy():
-        """FP DBR cavity gamut with dense sampling."""
+    def _fp_dbr_gamut_points():
+        """Sample the dielectric-mirror FP-TMM route."""
         from fp_cavity import fp_dielectric_spectrum
         from color_utils import spectrum_to_srgb as _g2s, rgb_to_xy as _g2xy
         pts = []
+        failed_samples = 0
         for t in range(50, 601, 10):
             for wl_c in range(380, 781, 10):
                 try:
                     wls, refl = fp_dielectric_spectrum(t, float(wl_c), 3, 5, 0.0, True)
                     rgb = _g2s(wls, np.clip(refl, 0, None))
                     pts.append(_g2xy(rgb))
-                except Exception as e:
-                    logging.warning(f"fp dbr gamut: {e}")
-        return np.array(pts) if pts else np.zeros((0, 2))
+                except Exception:
+                    failed_samples += 1
+        return GamutSamples(np.asarray(pts, dtype=float), failed_samples)
 
     @st.cache_data
-    def _fp_ag_gamut_xy():
-        """FP Ag-mirror cavity gamut."""
+    def _fp_ag_gamut_points():
+        """Sample the Ag-mirror FP-TMM route."""
         from fp_cavity import fp_cavity_spectrum
         from color_utils import spectrum_to_srgb as _g2s, rgb_to_xy as _g2xy
         pts = []
+        failed_samples = 0
         for t in range(50, 601, 10):
             for angle in range(0, 81, 10):
                 try:
                     wls, refl = fp_cavity_spectrum(t, float(angle), True)
                     rgb = _g2s(wls, np.clip(refl, 0, None))
                     pts.append(_g2xy(rgb))
-                except Exception as e:
-                    logging.warning(f"fp ag gamut: {e}")
-        return np.array(pts) if pts else np.zeros((0, 2))
+                except Exception:
+                    failed_samples += 1
+        return GamutSamples(np.asarray(pts, dtype=float), failed_samples)
 
-    show_gamut = st.checkbox("显示色域对比图", value=False,
-        help="基于 RCWA/ML 高保真数据计算的四种材料体系 CIE 色域边界")
+    show_gamut = st.checkbox(
+        "显示模型路线色域对比图", value=False,
+        help=("仅比较 Lorentz/Fano analytical approximation 与 FP-TMM 的采样结果；"
+              "不是直接 RCWA、代理模型精度或实验色域。"),
+    )
     if show_gamut:
-        with st.spinner("物理模型计算色域中 (TiO2, a-Si, FP腔)..."):
-            tio2_xy = _physical_gamut_xy("TiO2 (anatase)", "SiO2 (fused silica)")
-            asi_xy = _physical_gamut_xy("a-Si (amorphous)", "SiO2 (fused silica)")
-            fp_xy = _fp_physical_gamut_xy()
-            fp_ag_xy = _fp_ag_gamut_xy()
+        with st.spinner("按声明路线计算色域采样（Lorentz/Fano approximation、FP-TMM）..."):
+            gamut_results = [
+                evaluate_gamut(
+                    "Lorentz/Fano analytical approximation", "TiO2 / SiO2",
+                    lambda: _lorentz_fano_gamut_points(
+                        "TiO2 (anatase)", "SiO2 (fused silica)")),
+                evaluate_gamut(
+                    "Lorentz/Fano analytical approximation", "a-Si / SiO2",
+                    lambda: _lorentz_fano_gamut_points(
+                        "a-Si (amorphous)", "SiO2 (fused silica)")),
+                evaluate_gamut("FP-TMM", "TiO2 cavity / SiO2 DBR", _fp_dbr_gamut_points),
+                evaluate_gamut("FP-TMM", "TiO2 cavity / Ag mirrors", _fp_ag_gamut_points),
+            ]
+
+        for gamut_result in gamut_results:
+            if gamut_result.error:
+                st.warning(
+                    f"{gamut_result.route_label} / {gamut_result.system_label} 不可用："
+                    f"{gamut_result.error}")
+            if gamut_result.warning:
+                st.warning(
+                    f"{gamut_result.route_label} / {gamut_result.system_label}："
+                    f"{gamut_result.warning}")
 
         try:
             from scipy.spatial import ConvexHull
-        except Exception:
+        except Exception as exc:
             ConvexHull = None
+            st.warning(f"色域凸包不可用：{type(exc).__name__}: {exc}")
 
         fig_gamut, ax_g = _get_plt().subplots(figsize=(6.5, 6.5))
-        # Spectrum locus
+        plot_base = build_cie_plot_data(_forward, _CIE_X, _CIE_Y, _CIE_Z)
+        x_xy = plot_base.spectral_locus_xy[:, 0]
+        y_xy = plot_base.spectral_locus_xy[:, 1]
+        srgb_primaries_xy = plot_base.srgb_triangle_xy
         ax_g.plot(x_xy, y_xy, "k-", lw=1.0, alpha=0.7)
         ax_g.fill(x_xy, y_xy, alpha=0.04, color="gray")
-        # D65 white point
         ax_g.plot(0.3127, 0.3290, "k+", ms=8, label="D65")
-        # sRGB triangle (prominent)
         ax_g.plot(srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
-                  "k--", lw=1.0, alpha=0.7, label="sRGB gamut")
+                  "k--", lw=1.0, alpha=0.7, label="sRGB 色域")
 
-        gamuts = [
-            (asi_xy, "#00aaff", "a-Si metasurface"),
-            (tio2_xy, "#ff6b35", "TiO2 metasurface"),
-            (fp_xy, "#44cc44", "FP DBR cavity"),
-            (fp_ag_xy, "#cc44cc", "FP Ag cavity"),
-        ]
-
-        for pts, color, label in gamuts:
-            if len(pts) < 3:
+        gamut_colors = ["#ff6b35", "#00aaff", "#44aa44", "#a84aa8"]
+        for gamut_result, color in zip(gamut_results, gamut_colors):
+            if not gamut_result.available:
                 continue
+            pts = gamut_result.points_xy
+            label = f"{gamut_result.system_label} · {gamut_result.route_label}"
             step = max(1, len(pts) // 1200)
             ax_g.scatter(pts[::step, 0], pts[::step, 1], c=color, s=2, alpha=0.20, label=label)
             if ConvexHull is not None:
@@ -1804,16 +4647,14 @@ with tab5:
                     hull = ConvexHull(pts)
                     hull_pts = np.append(hull.vertices, hull.vertices[0])
                     ax_g.plot(pts[hull_pts, 0], pts[hull_pts, 1], "-", color=color, lw=2.0, alpha=0.90)
-                    cx, cy = pts[hull.vertices].mean(axis=0)
-                    ax_g.annotate(f"{hull.volume*100:.0f}", (cx, cy),
-                                  fontsize=7, color=color, ha="center", va="center",
-                                  bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.7))
-                except Exception as e:
-                    logging.warning(f"gamut hull: {e}")
+                except Exception as exc:
+                    st.warning(
+                        f"{gamut_result.system_label} 凸包不可用："
+                        f"{type(exc).__name__}: {exc}")
 
         ax_g.legend(fontsize=7, loc="lower left", framealpha=0.85, ncol=1)
         ax_g.set_xlabel("x"); ax_g.set_ylabel("y")
-        ax_g.set_title("Physical Gamut Comparison (RCWA data, TE, 0deg, on SiO2)")
+        ax_g.set_title("模型路线色域对比（TE，0 deg）")
         ax_g.set_xlim(0, 0.75); ax_g.set_ylim(0, 0.85)
         ax_g.set_aspect("equal")
         ax_g.grid(True, alpha=0.15)
@@ -1821,266 +4662,601 @@ with tab5:
         st.pyplot(fig_gamut)
         _get_plt().close(fig_gamut)
 
-    @st.cache_data
     def _benchmark_methods():
-        """Benchmark 4 inverse design methods with a standard target."""
+        """Benchmark only locally eligible methods against one fixed target."""
         import time
-        try:
-            import torch_model as _tm_bm, ml_module as _ml_bm
-            import torch as _t_bm
-            _HAS_TORCH = True
-        except ModuleNotFoundError:
-            _HAS_TORCH = False
-        import ml_module
         from fp_cavity import fp_cavity_spectrum
         from color_utils import spectrum_to_srgb, delta_e2000, rgb_to_lab
-        target_rgb = np.array([0.478, 0.310, 0.133])  # #7a4f22
+        target_rgb = np.array([122, 79, 34], dtype=float) / 255.0  # #7A4F22
         target_lab = rgb_to_lab(target_rgb)
         mat = "TiO2 (anatase)"
         sub = "SiO2 (fused silica)"
-        results = {}
+        rows = []
 
-        # 1. Smart grid search (RCWA/ML)
+        # 1. Smart grid: local RCWA-trained surrogate, never direct RCWA.
+        if not _smart_grid_has_matching_rcwa_session(mat, sub):
+            rows.append(BenchmarkRow.unavailable(
+                "smart", "智能网格", route="RCWA-trained ML surrogate",
+                detail="未加载当前 TiO2/SiO2 精确配对的 RCWA 训练代理 session。",
+            ))
+        elif not _smart_grid_has_local_weights(mat, sub):
+            rows.append(BenchmarkRow.unavailable(
+                "smart", "智能网格", route="RCWA-trained ML surrogate",
+                detail="缺少当前 TiO2/SiO2 配对的本地 PyTorch 批量搜索权重。",
+            ))
+        else:
+            t0 = time.perf_counter()
+            try:
+                result = ml_module.smart_grid_search(
+                    target_rgb, material=mat, substrate=sub,
+                    angle_deg=0.0, polarization="TE (s-pol)",
+                    coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0,
+                )
+                elapsed = time.perf_counter() - t0
+                if not result:
+                    raise ValueError("搜索未返回候选")
+                rows.append(benchmark_row_from_rgb(
+                    "smart", "智能网格", elapsed_s=elapsed,
+                    predicted_rgb=result[0][2], target_rgb=target_rgb,
+                    route="RCWA-trained ML surrogate",
+                    detail=(
+                        "两阶段本地代理搜索；本次未调用直接 RCWA，"
+                        "结果只是对目标色的模型空间匹配。"
+                    ),
+                ))
+            except Exception as exc:
+                rows.append(BenchmarkRow.error(
+                    "smart", "智能网格", route="RCWA-trained ML surrogate",
+                    detail=f"搜索失败：{type(exc).__name__}。",
+                ))
+
+        # 2. RL is deliberately not run: no registered benchmark contract.
+        rows.append(BenchmarkRow.unavailable(
+            "rl", "RL Q-learning", route="实验性离散探索",
+            detail="本轮未运行；尚无与当前目标/模型边界绑定的版本化 benchmark 协议。",
+        ))
+
+        # 3. Single-pillar gradient: local model only, no download fallback.
+        if (not _local_model_exists("models/forward_mlp_v8_sub.pt")
+                or importlib.util.find_spec("torch") is None):
+            rows.append(BenchmarkRow.unavailable(
+                "single", "单柱梯度", route="本地 PyTorch 代理/解析路线",
+                detail="缺少可加载的本地单柱 PyTorch 模型或 PyTorch 运行时。",
+            ))
+        else:
+            t0 = time.perf_counter()
+            try:
+                result = ml_module._inverse_design_ml_serial(
+                    target_rgb, n_steps=150, n_restarts=8,
+                    material=mat, substrate=sub,
+                )
+                elapsed = time.perf_counter() - t0
+                if result is None:
+                    raise ValueError("优化未返回候选")
+                if len(result) == 6 and isinstance(result[0], str):
+                    method_name, predicted_rgb = result[0], result[4]
+                elif len(result) == 5:
+                    method_name, predicted_rgb = "legacy local route", result[3]
+                else:
+                    raise ValueError("单柱优化返回格式不受支持")
+                rows.append(benchmark_row_from_rgb(
+                    "single", "单柱梯度", elapsed_s=elapsed,
+                    predicted_rgb=predicted_rgb, target_rgb=target_rgb,
+                    route=f"本地代理/解析梯度路线（返回标识 {method_name}）",
+                    detail="只评估当次返回的候选 sRGB；不宣称直接 RCWA 或全局最优。",
+                ))
+            except Exception as exc:
+                rows.append(BenchmarkRow.error(
+                    "single", "单柱梯度", route="本地 PyTorch 代理/解析路线",
+                    detail=f"优化失败：{type(exc).__name__}。",
+                ))
+
+        # 4. Dual remains unavailable until model + domain evidence are registered.
+        dual_context = InverseContext(
+            structure_type="dual", material=mat, substrate=sub,
+            polarization="TE (s-pol)", angle_deg=0.0,
+            target_rgb=(122, 79, 34), target_hex="#7A4F22",
+            preview_route_id="benchmark", preview_model_version=_DUAL_MODEL_VERSION,
+            geometry_valid=True,
+        )
+        if not (_dual_ml_ready and _dual_domain_manifest_verified(dual_context)):
+            rows.append(BenchmarkRow.unavailable(
+                "dual", "双柱梯度", route="Dual-pillar ML surrogate",
+                detail="实际 ONNX 模型或与其哈希绑定的当前训练域 manifest 不可用。",
+            ))
+        else:
+            t0 = time.perf_counter()
+            try:
+                result = ml_module._inverse_design_dual_numpy(
+                    target_rgb, n_steps=150, n_restarts=8,
+                    material=mat, substrate=sub, theta=0.0,
+                )
+                elapsed = time.perf_counter() - t0
+                if result is None or len(result) != 7:
+                    raise ValueError("双柱优化未返回完整候选")
+                rows.append(benchmark_row_from_rgb(
+                    "dual", "双柱梯度", elapsed_s=elapsed,
+                    predicted_rgb=result[5], target_rgb=target_rgb,
+                    route="Dual-pillar ML surrogate",
+                    detail="双柱五参数候选；仅在已验证的本地模型域内报告。",
+                ))
+            except Exception as exc:
+                rows.append(BenchmarkRow.error(
+                    "dual", "双柱梯度", route="Dual-pillar ML surrogate",
+                    detail=f"优化失败：{type(exc).__name__}。",
+                ))
+
+        # 5. Cross-structure comparison is numeric only with >=2 actual contributors.
         t0 = time.perf_counter()
         try:
-            ml_module.init_rcwa_ml()
-            sg_res = ml_module.smart_grid_search(
-                target_rgb, material=mat, substrate=sub,
-                coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0
-            )
-            t1 = time.perf_counter()
-            if sg_res and len(sg_res) > 0:
-                de_sg = sg_res[0][4]
-            else:
-                de_sg = 99
-            results["智能网格"] = (t1 - t0, de_sg, "RCWA全空间扫描")
-        except Exception as e:
-            results["智能网格"] = (0, 99, f"ERR: {str(e)[:30]}")
-
-        # 2. RL Q-learning (deprecated, Fano engine)
-        results["RL Q-learning"] = (0, "N/A", "离散探索(实验性)")
-
-        # 3. Single-pillar gradient (RCWA/ML)
-        t0 = time.perf_counter()
-        try:
-            ml_module.init_rcwa_ml()
-            gd_res = ml_module._inverse_design_ml_serial(
-                target_rgb, n_steps=150, n_restarts=8,
-                material=mat, substrate=sub
-            )
-            t1 = time.perf_counter()
-            if gd_res is not None:
-                de_gd = float(np.sqrt(np.sum((np.array(gd_res[3]) - target_rgb)**2)))
-            else:
-                de_gd = 99
-            results["单柱梯度"] = (t1 - t0, de_gd, "连续梯度(RCWA)")
-        except Exception as e:
-            results["单柱梯度"] = (0, 99, f"ERR: {str(e)[:30]}")
-
-        # 4. Dual-pillar gradient (under development)
-        results["双柱梯度"] = (0, "N/A", "双柱联合(实验性)")
-
-        # 5. Three-method comparison
-        t0 = time.perf_counter()
-        try:
-            best3_de = 999.0
-            for mat_name in ["TiO2 (anatase)", "a-Si (amorphous)", "Si3N4 (nitride)", "Al2O3 (sapphire)"]:
+            contributors = []
+            candidates = []
+            for material_name in (
+                "TiO2 (anatase)", "a-Si (amorphous)",
+                "Si3N4 (nitride)", "Al2O3 (sapphire)",
+            ):
+                if not (
+                    _smart_grid_has_matching_rcwa_session(material_name, sub)
+                    and _smart_grid_has_local_weights(material_name, sub)
+                ):
+                    continue
                 try:
-                    sg3 = ml_module.smart_grid_search(
-                        target_rgb, material=mat_name, substrate=sub,
-                        coarse_n=8, top_k=1, fine_steps=3, fine_range=6.0
+                    result = ml_module.smart_grid_search(
+                        target_rgb, material=material_name, substrate=sub,
+                        angle_deg=0.0, polarization="TE (s-pol)",
+                        coarse_n=8, top_k=1, fine_steps=3, fine_range=6.0,
                     )
-                    if sg3 and len(sg3) > 0:
-                        best3_de = min(best3_de, sg3[0][4])
+                    if result:
+                        rgb_candidate = np.asarray(result[0][2], dtype=float)
+                        de_candidate = delta_e2000(
+                            target_lab, rgb_to_lab(rgb_candidate))
+                        candidates.append((de_candidate, rgb_candidate))
+                        contributors.append(f"{material_name} smart surrogate")
                 except Exception:
                     pass
-            # FP cavity coarse search
+            if not contributors:
+                rows.append(BenchmarkRow.unavailable(
+                    "compare", "跨结构候选比较", route="本地可用代理 + FP-TMM",
+                    detail=(
+                        "当前没有可运行的精确材料/衬底 smart 代理；"
+                        "为避免把单独 FP 扫描冒充跨结构比较，本行未运行。"
+                    ),
+                ))
+                return tuple(rows)
+            best_fp = None
             for t_nm in range(50, 601, 20):
                 wls, refl = fp_cavity_spectrum(t_nm, 0.0, True)
                 rgb_fp = spectrum_to_srgb(wls, np.clip(refl, 0, None))
                 de_fp = delta_e2000(target_lab, rgb_to_lab(rgb_fp))
-                if de_fp < best3_de: best3_de = de_fp
-            t1 = time.perf_counter()
-            results["三方案对比"] = (t1 - t0, best3_de, "4材料并行扫描")
-        except Exception as e:
-            results["三方案对比"] = (0, 99, f"ERR: {str(e)[:30]}")
+                if best_fp is None or de_fp < best_fp[0]:
+                    best_fp = (de_fp, rgb_fp)
+            if best_fp is not None:
+                candidates.append(best_fp)
+                contributors.append("FP-Ag TMM coarse scan")
+            if len(contributors) < 2 or not candidates:
+                rows.append(BenchmarkRow.unavailable(
+                    "compare", "跨结构候选比较", route="本地可用代理 + FP-TMM",
+                    detail=(
+                        "本次不足两个实际可运行贡献者，不伪造跨结构数值；"
+                        f"实际贡献者：{', '.join(contributors) or '无'}。"
+                    ),
+                ))
+            else:
+                _, best_rgb = min(candidates, key=lambda item: item[0])
+                rows.append(benchmark_row_from_rgb(
+                    "compare", "跨结构候选比较",
+                    elapsed_s=time.perf_counter() - t0,
+                    predicted_rgb=best_rgb, target_rgb=target_rgb,
+                    route="本地可用代理 + FP-TMM",
+                    detail=(
+                        "只比较当次实际运行的贡献者，不代表所有方法；"
+                        f"实际贡献者：{', '.join(contributors)}。"
+                    ),
+                ))
+        except Exception as exc:
+            rows.append(BenchmarkRow.error(
+                "compare", "跨结构候选比较", route="本地可用代理 + FP-TMM",
+                detail=f"比较失败：{type(exc).__name__}。",
+            ))
 
-        return results
+        return tuple(rows)
 
     # === Method timing comparison ===
     st.divider()
-    with st.expander("\u23f1 \u65b9\u6cd5\u8017\u65f6\u5bf9\u6bd4 (5\u79cd\u9006\u8bbe\u8ba1\u65b9\u6cd5)", expanded=False):
-        run_bench = st.button("\u25b6 \u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4", use_container_width=True,
-            help="\u6d4b\u8bd55\u79cd\u65b9\u6cd5\u7684\u6027\u80fd\uff0c\u9700\u898110-30\u79d2")
+    with st.expander("⏱ 当前已注册方法的耗时与候选色差", expanded=False):
+        st.caption(
+            "只有当次实际运行成功并返回有限 sRGB 的方法才会报告耗时和 ΔE00；"
+            "未运行、缺模型和异常行只显示状态，不进入柱图。"
+        )
+        run_bench = st.button("▶ 运行当前可用方法基准", use_container_width=True)
         if run_bench or "_bench_cache" in st.session_state:
-            if run_bench and "_bench_cache" not in st.session_state:
-                with st.spinner("\u6b63\u5728\u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4..."):
+            if run_bench:
+                with st.spinner("正在运行当前可用的本地方法..."):
                     st.session_state["_bench_cache"] = _benchmark_methods()
-            bench = st.session_state.get("_bench_cache")
-            if bench is not None:
-                methods = list(bench.keys())
-                times = [bench[m][0] for m in methods]
-                des = [bench[m][1] for m in methods]
+            cached_benchmark_rows = st.session_state.get("_bench_cache")
+            benchmark_rows = validate_benchmark_cache(cached_benchmark_rows)
+            if benchmark_rows is None:
+                st.session_state.pop("_bench_cache", None)
+                st.warning("旧基准缓存已失效，请重新运行")
+            elif not benchmark_rows:
+                st.info("本次基准没有返回结果，请重新运行。")
+            else:
+                available_rows = [
+                    row for row in benchmark_rows if row.status == "available"]
 
                 col_t1, col_t2 = st.columns([1, 1])
                 with col_t1:
-                    fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
-                    colors_t = ["#ff6b35", "#00aaff", "#44cc44", "#cc44cc", "#ffaa00"]
-                    bars = ax_t.barh(methods[::-1], times[::-1], color=colors_t[::-1], edgecolor="white")
-                    for bar, t in zip(bars, times[::-1]):
-                        ax_t.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2,
-                                 f"{t:.1f}s", va="center", fontsize=8, fontweight="bold")
-                    ax_t.set_xlabel("\u8017\u65f6 (s)")
-                    ax_t.set_title(f"\u65b9\u6cd5\u8017\u65f6\u5bf9\u6bd4 (\u76ee\u6807: #7a4f22)")
-                    ax_t.grid(True, alpha=0.2, axis="x")
-                    fig_t.tight_layout()
-                    st.pyplot(fig_t)
-                    _get_plt().close(fig_t)
+                    if available_rows:
+                        labels = [row.label for row in available_rows]
+                        times = [row.elapsed_s for row in available_rows]
+                        fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
+                        colors_t = [
+                            "#007e97", "#ef7c45", "#568f4c", "#9b6bb3", "#9a7b32",
+                        ]
+                        bars = ax_t.barh(
+                            labels[::-1], times[::-1],
+                            color=colors_t[:len(labels)][::-1], edgecolor="white",
+                        )
+                        for bar, elapsed in zip(bars, times[::-1]):
+                            ax_t.text(
+                                bar.get_width(), bar.get_y() + bar.get_height() / 2,
+                                f"{elapsed:.3f}s", va="center", fontsize=8,
+                            )
+                        ax_t.set_xlabel("当次方法调用耗时 (s)")
+                        ax_t.set_title("实际成功方法（目标 #7A4F22）")
+                        ax_t.grid(True, alpha=0.2, axis="x")
+                        fig_t.tight_layout()
+                        st.pyplot(fig_t)
+                        _get_plt().close(fig_t)
+                    else:
+                        st.info("本次没有方法返回可验收的有限 sRGB，因此不绘制柱图。")
                 with col_t2:
-                    rows = "| \u65b9\u6cd5 | \u8017\u65f6 | \u0394E2000 | \u5b9a\u4f4d |\n|------|------|------|------|\n"
-                    labels = ["\u7f51\u683c\u641c\u7d22", "RL Q-learning", "\u5355\u67f1\u68af\u5ea6\u4f18\u5316", "\u53cc\u67f1\u68af\u5ea6\u4f18\u5316", "\u4e09\u65b9\u6848\u5bf9\u6bd4"]
-                    roles = ["\u5168\u7a7a\u95f4\u7cbe\u786e\u7b5b\u9009", "\u79bb\u6563\u63a2\u7d22", "\u8fde\u7eed\u503c\u7cbe\u8c03", "\u53cc\u67f1\u8054\u5408\u4f18\u5316", "\u4e09\u65b9\u6848\u5e76\u884c"]
-                    for m, role in zip(labels, roles):
-                        t = bench[m][0]
-                        de = bench[m][1]
-                        rows += f"| {m} | {t:.1f}s | {de:.1f} | {role} |\n"
-                    st.markdown(rows)
-                    st.caption("\u8017\u65f6\u4e3a\u5355\u6b21\u63a8\u7406\uff0c\u542b\u7f13\u5b58\u547d\u4e2d\u65f6\u66f4\u5feb\u3002\u0394E2000\u8d8a\u4f4e\u8d8a\u597d\uff0c\u4eba\u773c\u9608\u503c 2.3\u3002")
+                    table = (
+                        "| 方法 | 状态 | 耗时 | 候选 ΔE00 | 实际路线 |\n"
+                        "|---|---|---:|---:|---|\n"
+                    )
+                    status_labels = {
+                        "available": "可用", "unavailable": "未运行/不可用", "error": "错误",
+                    }
+                    for row in benchmark_rows:
+                        elapsed = f"{row.elapsed_s:.3f}s" if row.status == "available" else "—"
+                        metric = f"{row.delta_e2000:.3f}" if row.status == "available" else "—"
+                        route = row.route.replace("|", "/")
+                        table += (
+                            f"| {row.label} | {status_labels[row.status]} | "
+                            f"{elapsed} | {metric} | {route} |\n"
+                        )
+                    st.markdown(table)
+                st.markdown("**每行证据与边界**")
+                for row in benchmark_rows:
+                    st.markdown(
+                        f"- **{row.label} [{row.status}]**：{row.detail}  \n"
+                        f"  耗时来源：{row.timing_source}。  \n"
+                        f"  指标来源：{row.metric_source}。"
+                    )
         else:
-            st.info("\u70b9\u51fb\u6309\u94ae\u8fd0\u884c\u8017\u65f6\u5bf9\u6bd4")
+            st.info("点击按钮后只运行当前本地证据允许的方法。")
 
-    # === Fano vs FDTD validation (historical, small-D, shape-normalized) ===
+    # === Historical Fano/FDTD comparison (limited comparability) ===
     st.divider()
-    st.subheader("Fano 模型 vs FDTD 全波仿真验证")
+    st.subheader("Fano 近似与历史 FDTD 图：有限可比性对照")
+    st.warning(
+        "以下材料不能作为全波验证：历史 FDTD 图记录透射振幅，而本页 Fano 路线描述近似反射响应；"
+        "由于 1-T ≠ R，两者只用于小直径范围内的峰位和形状趋势对照。"
+    )
 
+    _fdtd_evidence = resolve_fdtd_evidence()
     col_v1, col_v2 = st.columns([3, 2])
     with col_v1:
-        # Auto-download FDTD image if not present
-        _fdtc_local = os.path.join(os.path.dirname(__file__), "data", "fano_vs_fdtd_smallD.png")
-        if not os.path.exists(_fdtc_local):
-            try:
-                from huggingface_hub import hf_hub_download
-                os.makedirs(os.path.dirname(_fdtc_local), exist_ok=True)
-                hf_hub_download(repo_id="qiaoanqi/metasurface-models", filename="data/fano_vs_fdtd_smallD.png",
-                                cache_dir=os.path.join(os.path.dirname(__file__), ".hf_cache"),
-                                local_dir=os.path.dirname(__file__), local_dir_use_symlinks=False)
-            except Exception:
-                pass
-        fdtc_img = _fdtc_local
-        if os.path.exists(fdtc_img):
-            st.image(fdtc_img, caption="P=200nm, D=30-76nm | Mie共振主导区")
+        if _fdtd_evidence.asset.available:
+            st.image(
+                _fdtd_evidence.asset.image_bytes,
+                caption=(
+                    "历史透射振幅图，非当前 Fano 反射全波验证 · "
+                    f"SHA256 {_fdtd_evidence.asset.sha256[:12].upper()}…"
+                ),
+                width="stretch",
+            )
         else:
-            st.warning("FDTD chart not found")
+            st.info(
+                f"历史 FDTD 本地证据不可用（{_fdtd_evidence.asset.detail}）。"
+                "页面未联网，当前正向结果不受影响。"
+            )
     with col_v2:
-        st.markdown("""
-**验证范围**: 小直径 D=30-76nm (Mie 共振主导)
+        if _fdtd_evidence.manifest is not None:
+            _fdtd_manifest = _fdtd_evidence.manifest
+            _fdtd_peak = _fdtd_manifest.metric("resonance_peak_offset_nm")
+            _fdtd_corr = _fdtd_manifest.metric("spectral_shape_correlation")
+            st.markdown(
+                f"""
+**对照物理量**：{_fdtd_manifest.quantity}
 
-**结果**:
-- 共振峰位偏差 16-24 nm
-- 光谱形状相关系数 0.48-0.51
+**几何范围**：{_fdtd_manifest.geometry}
 
-**定位说明**:
+**绑定指标**：
+- {_fdtd_peak.label} {_fdtd_peak.minimum:g}-{_fdtd_peak.maximum:g} {_fdtd_peak.unit}
+- {_fdtd_corr.label} {_fdtd_corr.minimum:.2f}-{_fdtd_corr.maximum:.2f}
+
+**有限可比性说明**：
 - Fano 模型是**半解析近似**，用于快速筛选和趋势预测
 - FDTD 数据为透射振幅，大直径前向散射强，1-T ≠ R
-- 精确设计仍需 FDTD 全波仿真最终验证
-""")
+- {_fdtd_corr.interpretation}
+- 精确设计仍需在同一物理量、边界条件和几何定义下进行独立全波复核
+"""
+            )
+            st.caption(
+                f"证据合同 {_fdtd_manifest.schema_version} / {_fdtd_manifest.revision} · "
+                f"source={_fdtd_manifest.source} · "
+                f"SHA256 {_fdtd_manifest.asset_sha256[:12].upper()}…"
+            )
+        elif _fdtd_evidence.asset.available:
+            st.info(
+                "历史图已通过本地完整性校验，但指标合同不一致，已隐藏指标。"
+                "页面未联网，当前正向结果不受影响。"
+            )
 
-    # === ML model error statistics (RCWA vs ML) ===
+    # === Frozen Fano vs generic-ONNX model difference ===
     st.divider()
-    st.subheader("ML 模型精度分析 (RCWA 真值 vs ML 预测)")
+    st.subheader("模型间差异分析（Fano 近似 vs generic ONNX）")
+    _difference_contract = model_difference_contracts.GENERIC_ONNX_ROUTE
+    _difference_context_issue = _difference_contract.context_issue(
+        material, substrate, polarization, angle)
+    _difference_unavailable_reason = ""
+    _difference_structure_not_applicable = bool(is_fp or is_dual)
+    if not st.session_state.get("ml_accel", False):
+        _difference_unavailable_reason = "ML 加速已关闭；不会加载或调用 generic ONNX"
+    elif _difference_structure_not_applicable:
+        _difference_unavailable_reason = "该冻结差异合同仅适用于单柱结构"
+    elif _difference_context_issue:
+        _difference_unavailable_reason = _difference_context_issue
+    _difference_required_paths = (
+        _difference_contract.model_relative_path,
+        _difference_contract.external_data_relative_path,
+        _difference_contract.source_pt_relative_path,
+        _difference_contract.conversion_protocol_relative_path,
+        _difference_contract.conversion_result_relative_path,
+    )
+    (
+        _difference_artifact_version, _difference_code_identity,
+        _difference_bundle_identity,
+    ) = _difference_analysis_artifact_identity(_difference_contract)
+    if not _difference_unavailable_reason and not _difference_code_identity.available:
+        _difference_unavailable_reason = "分析源码身份缺失或不可读"
+    if not _difference_unavailable_reason and not _difference_bundle_identity.available:
+        _difference_unavailable_reason = "generic ONNX bundle 当前字节与冻结合同不一致"
+    if not _difference_unavailable_reason and not all(
+        _local_model_exists(path) if path.startswith("models/")
+        else os.path.isfile(os.path.join(os.path.dirname(__file__), path))
+        for path in _difference_required_paths
+    ):
+        _difference_unavailable_reason = "本地 generic ONNX bundle 或版本化证据文件缺失"
+    _difference_ready = not _difference_unavailable_reason
+    _difference_model_path = os.path.join(
+        os.path.dirname(__file__), _difference_contract.model_relative_path)
+    _difference_source_pt_path = os.path.join(
+        os.path.dirname(__file__), _difference_contract.source_pt_relative_path)
+    st.caption(
+        "左侧路线：torch_model.batch_lorentzian_spectrum（Lorentz/Fano 半解析近似）；"
+        f"右侧路线：{_difference_contract.route_id}；"
+        f"模型：{_difference_model_path}；版本：{_difference_contract.model_version}；"
+        f"graph SHA-256={_difference_contract.model_sha256}；"
+        f"external-data SHA-256={_difference_contract.external_data_sha256}。"
+    )
+    st.caption(
+        f"源 PT：{_difference_source_pt_path}；source PT SHA-256={_difference_contract.source_pt_sha256}；"
+        f"训练提交 {_difference_contract.training_commit}；"
+        f"转换提交 {_difference_contract.conversion_commit}；"
+        f"协议 canonical SHA-256={_difference_contract.conversion_protocol_sha256}；"
+        f"结果 canonical SHA-256={_difference_contract.conversion_result_sha256}。"
+        "这些文件只在点击运行后加载并校验。"
+    )
+    st.caption(
+        f"{_difference_contract.pair_evidence_text(material, substrate)}"
+        f"{_difference_contract.boundary_text}"
+        "指标仅为两条模型路线输出经同一 color_utils 色度管线得到的模型间 CIEDE2000 差异；"
+        "不是 RCWA 精度、实验误差或人眼感知阈值。"
+    )
+    if _difference_unavailable_reason:
+        _difference_notice = (
+            f"当前模型间差异分析不可用：{_difference_unavailable_reason}。")
+        if _difference_structure_not_applicable:
+            st.info(_difference_notice)
+        else:
+            st.warning(_difference_notice)
 
-    @st.cache_data
-    def _ml_error_stats(material, substrate, n_samples=400):
-        """Compare RCWA ground truth vs ML model over random (D,H,P)."""
+    run_model_difference = st.button(
+        "▶ 运行模型间差异分析",
+        use_container_width=True,
+        disabled=not _difference_ready,
+        help=(
+            "仅在完整训练覆盖的 pair、TE 和冻结几何域内采样 400 组单柱参数；"
+            "generic ONNX 使用独立固定 session，"
+            "不会调用 predict_rgb、RCWA registry 或 Fano 回退。"
+        ),
+    )
+    # Remove legacy dynamic keys; this analysis now owns exactly one fixed key.
+    for _legacy_key in tuple(st.session_state.keys()):
+        if str(_legacy_key).startswith("_model_diff_v2_"):
+            st.session_state.pop(_legacy_key, None)
+    _difference_context = _make_analysis_context(
+        "difference",
+        {
+            "sample_count": 400, "rng": "numpy.RandomState", "seed": 42,
+            "geometry_domain_nm": {
+                "d": [50.0, 350.0], "h": [80.0, 600.0],
+                "p": [200.0, 600.0], "period_rule": "P>=1.2D",
+            },
+            "routes": ["torch_model.batch_lorentzian_spectrum", _difference_contract.route_id],
+        },
+        route_id=_difference_contract.route_id,
+        model_version=_difference_contract.model_version,
+        artifact_version=_difference_artifact_version,
+        registry_version=canonical_sha256({
+            "contract": _difference_contract.route_id,
+            "protocol": _difference_contract.conversion_protocol_sha256,
+            "result": _difference_contract.conversion_result_sha256,
+        }),
+    )
+    _difference_snapshot_load = load_analysis_snapshot(
+        st.session_state, _difference_context)
+    if _difference_snapshot_load.state == "stale":
+        st.warning("模型差异快照已陈旧；当前结构、参数或证据身份已变化，旧结果已隐藏。")
+    elif _difference_snapshot_load.state == "invalid":
+        st.warning("模型差异快照未通过完整性校验，旧结果已隐藏。")
+
+    def _run_model_difference(evaluator, n_samples=400):
         try:
-            import torch_model as _tm_es
-            import ml_module as _ml_es
-            import torch as _torch_es
-            _HAS_TORCH_ML = True
-        except ModuleNotFoundError:
-            _HAS_TORCH_ML = False
-        if not _HAS_TORCH_ML:
-            return None, None, None
-        from color_utils import delta_e2000 as _de2k, rgb_to_lab as _rgb2lab
+            import torch as _torch_difference
+            import torch_model as _torch_model_difference
+        except ModuleNotFoundError as exc:
+            return model_difference_contracts.ModelDifferenceResult(
+                "unavailable", f"Fano 路线依赖缺失：{type(exc).__name__}")
         rng = np.random.RandomState(42)
-        D = rng.uniform(50, 350, n_samples)
-        H = rng.uniform(80, 600, n_samples)
-        P = rng.uniform(200, 600, n_samples)
-        D_t = _torch_es.tensor(D, dtype=_torch_es.float32)
-        H_t = _torch_es.tensor(H, dtype=_torch_es.float32)
-        P_t = _torch_es.tensor(P, dtype=_torch_es.float32)
-        fano_rgb = _tm_es.batch_single_pillar_rgb(
-            D_t, H_t, P_t, _torch_es.zeros(n_samples), True, material, substrate
-        ).numpy()
-        ml_rgb_list = []
-        for i in range(n_samples):
-            rgb = _ml_es.predict_rgb(float(D[i]), float(H[i]), float(P[i]), 0.0, "TE", material, substrate)
-            ml_rgb_list.append(rgb if rgb is not None else [0, 0, 0])
-        ml_rgb = np.array(ml_rgb_list)
-        de2k_vals = []
-        for i in range(n_samples):
-            lab1 = _rgb2lab(fano_rgb[i])
-            lab2 = _rgb2lab(ml_rgb[i])
-            de2k_vals.append(_de2k(lab1, lab2))
-        de2k_arr = np.array(de2k_vals)
-        return de2k_arr, fano_rgb, ml_rgb
+        d_nm = rng.uniform(50.0, 350.0, n_samples)
+        h_nm = rng.uniform(80.0, 600.0, n_samples)
+        p_floor = np.maximum(200.0, 1.2 * d_nm)
+        p_nm = p_floor + rng.random_sample(n_samples) * (600.0 - p_floor)
+        geometries = np.column_stack((d_nm, h_nm, p_nm))
+        try:
+            fano_spectra = _torch_model_difference.batch_lorentzian_spectrum(
+                _torch_difference.tensor(d_nm, dtype=_torch_difference.float32),
+                _torch_difference.tensor(h_nm, dtype=_torch_difference.float32),
+                _torch_difference.tensor(p_nm, dtype=_torch_difference.float32),
+                _torch_difference.full(
+                    (n_samples,), float(angle), dtype=_torch_difference.float32),
+                polarization.startswith("TE"), material, substrate,
+            ).detach().cpu().numpy()
+        except Exception as exc:
+            return model_difference_contracts.ModelDifferenceResult(
+                "unavailable", f"Fano 路线调用失败：{type(exc).__name__}")
+        return model_difference_contracts.evaluate_fano_vs_generic(
+            evaluator, geometries, fano_spectra,
+            material=material, substrate=substrate,
+            polarization=polarization, angle_deg=float(angle),
+        )
 
-    run_ml_err = st.button("\u25b6 \u8fd0\u884c ML \u7cbe\u5ea6\u5206\u6790", use_container_width=True,
-        help="\u968f\u673a\u91c7\u6837400\u7ec4\u53c2\u6570\uff0c\u5bf9\u6bd4 Fano \u7269\u7406\u6a21\u578b\u4e0e ONNX \u6a21\u578b\u7684\u9884\u6d4b\u8272\u5dee")
-    cache_key = f"_ml_err_{material}_{substrate}"
-    if run_ml_err or cache_key in st.session_state:
-        if run_ml_err and cache_key not in st.session_state:
-            with st.spinner("\u8ba1\u7b97 ML \u6a21\u578b\u8bef\u5dee\u5206\u5e03 (400 \u7ec4\u968f\u673a\u53c2\u6570)..."):
-                st.session_state[cache_key] = _ml_error_stats(material, substrate)
-        de2k_arr, fano_rgb, ml_rgb = st.session_state.get(cache_key, (None, None, None))
+    if run_model_difference and _difference_snapshot_load.state != "fresh":
+        with st.spinner("运行冻结的两路线模型间差异分析（400 组域内参数）..."):
+            _store_difference_snapshot = True
+            try:
+                with analysis_engine_transaction(engine, st.session_state):
+                    _difference_load = _load_model_difference_evaluator_cached(
+                        _difference_context.artifact_version)
+                    if not _difference_load.loaded or _difference_load.evaluator is None:
+                        _difference_result = model_difference_contracts.ModelDifferenceResult(
+                            "unavailable", _difference_load.reason or "generic ONNX 严格加载失败")
+                    else:
+                        _difference_result = _run_model_difference(_difference_load.evaluator)
+            except EngineStateRestoreError as exc:
+                logging.error("model difference engine restore failed: %s", exc)
+                st.session_state.pop(_difference_context.session_key, None)
+                st.error("模型差异分析会话引擎恢复失败；旧结果已清除，本次结果未保存。")
+                _store_difference_snapshot = False
+                _difference_result = model_difference_contracts.ModelDifferenceResult(
+                    "unavailable", "会话引擎恢复失败；结果未保存")
+            except EngineStateMutationError as exc:
+                logging.error("model difference engine mutation restored: %s", exc)
+                _difference_result = model_difference_contracts.ModelDifferenceResult(
+                    "unavailable", "会话引擎状态被分析修改；已恢复原状态，本次结果因完整性失败而作废")
+            except Exception as exc:
+                logging.warning("model difference analysis failed: %s", exc)
+                _difference_result = model_difference_contracts.ModelDifferenceResult(
+                    "unavailable", f"模型差异分析失败：{type(exc).__name__}")
+            _difference_payload = {
+                "status": _difference_result.status,
+                "reason": _difference_result.reason,
+                "analysis_artifact_version": _difference_context.artifact_version,
+                "model_artifact_version": _difference_bundle_identity.version,
+            }
+            if _difference_result.available:
+                _difference_payload.update({
+                    "delta_e2000": list(_difference_result.delta_e2000),
+                    "fano_rgb": [list(row) for row in _difference_result.fano_rgb],
+                    "generic_rgb": [list(row) for row in _difference_result.generic_rgb],
+                })
+                if _difference_load.evidence is not None:
+                    _difference_payload["evidence"] = {
+                        "protocol_sha256": _difference_load.evidence.protocol_sha256,
+                        "result_sha256": _difference_load.evidence.result_sha256,
+                        "source_pt_sha256": _difference_contract.source_pt_sha256,
+                        "sample_count": _difference_load.evidence.sample_count,
+                        "max_abs_diff": _difference_load.evidence.max_abs_diff,
+                        "tolerance": _difference_load.evidence.tolerance,
+                    }
+            if _store_difference_snapshot:
+                store_analysis_snapshot(
+                    st.session_state,
+                    AnalysisSnapshot.create(_difference_context, _difference_payload),
+                )
+            _difference_snapshot_load = load_analysis_snapshot(
+                st.session_state, _difference_context)
+
+    _difference_result = None
+    if _difference_snapshot_load.state == "fresh":
+        _difference_payload = _difference_snapshot_load.snapshot.payload
+        _difference_result = model_difference_contracts.ModelDifferenceResult(
+            _difference_payload["status"], _difference_payload.get("reason", ""),
+            tuple(_difference_payload.get("delta_e2000", ())),
+            tuple(tuple(row) for row in _difference_payload.get("fano_rgb", ())),
+            tuple(tuple(row) for row in _difference_payload.get("generic_rgb", ())),
+        )
+
+    if _difference_result is None:
+        if _difference_ready:
+            st.info("点击上方按钮运行冻结路线；普通页面渲染不会加载 ONNX evaluator。")
+    elif not _difference_result.available:
+        st.warning(f"模型间差异结果不可用：{_difference_result.reason}。")
     else:
-        de2k_arr = None
-
-    if de2k_arr is None:
-        st.info("点击上方按钮运行 ML 精度分析")
-
-    else:
+        _difference_evidence_payload = _difference_payload.get("evidence")
+        if _difference_evidence_payload:
+            st.caption(
+                f"已验证快照证据：source PT SHA-256={_difference_evidence_payload['source_pt_sha256']}；"
+                f"PT-vs-ONNX max|Δ|={_difference_evidence_payload['max_abs_diff']:.17g}；"
+                f"容差={_difference_evidence_payload['tolerance']}；"
+                f"N={_difference_evidence_payload['sample_count']}。")
+        de2k_arr = np.asarray(_difference_result.delta_e2000, dtype=float)
         mean_de = float(np.mean(de2k_arr))
         median_de = float(np.median(de2k_arr))
         p95_de = float(np.percentile(de2k_arr, 95))
-        pct_lt5 = float(np.mean(de2k_arr < 5)) * 100
-        pct_lt10 = float(np.mean(de2k_arr < 10)) * 100
-        pct_lt23 = float(np.mean(de2k_arr < 2.3)) * 100
+        min_de = float(np.min(de2k_arr))
+        max_de = float(np.max(de2k_arr))
 
         col_s1, col_s2 = st.columns([1, 1])
         with col_s1:
             fig_ml, ax_ml = _get_plt().subplots(figsize=(6, 4))
-            ax_ml.hist(de2k_arr, bins=40, color="#ff6b35", edgecolor="white", alpha=0.85)
-            ax_ml.axvline(mean_de, color="red", lw=1.5, ls="--", label=f"平均={mean_de:.1f}")
-            ax_ml.axvline(median_de, color="blue", lw=1.5, ls=":", label=f"中位数={median_de:.1f}")
-            ax_ml.axvline(2.3, color="green", lw=1.0, ls="-", alpha=0.7, label="人眼阈值=2.3")
-            ax_ml.set_xlabel("ΔE2000")
+            ax_ml.hist(de2k_arr, bins=40, color="#d86832", edgecolor="white", alpha=0.85)
+            ax_ml.axvline(mean_de, color="#a32920", lw=1.5, ls="--", label=f"平均={mean_de:.1f}")
+            ax_ml.axvline(median_de, color="#286f8e", lw=1.5, ls=":", label=f"中位数={median_de:.1f}")
+            ax_ml.set_xlabel("模型间 CIEDE2000 差异")
             ax_ml.set_ylabel("样本数")
-            ax_ml.set_title(f"RCWA vs ML ΔE2000 分布 (N={len(de2k_arr)})")
+            ax_ml.set_title(f"Fano 近似 vs frozen generic ONNX（N={len(de2k_arr)}）")
             ax_ml.legend(fontsize=7)
             ax_ml.grid(True, alpha=0.2)
-            ax_ml.text(0.98, 0.95, f"95%分位: {p95_de:.1f} | ΔE<2.3占比: {pct_lt23:.0f}%", transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
-                       bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+            ax_ml.text(
+                0.98, 0.95, f"95% 分位：{p95_de:.1f}",
+                transform=ax_ml.transAxes, ha="right", va="top", fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+            )
             fig_ml.tight_layout()
             st.pyplot(fig_ml)
             _get_plt().close(fig_ml)
         with col_s2:
             st.markdown(f"""
-**统计摘要**
+**模型间差异统计**
 
 | 指标 | 数值 |
 |------|------|
-| 平均 ΔE2000 | **{mean_de:.1f}** |
-| 中位数 ΔE2000 | **{median_de:.1f}** |
+| 平均 CIEDE2000 差异 | **{mean_de:.1f}** |
+| 中位数 CIEDE2000 差异 | **{median_de:.1f}** |
 | 95% 分位 | **{p95_de:.1f}** |
-| ΔE<5 占比 | **{pct_lt5:.0f}%** |
-| ΔE<10 占比 | **{pct_lt10:.0f}%** |
-| 人眼可辨阈值 | 2.3 |
+| 最小值 | **{min_de:.1f}** |
+| 最大值 | **{max_de:.1f}** |
 
-**说明**:
-- 当前 RCWA/ML 代理模型用 RCWA 高保真数据训练，替代了旧版 Fano 合成数据
-- ΔE 主要来自 ML 模型对共振峰形的近似误差
-- 实际模型精度参考: TiO2≈2.4, Si3N4≈1.5, Al2O3≈1.2, a-Si≈4.0
+**证据边界**：这些数值只量化 Lorentz/Fano 半解析路线与指定 generic ONNX 路线
+在冻结训练域内的输出差异。它们不是 RCWA 真值误差、实验误差、代理泛化精度或感知阈值。
+
+右侧 ONNX 已独立加载并实际调用；本分析未调用 `ml_module.predict_rgb`、
+RCWA surrogate registry，也没有用 Fano 数值填补 generic ONNX 失败样本。
 """)
 
     # Angle scan: color vs incident angle
@@ -2089,106 +5265,325 @@ with tab5:
 
     st.subheader("入射角扫描 (0° → 80°)")
     angles_scan = np.arange(0, 85, 5)
-    try:
-        import torch_model as _tm2
-        _ang_t = _tm2.torch.tensor(angles_scan, dtype=_tm2.torch.float32)
-        _scan_rgb = _tm2.batch_single_pillar_rgb_norm(
-            _tm2.torch.tensor([diameter]*len(angles_scan)),
-            _tm2.torch.tensor([height]*len(angles_scan)),
-            _tm2.torch.tensor([period]*len(angles_scan)),
-            _ang_t)
-        scan_rgbs = _scan_rgb.numpy()
-    except Exception as e:
-        logging.debug(f"angle scan batch: {e}")
-        scan_rgbs = []
-        for a in angles_scan:
-            param_a = MetaSurfaceParam(diameter, height, period, material, substrate, polarization, float(a))
-            scan_rgbs.append(engine.physical_color(param_a))
-        scan_rgbs = np.array(scan_rgbs)
-    scan_hex = [rgb_to_hex(c) for c in scan_rgbs]
+    # An angle sweep must use one forward route throughout.  Mixing the
+    # near-normal RCWA ensemble with the generic ML model at 5 degrees creates
+    # an artificial discontinuity that is not an angular-physics result.
+    scan_route_target = None
+    if is_fp:
+        scan_route_target = "FP cavity TMM"
+    elif is_dual:
+        scan_route_target = "dual ML surrogate" if use_dual_ml else "dual physical fallback"
+    elif use_ml and not _far_field_enabled:
+        # The sweep is intentionally a single generic angle-conditioned route;
+        # the near-normal RCWA surrogate is not valid for a mixed 0/5/10...
+        # degree series and would create an artificial discontinuity.
+        scan_route_target = "ML surrogate (generic angle-conditioned)"
+    else:
+        scan_route_target = "physical/far-field fallback"
+    _angle_model_version = (
+        model_difference_contracts.GENERIC_ONNX_ROUTE.model_version
+        if scan_route_target == "ML surrogate (generic angle-conditioned)"
+        else _route_model_version)
+    _angle_artifact_version = (
+        _analysis_artifact_version(
+            "ML surrogate (generic angle-conditioned)", _angle_model_version,
+            structure_type="single", material=_provenance_material,
+            substrate=_provenance_substrate)
+        if scan_route_target == "ML surrogate (generic angle-conditioned)"
+        else _analysis_artifact_version(
+            scan_route_target, _angle_model_version,
+            structure_type=_structure_type, material=_provenance_material,
+            substrate=_provenance_substrate))
+    _angle_context = _make_analysis_context(
+        "angle",
+        {
+            "angles_deg": angles_scan.tolist(), "start_deg": 0,
+            "stop_deg": 80, "step_deg": 5, "sample_count": 17,
+            "frozen_route": scan_route_target,
+        },
+        route_id=scan_route_target, model_version=_angle_model_version,
+        artifact_version=_angle_artifact_version,
+        registry_version="angle-scan-route-registry-v1",
+    )
+    _angle_artifact_available = _artifact_identity_available(
+        _angle_context.artifact_version)
+    _angle_runtime_issue = _analysis_runtime_identity_issue(_angle_context)
+    _angle_forward_available = bool(
+        _forward.spectrum_available and _route_id != "invalid_geometry")
+    _angle_execution_available = bool(
+        _angle_forward_available and _angle_artifact_available
+        and not _angle_runtime_issue)
+    _angle_load = load_analysis_snapshot(st.session_state, _angle_context)
+    run_angle = st.button(
+        "运行 / 加载当前入射角扫描", key="run_angle_analysis",
+        use_container_width=True, disabled=not _angle_execution_available,
+    )
+    if not _angle_artifact_available:
+        st.info("角扫源码身份不可用；旧结果和导出已隐藏，当前不会运行 evaluator。")
+    elif not _angle_forward_available:
+        st.info("当前正向结果或几何不可用；旧角扫结果和导出已隐藏，当前不会运行 evaluator。")
+    elif _angle_runtime_issue:
+        st.info(
+            f"角扫模型会话身份不可用：{_angle_runtime_issue}；"
+            "旧结果和导出已隐藏，当前不会运行 evaluator。")
+    if _angle_load.state == "stale":
+        st.warning("角扫快照已陈旧；当前几何、路线或远场状态已变化，旧曲线和导出已隐藏。")
+    elif _angle_load.state == "invalid":
+        st.warning("角扫快照未通过完整性校验，旧曲线和导出已隐藏。")
+    elif _angle_load.state == "missing":
+        st.info("点击按钮后才计算 17 个角度；普通页面刷新不会运行角扫 evaluator。")
 
-    fig_ang, (ax1, ax2) = _get_plt().subplots(1, 2, figsize=(10, 3))
-    ax1.plot(angles_scan, scan_rgbs[:, 0], "r-", lw=1.5, label="R")
-    ax1.plot(angles_scan, scan_rgbs[:, 1], "g-", lw=1.5, label="G")
-    ax1.plot(angles_scan, scan_rgbs[:, 2], "b-", lw=1.5, label="B")
-    ax1.set_xlabel("Incident Angle (deg)")
-    ax1.set_ylabel("sRGB")
-    ax1.set_ylim(0, 1.05)
-    ax1.legend(fontsize=7)
-    ax1.grid(True, alpha=0.3)
-    ax1.set_title("RGB vs Incident Angle")
-    for i, a in enumerate(angles_scan):
-        ax2.add_patch(_get_plt().Rectangle((i, 0), 1, 1, facecolor=scan_hex[i], edgecolor="white", lw=0.3))
-    ax2.set_xlim(0, len(angles_scan))
-    ax2.set_ylim(0, 1)
-    ax2.set_xticks(np.arange(len(angles_scan)) + 0.5)
-    ax2.set_xticklabels([f"{int(a)}" for a in angles_scan], fontsize=6)
-    ax2.set_yticks([])
-    ax2.set_title("Color vs Incident Angle (deg)")
-    fig_ang.tight_layout()
-    st.pyplot(fig_ang)
-    _get_plt().close(fig_ang)
+    if (
+        run_angle and _angle_load.state != "fresh" and _angle_execution_available
+        and not _analysis_runtime_identity_issue(_angle_context)
+    ):
+        _scan_material = str(material)
+        _scan_substrate = str(substrate)
+        _scan_polarization = str(polarization)
+        _scan_period = float(period)
+        _scan_far_field = bool(_angle_context.far_field_enabled)
+        _scan_na = float(_angle_context.na)
+        _scan_theta = float(_angle_context.theta_obs_deg)
+        _scan_use_dual_ml = bool(use_dual_ml)
+        _scan_use_generic = bool(use_ml and not _far_field_enabled and not is_dual and not is_fp)
+        _scan_is_fp = bool(is_fp)
+        _scan_is_dbr = bool(is_dbr_fp)
+        _scan_is_dual = bool(is_dual)
+        _scan_geometry = dict(_geometry)
+
+        def _scan_at_angle(angle_deg):
+            a = float(angle_deg)
+            try:
+                if _scan_is_fp:
+                    if _scan_is_dbr:
+                        aw, ar = fp_dielectric_spectrum(
+                            _scan_geometry["T_nm"], _scan_geometry["center_wavelength_nm"],
+                            3, 5, a, _scan_polarization.startswith("TE"))
+                    else:
+                        aw, ar = fp_cavity_spectrum(
+                            _scan_geometry["T_nm"], a, _scan_polarization.startswith("TE"))
+                    return _forward_result(aw, ar, {})
+                if _scan_is_dual:
+                    if _scan_use_dual_ml:
+                        spec = ml_module.predict_dual_spectrum(
+                            _scan_geometry["D1_nm"], _scan_geometry["H1_nm"],
+                            _scan_geometry["D2_nm"], _scan_geometry["H2_nm"],
+                            _scan_geometry["P_nm"], a, _scan_polarization,
+                            _scan_material, _scan_substrate)
+                        return _forward_result(ml_module.WL, spec, {}) if spec is not None else None
+                    aw, ar = _cached_physical_forward(
+                        _scan_geometry["D1_nm"], _scan_geometry["H1_nm"],
+                        _scan_geometry["P_nm"], _scan_material, _scan_substrate,
+                        _scan_polarization, a, _scan_geometry["D2_nm"],
+                        _scan_geometry["H2_nm"], True, _scan_far_field,
+                        _scan_na, _scan_theta)
+                    return _forward_result(aw, ar, {})
+                if _scan_use_generic:
+                    spec = ml_module.predict_generic_spectrum(
+                        _scan_geometry["D_nm"], _scan_geometry["H_nm"],
+                        _scan_geometry["P_nm"], a, _scan_polarization,
+                        _scan_material, _scan_substrate)
+                    return _forward_result(ml_module.WL, spec, {}) if spec is not None else None
+                aw, ar = _cached_physical_forward(
+                    _scan_geometry["D_nm"], _scan_geometry["H_nm"],
+                    _scan_geometry["P_nm"], _scan_material, _scan_substrate,
+                    _scan_polarization, a, 0.0, 0.0, False,
+                    _scan_far_field, _scan_na, _scan_theta)
+                return _forward_result(aw, ar, {})
+            except (ModelResourceDriftError, ModelResourceUnavailable):
+                raise
+            except Exception as exc:
+                logging.debug("angle scan at %s failed: %s", a, exc)
+                return None
+
+        _store_angle_snapshot = True
+        try:
+            with (
+                analysis_engine_transaction(engine, st.session_state),
+                _bound_runtime_context(
+                    _angle_context.structure_type, _angle_context.route_id,
+                    _angle_context.material, _angle_context.substrate),
+            ):
+                _angle_route = FrozenSpectrumRoute(
+                    scan_route_target, scan_route_target,
+                    lambda angle_deg: _scan_at_angle(angle_deg))
+                _routed_scan = evaluate_frozen_series(
+                    _angle_route, [{"angle_deg": float(a)} for a in angles_scan])
+                _route_consistent = route_results_consistent(scan_route_target, _routed_scan)
+                raw_scan_rgb = np.full((len(angles_scan), 3), np.nan, dtype=float)
+                available_mask = np.zeros(len(angles_scan), dtype=bool)
+                route_ids = []
+                if not _route_consistent:
+                    route_ids = ["route_mismatch"] * len(angles_scan)
+                else:
+                    for index, (route_id, scan_result) in enumerate(_routed_scan):
+                        route_ids.append(str(route_id))
+                        if (
+                            scan_result is not None and scan_result.spectrum_available
+                            and scan_result.rgb is not None
+                        ):
+                            raw_scan_rgb[index] = np.asarray(scan_result.rgb, dtype=float)
+                            available_mask[index] = True
+                _angle_payload = build_angle_payload(
+                    angles_scan, raw_scan_rgb, available_mask, route_ids)
+                _angle_payload["analysis_artifact_version"] = (
+                    _angle_context.artifact_version)
+                _angle_payload["model_artifact_version"] = (
+                    _analysis_model_artifact_version(_angle_context))
+        except (ModelResourceDriftError, ModelResourceUnavailable) as exc:
+            logging.error("angle scan model resource drift: %s", exc)
+            st.session_state.pop(_angle_context.session_key, None)
+            st.error("角扫模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+            _store_angle_snapshot = False
+        except EngineStateRestoreError as exc:
+            logging.error("angle scan engine restore failed: %s", exc)
+            st.session_state.pop(_angle_context.session_key, None)
+            st.error("角扫会话引擎恢复失败；旧结果已清除，本次结果未保存。")
+            _store_angle_snapshot = False
+        except EngineStateMutationError as exc:
+            logging.error("angle scan engine mutation restored: %s", exc)
+            _angle_payload = {
+                "status": "unavailable",
+                "reason": "会话引擎状态被分析修改；已恢复原状态，本次结果因完整性失败而作废",
+            }
+        except Exception as exc:
+            if exception_has_model_resource_drift(exc):
+                logging.error("angle business error with model drift: %s", exc)
+                st.session_state.pop(_angle_context.session_key, None)
+                st.error("角扫模型会话身份发生漂移；结果与导出已清除，本次未保存。")
+                _store_angle_snapshot = False
+            else:
+                logging.warning("angle scan analysis failed: %s", exc)
+                _angle_payload = {
+                    "status": "unavailable", "reason": f"角扫执行失败：{type(exc).__name__}",
+                }
+        _post_angle_issue = _analysis_runtime_identity_issue(_angle_context)
+        if _post_angle_issue:
+            st.session_state.pop(_angle_context.session_key, None)
+            st.error("角扫期间模型/源码身份发生变化；本次结果未保存。")
+            _store_angle_snapshot = False
+        if _store_angle_snapshot:
+            store_analysis_snapshot(
+                st.session_state, AnalysisSnapshot.create(_angle_context, _angle_payload))
+        _angle_load = load_analysis_snapshot(st.session_state, _angle_context)
+
+    if _angle_load.state == "fresh" and _angle_execution_available:
+        _angle_payload = _angle_load.snapshot.payload
+        if _angle_payload["status"] == "unavailable":
+            st.warning(f"入射角扫描不可用：{_angle_payload['reason']}。未跨路线补数。")
+        else:
+            scan_angles, scan_rgbs, available_mask, scan_routes = angle_payload_arrays(
+                _angle_payload)
+            unavailable_angles = [
+                int(value) for value, available in zip(scan_angles, available_mask)
+                if not available]
+            if unavailable_angles:
+                st.warning(
+                    f"部分角度没有可用光谱：{unavailable_angles}。"
+                    "原始数值为 null/NaN；灰色斜纹仅用于展示。")
+            st.caption(
+                f"扫描固定路线：{scan_route_target}；fingerprint={_angle_context.fingerprint[:12]}…；"
+                "颜色由同一路线各角度光谱计算，未做逐光谱最大值归一化。")
+            fig_ang, (ax1, ax2) = _get_plt().subplots(1, 2, figsize=(10, 3))
+            ax1.plot(scan_angles, scan_rgbs[:, 0], "r-", lw=1.5, label="R")
+            ax1.plot(scan_angles, scan_rgbs[:, 1], "g-", lw=1.5, label="G")
+            ax1.plot(scan_angles, scan_rgbs[:, 2], "b-", lw=1.5, label="B")
+            ax1.set_xlabel("Incident Angle (deg)")
+            ax1.set_ylabel("sRGB")
+            ax1.set_ylim(0, 1.05)
+            ax1.legend(fontsize=7)
+            ax1.grid(True, alpha=0.3)
+            ax1.set_title("RGB vs Incident Angle")
+            for index, available in enumerate(available_mask):
+                color = rgb_to_hex(scan_rgbs[index]) if available else "#9ca3af"
+                patch = _get_plt().Rectangle(
+                    (index, 0), 1, 1, facecolor=color, edgecolor="white", lw=0.3,
+                    hatch=None if available else "////")
+                ax2.add_patch(patch)
+            ax2.set_xlim(0, len(scan_angles))
+            ax2.set_ylim(0, 1)
+            ax2.set_xticks(np.arange(len(scan_angles)) + 0.5)
+            ax2.set_xticklabels([f"{int(a)}" for a in scan_angles], fontsize=6)
+            ax2.set_yticks([])
+            ax2.set_title("Color vs Incident Angle (deg)")
+            fig_ang.tight_layout()
+            st.pyplot(fig_ang)
+            _get_plt().close(fig_ang)
+            _angle_export = {
+                "schema_version": 1,
+                "context_fingerprint": _angle_context.fingerprint,
+                "context": _angle_context.to_dict(),
+                "angle_scan": _angle_payload,
+            }
+            st.download_button(
+                "下载角扫 JSON",
+                json.dumps(_angle_export, ensure_ascii=False, indent=2, allow_nan=False),
+                file_name=f"angle_scan_{_angle_context.fingerprint[:12]}.json",
+                mime="application/json", use_container_width=True,
+            )
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("导出")
-# Spectrum CSV export
-wl = np.linspace(380, 780, 81)
-if st.session_state.get("dual_pillar", False):
-    try:
-        import torch_model as _tm_exp
-        import torch as _torch_exp
-        sp_dual = _tm_exp.batch_dual_pillar_spectrum(
-            _torch_exp.tensor([st.session_state.d1_val]), _torch_exp.tensor([st.session_state.h1_val]),
-            _torch_exp.tensor([st.session_state.d2_val]), _torch_exp.tensor([st.session_state.h2_val]),
-            _torch_exp.tensor([st.session_state.p_val]),
-            material=material, substrate=substrate
-        )
-        spec_export = sp_dual.squeeze().detach().numpy()
-    except Exception as e:
-        spec_export = np.zeros(81)
+# Spectrum CSV export: consume exactly the same forward result shown above.
+if _forward.spectrum_available:
+    if is_fp:
+        _export_structure = "fp"
+        _export_parameters = {
+            "mirror": st.session_state.fp_mirror_type,
+            "t": st.session_state.fp_t_val,
+            "center_wavelength": (
+                st.session_state.fp_target_wl if is_dbr_fp else None),
+        }
+    elif is_dual:
+        _export_structure = "dual"
+        _export_parameters = {
+            "d1": st.session_state.d1_val, "h1": st.session_state.h1_val,
+            "d2": st.session_state.d2_val, "h2": st.session_state.h2_val,
+            "p": period,
+        }
+    else:
+        _export_structure = "single"
+        _export_parameters = {"d": diameter, "h": height, "p": period}
+    _export_basename = forward_export_basename(
+        _export_structure, _export_parameters)
+    _forward_exports = build_forward_exports(
+        _forward.wavelengths_nm, _forward.reflectance, _forward.rgb, _forward.provenance)
+    st.sidebar.download_button(
+        "下载光谱 CSV", _forward_exports.csv_text,
+        file_name=f"spectrum_{_export_basename}.csv",
+        mime="text/csv", use_container_width=True
+    )
+    st.sidebar.download_button(
+        "下载当前结果 JSON", _forward_exports.json_text,
+        file_name=f"forward_{_export_basename}.json",
+        mime="application/json", use_container_width=True
+    )
 else:
-    try:
-        import torch_model as _tm_exp
-        import torch as _torch_exp
-        sp_single = _tm_exp.batch_lorentzian_spectrum(
-            _torch_exp.tensor([diameter]), _torch_exp.tensor([height]), _torch_exp.tensor([period]),
-            material=material, substrate=substrate
-        )
-        spec_export = sp_single.squeeze().detach().numpy()
-    except Exception as e:
-        spec_export = np.zeros(81)
-
-csv_data = "Wavelength_nm,Reflectance\n"
-for i in range(81):
-    csv_data += f"{wl[i]:.0f},{spec_export[i]:.6f}\n"
-st.sidebar.download_button(
-    "下载光谱 CSV", csv_data,
-    file_name=f"spectrum_D{diameter:.0f}_H{height:.0f}_P{period:.0f}.csv",
-    mime="text/csv", use_container_width=True
-)
+    st.sidebar.warning(f"当前光谱不可导出：{_forward.error}")
 
 # Color swatch PNG export
 try:
-    swatch_size = 100
-    swatch = np.ones((swatch_size, swatch_size, 3), dtype=np.uint8)
-    r255, g255, b255 = int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
-    swatch[:,:,0] = r255; swatch[:,:,1] = g255; swatch[:,:,2] = b255
-    img = Image.fromarray(swatch)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    st.sidebar.download_button(
-        "下载色板 PNG", buf.getvalue(),
-        file_name=f"swatch_{hex_color.lstrip('#')}.png",
-        mime="image/png", use_container_width=True
-    )
+    if _forward.spectrum_available:
+        swatch_size = 100
+        swatch = np.ones((swatch_size, swatch_size, 3), dtype=np.uint8)
+        r255, g255, b255 = int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
+        swatch[:,:,0] = r255; swatch[:,:,1] = g255; swatch[:,:,2] = b255
+        img = Image.fromarray(swatch)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        st.sidebar.download_button(
+            "下载色板 PNG", buf.getvalue(),
+            file_name=f"swatch_{hex_color.lstrip('#')}.png",
+            mime="image/png", use_container_width=True
+        )
+    else:
+        st.sidebar.warning("当前无可用颜色，已禁用色板 PNG 导出。")
 except Exception as e:
     logging.warning(f"swatch export: {e}")
     pass
 
 st.sidebar.markdown("---")
-st.sidebar.caption("AI超表面结构色设计 v5.0 (MultiMaterial)")
-st.sidebar.caption("物理模型: RCWA 电磁仿真 + CIE 1931 光谱管线")
+st.sidebar.caption("AI超表面结构色设计 · 竞赛展示版")
+st.sidebar.caption("结果路线: 代理模型 / Lorentz-Fano / FP-TMM + CIE 1931")
 st.sidebar.markdown("---")
-st.sidebar.caption("长沙理工大学 物理与电子科学学院")
-st.sidebar.caption("光电2501 乔安琪")
-
+st.sidebar.caption("作品信息与团队信息请在报名系统单独填写")

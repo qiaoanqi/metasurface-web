@@ -1,0 +1,3944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI超表面结构色智能设计系统</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230C0812'/%3E%3Crect x='20' y='35' width='12' height='45' rx='6' fill='%23FDA765'/%3E%3Crect x='38' y='20' width='12' height='60' rx='6' fill='%23FC6B2E'/%3E%3Crect x='56' y='28' width='12' height='52' rx='6' fill='%23F3D259'/%3E%3Crect x='74' y='40' width='12' height='40' rx='6' fill='%23C191F5'/%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230C0812'/%3E%3Crect x='36' y='63' width='22' height='81' rx='11' fill='%23FDA765'/%3E%3Crect x='68' y='36' width='22' height='108' rx='11' fill='%23FC6B2E'/%3E%3Crect x='100' y='50' width='22' height='94' rx='11' fill='%23F3D259'/%3E%3Crect x='132' y='72' width='22' height='72' rx='11' fill='%23C191F5'/%3E%3C/svg%3E">
+
+    <!-- SEO Meta -->
+    <meta name="description" content="AI驱动的超表面结构色智能设计系统——以超表面结构色为验证场景的算法模型创新与可视化展示平台。">
+    <meta name="keywords" content="超表面,结构色,metasurface,structural color,深度学习,AI设计,纳米光学,算法模型创新">
+    <meta name="author" content="参赛作品展示页">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#0C0812">
+    <meta name="msapplication-TileColor" content="#0C0812">
+
+    <!-- Open Graph / Social Sharing -->
+    <meta property="og:title" content="AI超表面结构色智能设计系统">
+    <meta property="og:description" content="基于深度学习的超表面结构色智能生成与优化平台，将纳米光学设计的复杂计算转化为高效的AI驱动工作流。">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="">
+    <meta property="og:image" content="images/fdtd_preview_P200.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="AI超表面结构色智能设计系统 - 结构色光谱与颜色预览">
+    <meta property="og:site_name" content="AI超表面结构色智能设计系统">
+    <meta property="og:locale" content="zh_CN">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="AI超表面结构色智能设计系统">
+    <meta name="twitter:description" content="基于深度学习的超表面结构色智能生成与优化平台，将纳米光学设计的复杂计算转化为高效的AI驱动工作流。">
+    <meta name="twitter:image" content="images/fdtd_preview_P200.png">
+    <meta name="twitter:image:alt" content="AI超表面结构色智能设计系统 - 结构色光谱与颜色预览">
+
+    <!-- Canonical -->
+    <link rel="canonical" href="">
+
+    <!-- 渐进增强开关:只有 JS 可用且支持 IntersectionObserver 时才启用滚动揭示动画。
+         必须内联在 <style> 之前执行,避免首帧闪烁。 -->
+    <script>
+        if ('IntersectionObserver' in window) {
+            document.documentElement.classList.add('js-anim');
+        }
+    </script>
+    <style>
+        /* ===== RESET & BASE ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* =================================================================
+               色彩令牌 · 派生自本次采样观察到的可达色
+               来源:engine.compute_spectrum,TiO2(anatase)/SiO2 单柱正向光谱。
+               采样范围:D 80-300nm(步长10) x H 100-560nm(步长20) x P {300,420,520}nm,
+                         排除 P < 1.2D,共 1536 组有效样本,按色相分段取最高彩度。
+               明度调整在 Oklch 感知均匀空间完成,色相不漂移。
+               对比度:正文 5.35~18.12:1,强调色 6.88~13.38:1,全部通过 WCAG AA。
+
+               注:在上述采样范围内,暖端观察到彩度 68~83,冷端(青/蓝)仅 8~11。
+                   原品牌色 #00D4FF 落在本次采样未覆盖到的高彩度冷色区,
+                   故改用采样中实测存在的暖端色。这是采样范围内的观察结论,
+                   不构成"该体系物理上不能产生青色"的证明。
+               ================================================================= */
+
+            /* 底色:从真实紫端 #463757 (D=80 H=540 P=300nm) 派生 */
+            --bg-deep: #0C0812;
+            --bg-surface: #18121E;
+            --bg-elevated: #251F2B;
+            --border-subtle: #342D3C;
+            --border-strong: #51495C;
+
+            /* 文字:中性轴略带暖意,与强调色同族 */
+            --text-primary: #F3F5F5;
+            --text-secondary: #AFB1B2;
+            --text-muted: #888B8C;
+
+            /* 强调色:每色可追溯到一组真实纳米柱参数 */
+            --accent:        #FDA765;  /* 琥珀 ← #E87C00  D=250 H=140 P=300nm  C=78.5 */
+            --accent-strong: #FC6B2E;  /* 焰橙 ← #E05100  D=300 H=100 P=420nm  C=83.3 */
+            --accent-soft:   #F3D259;  /* 金   ← #BB9B00  D=220 H=100 P=300nm  C=68.6 */
+            --accent-cool:   #C191F5;  /* 紫   ← #463757  D=80  H=540 P=300nm  C=21.9 */
+            --accent-moss:   #A8C07A;  /* 苔绿 ← #758E47  D=170 H=120 P=300nm  C=40.6 */
+
+            --accent-dim:       rgba(253, 167, 101, 0.12);
+            --accent-soft-dim:  rgba(243, 210, 89, 0.10);
+
+            /* 兼容别名:保留旧变量名,避免逐处改写既有引用 */
+            --accent-cyan:      var(--accent);
+            --accent-cyan-dim:  var(--accent-dim);
+            --accent-gold:      var(--accent-soft);
+            --accent-gold-dim:  var(--accent-soft-dim);
+            --border-glow:      var(--border-strong);
+
+            --gradient-hero: linear-gradient(135deg, #0C0812 0%, #1A1024 50%, #18121E 100%);
+            --gradient-accent: linear-gradient(135deg, #FDA765 0%, #FC6B2E 100%);
+
+            /* =================================================================
+               字体:display 与 body 真正分化 —— 标题走紧凑高权重,正文走易读。
+               原先两者定义完全相同,区分是装饰性的、不起作用。
+               ================================================================= */
+            --font-display: 'Inter Tight', 'Inter', 'PingFang SC', 'HarmonyOS Sans SC',
+                            'Microsoft YaHei', system-ui, sans-serif;
+            --font-body: -apple-system, 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC',
+                         'Microsoft YaHei', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', 'Consolas', monospace;
+
+            /* 字阶:1.25 倍率,贴合中文阅读 */
+            --text-xs:   12px;
+            --text-sm:   14px;
+            --text-base: 16px;
+            --text-lg:   19px;
+            --text-xl:   24px;
+            --text-2xl:  31px;
+            --text-3xl:  40px;
+            --text-4xl:  52px;
+
+            /* 间距节奏:8px 基准 */
+            --space-1: 4px;   --space-2: 8px;   --space-3: 12px;
+            --space-4: 16px;  --space-5: 24px;  --space-6: 32px;
+            --space-7: 48px;  --space-8: 64px;  --space-9: 96px;
+
+            --radius-sm: 6px;  --radius-md: 10px;
+            --radius-lg: 16px; --radius-xl: 24px;
+
+            /* 既存 bug 修复:--bg-primary 被 6 处引用(architecture / showcase /
+               stat-card 等区块背景)但从未定义,这些 background 声明一直是无效的,
+               元素落回父级底色。补上定义,取 surface 档。 */
+            --bg-primary: #18121E;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ===== NOISE TEXTURE OVERLAY ===== */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(6, 6, 10, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-subtle);
+            transition: all 0.3s ease;
+        }
+
+        .header-inner {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 0 80px;
+            height: 72px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-primary);
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: var(--gradient-accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            box-shadow: 0 0 20px rgba(253, 167, 101, 0.3);
+        }
+
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: 40px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s ease;
+            position: relative;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--accent-cyan);
+            transition: width 0.3s ease;
+            border-radius: 1px;
+        }
+
+        .nav-links a:hover::after {
+            width: 100%;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            border: none;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--gradient-accent);
+            color: #000;
+            box-shadow: 0 0 30px rgba(253, 167, 101, 0.2), 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 40px rgba(253, 167, 101, 0.35), 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--border-glow);
+        }
+
+        .btn-ghost:hover {
+            border-color: var(--accent-cyan);
+            background: var(--accent-cyan-dim);
+            color: var(--accent-cyan);
+        }
+
+        .lang-toggle {
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .lang-toggle:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            gap: 5px;
+            cursor: pointer;
+            padding: 8px;
+            z-index: 101;
+            background: none;
+            border: none;
+        }
+
+        .hamburger span {
+            display: block;
+            width: 24px;
+            height: 2px;
+            background: var(--text-primary);
+            transition: all 0.3s ease;
+            border-radius: 1px;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .mobile-nav {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(6, 6, 10, 0.98);
+            backdrop-filter: blur(20px);
+            z-index: 99;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 32px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .mobile-nav.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .mobile-nav a {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .mobile-nav a:hover {
+            color: var(--accent-cyan);
+        }
+
+        .mobile-nav .lang-toggle-mobile {
+            margin-top: 16px;
+            background: transparent;
+            border: 1px solid var(--border-glow);
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 14px;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        /* ===== HERO SECTION ===== */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            background: var(--gradient-hero);
+            padding-top: 72px;
+        }
+
+        .hero-grid-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image:
+                linear-gradient(rgba(253, 167, 101, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(253, 167, 101, 0.03) 1px, transparent 1px);
+            background-size: 80px 80px;
+            mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+            -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+        }
+
+        .hero-glow {
+            position: absolute;
+            top: 20%;
+            right: 10%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(253, 167, 101, 0.08) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: pulse-glow 6s ease-in-out infinite;
+        }
+
+        .hero-glow-2 {
+            position: absolute;
+            bottom: 10%;
+            left: 5%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(243, 210, 89, 0.05) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: pulse-glow 8s ease-in-out infinite reverse;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+        }
+
+        .hero-inner {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 0 80px;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-content {
+            max-width: 640px;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 100px;
+            background: var(--accent-cyan-dim);
+            border: 1px solid rgba(253, 167, 101, 0.2);
+            font-size: 13px;
+            color: var(--accent-cyan);
+            font-weight: 500;
+            margin-bottom: 32px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.5px;
+        }
+
+        .hero-badge::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .hero-title {
+            font-family: var(--font-display);
+            font-size: clamp(38px, 5vw, 64px);
+            font-weight: 800;
+            line-height: 1.08;
+            letter-spacing: -0.03em;
+            margin-bottom: var(--space-5);
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 强调词:从琥珀到金,两端都是物理可达色 */
+        .hero-title .accent-word {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 20px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 16px;
+            font-weight: 400;
+        }
+
+        .hero-trust {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 40px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .hero-trust .divider {
+            width: 1px;
+            height: 16px;
+            background: var(--border-subtle);
+        }
+
+        .hero-trust .highlight {
+            color: var(--accent-gold);
+            font-weight: 500;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 48px;
+        }
+
+        .hero-cta .btn {
+            padding: 14px 32px;
+            font-size: 16px;
+        }
+
+        .hero-stats {
+            display: flex;
+            gap: 48px;
+            padding-top: 32px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            font-family: var(--font-mono);
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        /* ===== HERO VISUAL (Metasurface Abstract) ===== */
+        .hero-visual {
+            position: relative;
+            height: 560px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .metasurface-container {
+            position: relative;
+            width: 480px;
+            height: 480px;
+            perspective: 1000px;
+        }
+
+        .metasurface-grid {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: rotateX(60deg) rotateZ(-15deg);
+            transform-style: preserve-3d;
+        }
+
+        .nano-pillar {
+            position: absolute;
+            border-radius: 50%;
+            transition: all 0.5s ease;
+            animation: nano-pulse 3s ease-in-out infinite;
+            box-shadow: inset 0 2px 4px rgba(255,255,255,0.2), inset 0 -2px 4px rgba(0,0,0,0.3);
+        }
+
+        @keyframes nano-pulse {
+            0%, 100% { opacity: 0.7; transform: translateZ(0) scale(1); }
+            50% { opacity: 1; transform: translateZ(30px) scale(1.05); }
+        }
+
+        .metasurface-glow-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            border: 1px solid rgba(253, 167, 101, 0.15);
+            animation: ring-expand 4s ease-in-out infinite;
+        }
+
+        @keyframes ring-expand {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.8; }
+        }
+
+        .spectrum-bar {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 2px;
+            height: 60px;
+            align-items: flex-end;
+        }
+
+        .spectrum-segment {
+            width: 6px;
+            border-radius: 3px 3px 0 0;
+            animation: spectrum-wave 2s ease-in-out infinite;
+        }
+
+        @keyframes spectrum-wave {
+            0%, 100% { height: 20%; }
+            50% { height: 100%; }
+        }
+
+        .floating-label {
+            position: absolute;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-glow);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 12px;
+            color: var(--accent-cyan);
+            font-family: var(--font-mono);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            animation: float-label 5s ease-in-out infinite;
+        }
+
+        @keyframes float-label {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        /* ===== SECTIONS COMMON ===== */
+        .section {
+            padding: 120px 80px;
+            position: relative;
+        }
+
+        .section-inner {
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 80px;
+            max-width: 720px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .section-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 100px;
+            background: var(--accent-cyan-dim);
+            border: 1px solid rgba(253, 167, 101, 0.2);
+            font-size: 13px;
+            color: var(--accent-cyan);
+            font-weight: 500;
+            margin-bottom: 20px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.5px;
+        }
+
+        .section-title {
+            font-family: var(--font-display);
+            font-size: clamp(30px, 3.6vw, 48px);
+            font-weight: 800;
+            line-height: 1.14;
+            letter-spacing: -0.025em;
+            margin-bottom: var(--space-4);
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .section-desc {
+            font-size: var(--text-lg);
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 62ch;
+        }
+
+        /* ===== FEATURES SECTION ===== */
+        .features-section {
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
+        }
+
+        .feature-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 48px 40px;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-accent);
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            border-color: var(--border-glow);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), 0 0 40px rgba(253, 167, 101, 0.05);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            background: var(--accent-cyan-dim);
+            border: 1px solid rgba(253, 167, 101, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 28px;
+            color: var(--accent-cyan);
+        }
+
+        .feature-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 14px;
+        }
+
+        .feature-desc {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            margin-bottom: 24px;
+        }
+
+        .feature-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .feature-tag {
+            padding: 4px 12px;
+            border-radius: 6px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        /* ===== HOW IT WORKS SECTION ===== */
+        .how-section {
+            background: var(--bg-deep);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .how-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(ellipse at 50% 0%, rgba(253, 167, 101, 0.03) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .workflow-steps {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 48px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .workflow-step {
+            text-align: center;
+            position: relative;
+        }
+
+        .workflow-step:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 40px;
+            right: -24px;
+            width: 48px;
+            height: 1px;
+            background: linear-gradient(90deg, var(--border-glow), transparent);
+        }
+
+        .step-number {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: var(--bg-elevated);
+            border: 2px solid var(--border-glow);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--accent-cyan);
+            margin: 0 auto 28px;
+            font-family: var(--font-mono);
+            position: relative;
+            box-shadow: 0 0 30px rgba(253, 167, 101, 0.1);
+        }
+
+        .step-number::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 1px solid rgba(253, 167, 101, 0.1);
+            animation: ring-pulse 3s ease-in-out infinite;
+        }
+
+        @keyframes ring-pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.5; }
+        }
+
+        .step-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .step-desc {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* ===== RESULTS SECTION ===== */
+        .results-section {
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 48px;
+            align-items: start;
+        }
+
+        .result-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 40px;
+            transition: all 0.4s ease;
+        }
+
+        .result-card:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+        }
+
+        .result-visual {
+            width: 100%;
+            height: 200px;
+            border-radius: 12px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .result-visual-structural-color {
+            background: conic-gradient(from 0deg, #FF0000, #FF8800, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000);
+            opacity: 0.15;
+            position: absolute;
+            inset: 0;
+            animation: color-rotate 20s linear infinite;
+        }
+
+        @keyframes color-rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .nano-pattern {
+            position: absolute;
+            inset: 0;
+            background-image: radial-gradient(circle at 30% 30%, rgba(253, 167, 101, 0.3) 0%, transparent 2%),
+                              radial-gradient(circle at 70% 30%, rgba(243, 210, 89, 0.3) 0%, transparent 2%),
+                              radial-gradient(circle at 50% 70%, rgba(138, 43, 226, 0.3) 0%, transparent 2%);
+            background-size: 30px 30px;
+            animation: pattern-shift 8s ease-in-out infinite;
+        }
+
+        @keyframes pattern-shift {
+            0%, 100% { background-position: 0 0, 0 0, 0 0; }
+            50% { background-position: 15px 15px, -15px 15px, 0 -15px; }
+        }
+
+        .result-visual-placeholder {
+            font-size: 14px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            z-index: 1;
+            background: rgba(6, 6, 10, 0.7);
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
+            backdrop-filter: blur(10px);
+        }
+
+        .result-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .result-desc {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            margin-bottom: 20px;
+        }
+
+        .result-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        .result-meta span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .result-meta .meta-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+        }
+
+        /* ===== REFERENCES SECTION ===== */
+        .references-section {
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .references-list {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        .reference-item {
+            display: flex;
+            gap: 24px;
+            padding: 28px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            transition: all 0.3s ease;
+        }
+
+        .reference-item:last-child {
+            border-bottom: none;
+        }
+
+        .reference-item:hover {
+            padding-left: 12px;
+        }
+
+        .reference-number {
+            font-family: var(--font-mono);
+            font-size: 14px;
+            color: var(--accent-cyan);
+            font-weight: 700;
+            min-width: 32px;
+            flex-shrink: 0;
+            padding-top: 4px;
+        }
+
+        .reference-content {
+            flex: 1;
+        }
+
+        .reference-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            line-height: 1.5;
+        }
+
+        .reference-meta {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            margin-bottom: 10px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .reference-journal {
+            color: var(--accent-gold);
+        }
+
+        .reference-year {
+            color: var(--text-muted);
+        }
+
+        .reference-summary {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        .reference-tag {
+            display: inline-block;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            padding: 3px 10px;
+            border-radius: 100px;
+            background: rgba(253, 167, 101, 0.1);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(253, 167, 101, 0.2);
+            margin-left: 12px;
+            vertical-align: middle;
+        }
+
+        .reference-tag.classic {
+            background: rgba(243, 210, 89, 0.1);
+            color: var(--accent-gold);
+            border-color: rgba(243, 210, 89, 0.2);
+        }
+
+        .reference-tag.ai {
+            background: rgba(138, 43, 226, 0.1);
+            color: var(--accent-cool);
+            border-color: rgba(138, 43, 226, 0.2);
+        }
+
+        .reference-tag.standard {
+            background: rgba(0, 255, 136, 0.1);
+            color: var(--accent-moss);
+            border-color: rgba(0, 255, 136, 0.2);
+        }
+
+        @media (max-width: 768px) {
+            .reference-item {
+                flex-direction: column;
+                gap: 12px;
+            }
+        }
+
+        /* ===== ARCHITECTURE SECTION ===== */
+        .architecture-section {
+            background: var(--bg-primary);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .architecture-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 80% 80%, rgba(138, 43, 226, 0.03) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .architecture-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+            margin-top: 64px;
+        }
+
+        .architecture-content {
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        .architecture-layer {
+            display: flex;
+            gap: 20px;
+            padding: 24px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .architecture-layer::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--accent-cyan);
+            opacity: 0.6;
+            transition: opacity 0.3s ease;
+        }
+
+        .architecture-layer:nth-child(2)::before {
+            background: var(--accent-gold);
+        }
+
+        .architecture-layer:nth-child(3)::before {
+            background: var(--accent-cool);
+        }
+
+        .architecture-layer:nth-child(4)::before {
+            background: var(--accent-moss);
+        }
+
+        .architecture-layer:hover {
+            border-color: var(--border-glow);
+            transform: translateX(8px);
+        }
+
+        .architecture-layer:hover::before {
+            opacity: 1;
+        }
+
+        .layer-number {
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            line-height: 1;
+            min-width: 36px;
+            text-align: center;
+        }
+
+        .architecture-layer:nth-child(2) .layer-number {
+            color: var(--accent-gold);
+        }
+
+        .architecture-layer:nth-child(3) .layer-number {
+            color: var(--accent-cool);
+        }
+
+        .architecture-layer:nth-child(4) .layer-number {
+            color: var(--accent-moss);
+        }
+
+        .layer-text h4 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .layer-text p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .layer-tags {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .layer-tag {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            padding: 3px 10px;
+            border-radius: 100px;
+            background: rgba(253, 167, 101, 0.08);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(253, 167, 101, 0.15);
+        }
+
+        .architecture-layer:nth-child(2) .layer-tag {
+            background: rgba(243, 210, 89, 0.08);
+            color: var(--accent-gold);
+            border-color: rgba(243, 210, 89, 0.15);
+        }
+
+        .architecture-layer:nth-child(3) .layer-tag {
+            background: rgba(138, 43, 226, 0.08);
+            color: var(--accent-cool);
+            border-color: rgba(138, 43, 226, 0.15);
+        }
+
+        .architecture-layer:nth-child(4) .layer-tag {
+            background: rgba(0, 255, 136, 0.08);
+            color: var(--accent-moss);
+            border-color: rgba(0, 255, 136, 0.15);
+        }
+
+        .architecture-image-wrapper {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .architecture-image-wrapper:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 48px 96px rgba(0, 0, 0, 0.5);
+            border-color: var(--border-glow);
+        }
+
+        .architecture-image-wrapper img {
+            width: 100%;
+            display: block;
+            transition: transform 0.8s ease;
+        }
+
+        .architecture-image-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .architecture-image-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 70%, rgba(6, 6, 10, 0.6) 100%);
+            pointer-events: none;
+        }
+
+        .architecture-image-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(138, 43, 226, 0.15);
+            border: 1px solid rgba(138, 43, 226, 0.3);
+            color: var(--accent-cool);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            backdrop-filter: blur(10px);
+        }
+
+        @media (max-width: 1024px) {
+            .architecture-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .architecture-image-wrapper {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .architecture-layer {
+                padding: 20px;
+            }
+            .architecture-image-wrapper {
+                border-radius: 12px;
+            }
+        }
+
+        /* ===== SHOWCASE SECTION ===== */
+        .showcase-section {
+            background: var(--bg-primary);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .showcase-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(253, 167, 101, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(243, 210, 89, 0.03) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .showcase-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+            margin-top: 64px;
+        }
+
+        .showcase-image-wrapper {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .showcase-image-wrapper:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 48px 96px rgba(0, 0, 0, 0.5);
+            border-color: var(--border-glow);
+        }
+
+        .showcase-image-wrapper img {
+            width: 100%;
+            display: block;
+            transition: transform 0.8s ease;
+        }
+
+        .showcase-image-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .showcase-image-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 60%, rgba(6, 6, 10, 0.8) 100%);
+            pointer-events: none;
+        }
+
+        .showcase-image-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(253, 167, 101, 0.15);
+            border: 1px solid rgba(253, 167, 101, 0.3);
+            color: var(--accent-cyan);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            backdrop-filter: blur(10px);
+        }
+
+        .showcase-content {
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+        }
+
+        .showcase-features {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .showcase-feature-item {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+
+        .showcase-feature-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+            color: var(--accent-cyan);
+        }
+
+        .showcase-feature-text h4 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .showcase-feature-text p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        @media (max-width: 1024px) {
+            .showcase-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .showcase-image-wrapper {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .showcase-image-wrapper {
+                border-radius: 12px;
+            }
+        }
+
+        /* ===== PERFORMANCE SECTION ===== */
+        .performance-section {
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .performance-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+            margin-top: 64px;
+        }
+
+        .performance-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-gold));
+            opacity: 0.6;
+            transition: opacity 0.3s ease;
+        }
+
+        .stat-card:nth-child(2)::before {
+            background: linear-gradient(90deg, var(--accent-gold), var(--accent-cool));
+        }
+
+        .stat-card:nth-child(3)::before {
+            background: linear-gradient(90deg, var(--accent-cool), var(--accent-moss));
+        }
+
+        .stat-card:nth-child(4)::before {
+            background: linear-gradient(90deg, var(--accent-moss), var(--accent-cyan));
+        }
+
+        .stat-card:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .stat-card:hover::before {
+            opacity: 1;
+        }
+
+        .stat-number {
+            font-family: var(--font-mono);
+            font-size: 42px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .stat-card:nth-child(2) .stat-number {
+            color: var(--accent-gold);
+        }
+
+        .stat-card:nth-child(3) .stat-number {
+            color: var(--accent-cool);
+        }
+
+        .stat-card:nth-child(4) .stat-number {
+            color: var(--accent-moss);
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .stat-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        .performance-chart-wrapper {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .performance-chart-wrapper:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 48px 96px rgba(0, 0, 0, 0.5);
+            border-color: var(--border-glow);
+        }
+
+        .performance-chart-wrapper img {
+            width: 100%;
+            display: block;
+            transition: transform 0.8s ease;
+        }
+
+        .performance-chart-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .performance-chart-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 70%, rgba(6, 6, 10, 0.6) 100%);
+            pointer-events: none;
+        }
+
+        .performance-chart-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 255, 136, 0.15);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            color: var(--accent-moss);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            backdrop-filter: blur(10px);
+        }
+
+        @media (max-width: 1024px) {
+            .performance-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .performance-chart-wrapper {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .performance-stats {
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+            .stat-card {
+                padding: 24px 16px;
+            }
+            .stat-number {
+                font-size: 32px;
+            }
+            .performance-chart-wrapper {
+                border-radius: 12px;
+            }
+        }
+
+        /* ===== MODEL SECTION ===== */
+        .model-section {
+            background: var(--bg-primary);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .model-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 10% 90%, rgba(138, 43, 226, 0.03) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        .model-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+            margin-top: 64px;
+        }
+
+        .model-image-wrapper {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .model-image-wrapper:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 48px 96px rgba(0, 0, 0, 0.5);
+            border-color: var(--border-glow);
+        }
+
+        .model-image-wrapper img {
+            width: 100%;
+            display: block;
+            transition: transform 0.8s ease;
+        }
+
+        .model-image-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .model-image-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 70%, rgba(6, 6, 10, 0.6) 100%);
+            pointer-events: none;
+        }
+
+        .model-image-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(138, 43, 226, 0.15);
+            border: 1px solid rgba(138, 43, 226, 0.3);
+            color: var(--accent-cool);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            backdrop-filter: blur(10px);
+        }
+
+        .model-content {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .model-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 24px;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .model-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-cyan), transparent);
+            opacity: 0.6;
+            transition: opacity 0.3s ease;
+        }
+
+        .model-card:hover {
+            border-color: var(--border-glow);
+            transform: translateX(8px);
+        }
+
+        .model-card:hover::before {
+            opacity: 1;
+        }
+
+        .model-card h4 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .model-card p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .model-card-tags {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .model-card-tag {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            padding: 3px 10px;
+            border-radius: 100px;
+            background: rgba(138, 43, 226, 0.08);
+            color: var(--accent-cool);
+            border: 1px solid rgba(138, 43, 226, 0.15);
+        }
+
+        @media (max-width: 1024px) {
+            .model-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .model-image-wrapper {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .model-image-wrapper {
+                border-radius: 12px;
+            }
+        }
+
+        /* ===== COLOR ACCURACY SECTION ===== */
+        .accuracy-section {
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .accuracy-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 64px;
+            align-items: center;
+            margin-top: 64px;
+        }
+
+        .accuracy-image-wrapper {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .accuracy-image-wrapper:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 48px 96px rgba(0, 0, 0, 0.5);
+            border-color: var(--border-glow);
+        }
+
+        .accuracy-image-wrapper img {
+            width: 100%;
+            display: block;
+            transition: transform 0.8s ease;
+        }
+
+        .accuracy-image-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .accuracy-image-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 70%, rgba(6, 6, 10, 0.6) 100%);
+            pointer-events: none;
+        }
+
+        .accuracy-image-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(243, 210, 89, 0.15);
+            border: 1px solid rgba(243, 210, 89, 0.3);
+            color: var(--accent-gold);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            backdrop-filter: blur(10px);
+        }
+
+        .accuracy-content {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .accuracy-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .accuracy-metric {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            transition: all 0.4s ease;
+        }
+
+        .accuracy-metric:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+        }
+
+        .accuracy-metric-value {
+            font-family: var(--font-mono);
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--accent-gold);
+            margin-bottom: 6px;
+        }
+
+        .accuracy-metric:nth-child(2) .accuracy-metric-value {
+            color: var(--accent-cyan);
+        }
+
+        .accuracy-metric:nth-child(3) .accuracy-metric-value {
+            color: var(--accent-cool);
+        }
+
+        .accuracy-metric:nth-child(4) .accuracy-metric-value {
+            color: var(--accent-moss);
+        }
+
+        .accuracy-metric-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 1024px) {
+            .accuracy-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .accuracy-image-wrapper {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .accuracy-image-wrapper {
+                border-radius: 12px;
+            }
+            .accuracy-metrics {
+                gap: 12px;
+            }
+            .accuracy-metric {
+                padding: 20px 12px;
+            }
+            .accuracy-metric-value {
+                font-size: 26px;
+            }
+        }
+
+        /* ===== CTA SECTION ===== */
+        .cta-section {
+            padding: 100px 80px;
+            text-align: center;
+            background: var(--bg-deep);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(253, 167, 101, 0.04) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta-inner {
+            max-width: 720px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .cta-title {
+            font-size: 40px;
+            font-weight: 800;
+            line-height: 1.2;
+            letter-spacing: -1px;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .cta-desc {
+            font-size: 18px;
+            color: var(--text-secondary);
+            margin-bottom: 36px;
+            line-height: 1.7;
+        }
+
+        .cta-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .cta-buttons .btn {
+            padding: 16px 40px;
+            font-size: 16px;
+        }
+
+        .qr-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 48px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+
+        .qr-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            transition: all 0.4s ease;
+            min-width: 200px;
+        }
+
+        .qr-card:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .qr-placeholder {
+            width: 140px;
+            height: 140px;
+            background: var(--bg-deep);
+            border: 2px dashed var(--border-glow);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .qr-placeholder::before {
+            content: '';
+            position: absolute;
+            inset: 8px;
+            background-image: 
+                linear-gradient(90deg, var(--border-glow) 1px, transparent 1px),
+                linear-gradient(var(--border-glow) 1px, transparent 1px);
+            background-size: 12px 12px;
+            opacity: 0.5;
+        }
+
+        .qr-placeholder span {
+            position: relative;
+            z-index: 1;
+            font-size: 24px;
+            color: var(--text-muted);
+        }
+
+        .qr-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .qr-divider {
+            width: 1px;
+            height: 80px;
+            background: var(--border-subtle);
+            flex-shrink: 0;
+        }
+
+        .qr-or {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* ===== PARTICLE BACKGROUND ===== */
+        .particles-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: rgba(253, 167, 101, 0.3);
+            border-radius: 50%;
+            animation: particle-float linear infinite;
+            box-shadow: 0 0 6px rgba(253, 167, 101, 0.3);
+        }
+
+        @keyframes particle-float {
+            0% {
+                transform: translateY(100vh) translateX(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-10vh) translateX(var(--drift, 50px));
+                opacity: 0;
+            }
+        }
+
+        /* ===== ENHANCED SCROLL ANIMATIONS ===== */
+        /* =====================================================================
+           滚动揭示动画 · 渐进增强
+           内容默认可见。只有在 JS 确实可用时(html.js-anim 由 head 内联脚本添加)
+           才把初始状态压为透明,交给 IntersectionObserver 点亮。
+           这样禁用 JS、脚本报错、或用工具一次性截整页长图时,内容都完整可见 ——
+           此前所有 .fade-in 无条件 opacity:0,上述任一情况都会导致首屏之外全空白。
+           ===================================================================== */
+        .js-anim .fade-in-up {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .js-anim .fade-in-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .js-anim .fade-in-scale {
+            opacity: 0;
+            transform: scale(0.95);
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+
+        .js-anim .fade-in-scale.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .stagger-1 { transition-delay: 0.1s; }
+        .stagger-2 { transition-delay: 0.2s; }
+        .stagger-3 { transition-delay: 0.3s; }
+        .stagger-4 { transition-delay: 0.4s; }
+        .stagger-5 { transition-delay: 0.5s; }
+
+        /* ===== SCROLL INDICATOR ===== */
+        .scroll-indicator {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            animation: bounce 2s ease-in-out infinite;
+            z-index: 2;
+        }
+
+        .scroll-indicator span {
+            font-size: 12px;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .scroll-arrow {
+            width: 24px;
+            height: 40px;
+            border: 2px solid var(--border-glow);
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .scroll-arrow::after {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 8px;
+            background: var(--accent-cyan);
+            border-radius: 2px;
+            animation: scroll-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateX(-50%) translateY(0); }
+            50% { transform: translateX(-50%) translateY(8px); }
+        }
+
+        @keyframes scroll-dot {
+            0%, 100% { top: 8px; opacity: 1; }
+            50% { top: 22px; opacity: 0.3; }
+        }
+
+        .result-visual img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 12px;
+            transition: transform 0.4s ease;
+        }
+
+        .result-card:hover .result-visual img {
+            transform: scale(1.03);
+        }
+
+        /* ===== FOOTER ===== */
+        .footer {
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-subtle);
+            padding: 64px 80px 32px;
+        }
+
+        .footer-inner {
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+
+        .footer-top {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 64px;
+            margin-bottom: 48px;
+        }
+
+        .footer-brand .logo {
+            margin-bottom: 16px;
+        }
+
+        .footer-brand p {
+            font-size: 14px;
+            color: var(--text-muted);
+            line-height: 1.6;
+            max-width: 280px;
+        }
+
+        .footer-col h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            letter-spacing: 0.5px;
+        }
+
+        .footer-col ul {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .footer-col a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s ease;
+        }
+
+        .footer-col a:hover {
+            color: var(--accent-cyan);
+        }
+
+        .footer-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 32px;
+            border-top: 1px solid var(--border-subtle);
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .footer-social {
+            display: flex;
+            gap: 16px;
+        }
+
+        .footer-social a {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .footer-social a:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            background: var(--accent-cyan-dim);
+        }
+
+        /* ===== SCROLL ANIMATIONS ===== */
+        .js-anim .fade-in {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+
+        .js-anim .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 尊重系统的减少动效偏好:直接显示,不做位移 */
+        @media (prefers-reduced-motion: reduce) {
+            .js-anim .fade-in,
+            .js-anim .fade-in-up,
+            .js-anim .fade-in-scale {
+                opacity: 1 !important;
+                transform: none !important;
+                transition: none !important;
+            }
+        }
+
+        /* 打印 / 另存为 PDF:强制显示全部内容,关掉装饰层。
+           避免交材料时导出的 PDF 只有首屏、其余全空白。 */
+        @media print {
+            .js-anim .fade-in,
+            .js-anim .fade-in-up,
+            .js-anim .fade-in-scale {
+                opacity: 1 !important;
+                transform: none !important;
+                transition: none !important;
+            }
+            body::before { display: none !important; }
+            .header { position: static !important; }
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 1200px) {
+            .section {
+                padding: 80px 40px;
+            }
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .workflow-steps {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .workflow-step:not(:last-child)::after {
+                display: none;
+            }
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .hero-inner {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .hero-visual {
+                order: -1;
+                height: 360px;
+            }
+            .metasurface-container {
+                transform: scale(0.7);
+            }
+            .hero-title {
+                font-size: 48px;
+            }
+            .section-title {
+                font-size: 36px;
+            }
+            .cta-title {
+                font-size: 32px;
+            }
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            .showcase-grid,
+            .performance-grid,
+            .model-grid,
+            .accuracy-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            .showcase-image-wrapper,
+            .performance-chart-wrapper,
+            .model-image-wrapper,
+            .accuracy-image-wrapper {
+                order: -1;
+            }
+            .architecture-grid {
+                grid-template-columns: 1fr;
+            }
+            .performance-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+            .accuracy-metrics {
+                grid-template-columns: 1fr 1fr;
+            }
+            .footer-top {
+                grid-template-columns: 1fr 1fr;
+                gap: 40px;
+            }
+        }
+
+        /* The in-app browser commonly gives this page an ~800px CSS viewport. */
+        @media (max-width: 900px) {
+            .header-inner { padding: 0 24px; }
+            .nav { display: none; }
+            .hamburger { display: flex; }
+            .mobile-nav { display: flex; }
+            .logo { max-width: 230px; min-width: 0; }
+            .logo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        }
+
+        @media (max-width: 768px) {
+            .header-inner {
+                padding: 0 20px;
+            }
+            .hamburger {
+                display: flex;
+            }
+            .nav-links {
+                display: none;
+            }
+            .mobile-nav {
+                display: flex;
+            }
+            .hero-inner {
+                padding: 0 20px;
+                padding-top: 80px;
+            }
+            .hero-title {
+                font-size: 32px;
+                line-height: 1.2;
+            }
+            .hero-subtitle {
+                font-size: 16px;
+            }
+            .hero-trust {
+                flex-wrap: wrap;
+                gap: 8px 12px;
+                font-size: 12px;
+            }
+            .hero-trust .divider {
+                display: none;
+            }
+            .hero-cta {
+                flex-direction: column;
+                width: 100%;
+            }
+            .hero-cta .btn {
+                width: 100%;
+                justify-content: center;
+            }
+            .hero-stats {
+                gap: 24px;
+                flex-wrap: wrap;
+            }
+            .stat-value {
+                font-size: 22px;
+            }
+            .hero-visual {
+                height: 280px;
+            }
+            .metasurface-container {
+                transform: scale(0.5);
+            }
+            .section {
+                padding: 60px 20px;
+            }
+            .section-title {
+                font-size: 26px;
+            }
+            .section-desc {
+                font-size: 15px;
+            }
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+            .feature-card {
+                padding: 28px 20px;
+            }
+            .feature-card h3 {
+                font-size: 18px;
+            }
+            .step-number {
+                width: 60px;
+                height: 60px;
+                font-size: 22px;
+            }
+            .step-title {
+                font-size: 18px;
+            }
+            .step-desc {
+                font-size: 14px;
+            }
+            .result-visual {
+                height: 180px;
+            }
+            .reference-item {
+                flex-direction: column;
+                gap: 12px;
+                padding: 20px;
+            }
+            .reference-title {
+                font-size: 14px;
+            }
+            .reference-summary {
+                font-size: 13px;
+            }
+            .architecture-layer {
+                padding: 18px 16px;
+            }
+            .layer-number {
+                font-size: 18px;
+            }
+            .layer-title {
+                font-size: 15px;
+            }
+            .performance-stats {
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+            .stat-card {
+                padding: 24px 16px;
+            }
+            .stat-card-value {
+                font-size: 28px;
+            }
+            .stat-card-label {
+                font-size: 12px;
+            }
+            .showcase-feature-item {
+                gap: 12px;
+            }
+            .showcase-feature-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 16px;
+            }
+            .showcase-feature-text h4 {
+                font-size: 15px;
+            }
+            .showcase-feature-text p {
+                font-size: 13px;
+            }
+            .model-card {
+                padding: 18px 16px;
+            }
+            .accuracy-metrics {
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+            .accuracy-metric-value {
+                font-size: 28px;
+            }
+            .accuracy-metric-label {
+                font-size: 12px;
+            }
+            .cta-section {
+                padding: 60px 20px;
+            }
+            .cta-title {
+                font-size: 24px;
+            }
+            .cta-desc {
+                font-size: 15px;
+            }
+            .cta-buttons .btn {
+                width: 100%;
+                justify-content: center;
+            }
+            .qr-section img {
+                width: 120px !important;
+                height: 120px !important;
+            }
+            .footer {
+                padding: 40px 20px 20px;
+            }
+            .footer-top {
+                grid-template-columns: 1fr;
+                gap: 32px;
+            }
+            .footer-brand p {
+                max-width: 100%;
+            }
+            .footer-col h4 {
+                font-size: 13px;
+            }
+            .footer-bottom {
+                flex-direction: column;
+                gap: 16px;
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero-title {
+                font-size: 28px;
+            }
+            .hero-subtitle {
+                font-size: 14px;
+            }
+            .section-title {
+                font-size: 22px;
+            }
+            .stat-card-value {
+                font-size: 24px;
+            }
+            .accuracy-metric-value {
+                font-size: 24px;
+            }
+            .performance-stats {
+                grid-template-columns: 1fr;
+            }
+            .accuracy-metrics {
+                grid-template-columns: 1fr;
+            }
+            .stat-card,
+            .accuracy-metric {
+                padding: 20px 16px;
+            }
+        }
+
+        /* ===== LOADING ANIMATION ===== */
+        .page-loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+
+        .page-loader.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .loader-spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border-subtle);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: loader-spin 1s linear infinite;
+        }
+
+        @keyframes loader-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ===== SMOOTH IMAGE LOADING ===== */
+        img {
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        img[data-src] {
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+    <!-- PAGE LOADER -->
+    <div class="page-loader" id="pageLoader">
+        <div class="loader-spinner"></div>
+    </div>
+
+    <!-- PARTICLES BACKGROUND -->
+    <div class="particles-container" id="particlesContainer"></div>
+
+    <!-- HEADER -->
+    <header class="header" id="header">
+        <div class="header-inner">
+            <a href="#" class="logo">
+                <div class="logo-icon">◈</div>
+                <span data-i18n="logo">AI超表面结构色</span>
+            </a>
+            <nav class="nav">
+                <ul class="nav-links">
+                    <li><a href="#hero" data-i18n="nav_home">首页</a></li>
+                    <li><a href="#features" data-i18n="nav_features">系统特性</a></li>
+                    <li><a href="#results" data-i18n="nav_results">成果展示</a></li>
+                    <li><a href="#references" data-i18n="nav_references">参考文献</a></li>
+                    <li><a href="#showcase" data-i18n="nav_showcase">系统预览</a></li>
+                    <li><a href="#architecture" data-i18n="nav_architecture">技术架构</a></li>
+                    <li><a href="#performance" data-i18n="nav_performance">性能证据</a></li>
+                    <li><a href="#model" data-i18n="nav_model">核心模型</a></li>
+                    <li><a href="#accuracy" data-i18n="nav_accuracy">色度表达</a></li>
+                </ul>
+                <div class="nav-cta">
+                    <button class="lang-toggle" id="langToggle" onclick="toggleLanguage()">EN</button>
+                    <a href="#showcase" class="btn btn-primary" data-i18n="nav_access">查看演示</a>
+                </div>
+            </nav>
+            <button class="hamburger" id="hamburger" onclick="toggleMobileNav()" aria-label="Menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MOBILE NAVIGATION -->
+    <div class="mobile-nav" id="mobileNav">
+        <a href="#hero" onclick="toggleMobileNav()" data-i18n="nav_home">首页</a>
+        <a href="#features" onclick="toggleMobileNav()" data-i18n="nav_features">系统特性</a>
+        <a href="#results" onclick="toggleMobileNav()" data-i18n="nav_results">成果展示</a>
+        <a href="#references" onclick="toggleMobileNav()" data-i18n="nav_references">参考文献</a>
+        <a href="#showcase" onclick="toggleMobileNav()" data-i18n="nav_showcase">系统预览</a>
+        <a href="#architecture" onclick="toggleMobileNav()" data-i18n="nav_architecture">技术架构</a>
+        <a href="#performance" onclick="toggleMobileNav()" data-i18n="nav_performance">性能证据</a>
+        <a href="#model" onclick="toggleMobileNav()" data-i18n="nav_model">核心模型</a>
+        <a href="#accuracy" onclick="toggleMobileNav()" data-i18n="nav_accuracy">色度表达</a>
+        <a href="#showcase" class="btn btn-primary" data-i18n="nav_access">查看演示</a>
+        <button class="lang-toggle-mobile" id="langToggleMobile" onclick="toggleLanguage()">English</button>
+    </div>
+
+    <!-- HERO SECTION -->
+    <section class="hero" id="hero">
+        <div class="hero-grid-bg"></div>
+        <div class="hero-glow"></div>
+        <div class="hero-glow-2"></div>
+
+        <div class="hero-inner">
+            <div class="hero-content">
+                <div class="hero-badge" data-i18n="hero_badge">
+                    算法创新赛 · 算法模型创新
+                </div>
+                <h1 class="hero-title">
+                    <span data-i18n="hero_title_line1">AI驱动</span><br>
+                    <span class="accent-word" data-i18n="hero_title_line2">超表面结构色</span><br>
+                    <span data-i18n="hero_title_line3">智能设计系统</span>
+                </h1>
+                <p class="hero-subtitle" data-i18n="hero_subtitle">
+                    以超表面结构色为验证场景的 AI 算法与可视化工作流，连接模型预测、候选筛选、光谱表达和结构参数导出。
+                </p>
+                <div class="hero-trust">
+                    <span class="highlight" data-i18n="hero_trust_college">算法模型创新</span>
+                    <span class="divider"></span>
+                    <span data-i18n="hero_trust_major">结构色验证场景</span>
+                    <span class="divider"></span>
+                    <span data-i18n="hero_trust_grade">竞赛展示版</span>
+                </div>
+                <div class="hero-cta">
+                    <a href="#competition-entry" class="btn btn-primary">
+                        <span data-i18n="hero_cta_primary">访问系统</span>
+                        <span>→</span>
+                    </a>
+                    <a href="#features" class="btn btn-ghost" data-i18n="hero_cta_secondary">了解更多</a>
+                </div>
+                <div class="hero-stats">
+                    <div class="stat-item">
+                        <span class="stat-value">AI</span>
+                        <span class="stat-label" data-i18n="stat_1_label">候选搜索</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">CIE</span>
+                        <span class="stat-label" data-i18n="stat_2_label">颜色表达</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">JSON</span>
+                        <span class="stat-label" data-i18n="stat_3_label">结果导出</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="metasurface-container">
+                    <div class="metasurface-grid" id="nanoGrid"></div>
+                    <div class="metasurface-glow-ring"></div>
+                    <div class="floating-label" style="top: 10%; right: 5%;">λ = 450nm</div>
+                    <div class="floating-label" style="bottom: 20%; left: 0%; animation-delay: 1s;">CIE 1931</div>
+                    <div class="spectrum-bar" id="spectrumBar"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="scroll-indicator">
+            <span>向下滚动</span>
+            <div class="scroll-arrow"></div>
+        </div>
+    </section>
+
+    <!-- FEATURES SECTION -->
+    <section class="section features-section" id="features">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="features_label">核心能力</div>
+                <h2 class="section-title" data-i18n="features_title">系统核心特性</h2>
+                <p class="section-desc" data-i18n="features_desc">
+                    将目标颜色、模型候选、光谱/色度表达和结构参数导出组织成面向验证场景的 AI 工作流。
+                </p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card fade-in">
+                    <div class="feature-icon">◈</div>
+                    <h3 class="feature-title" data-i18n="feature_1_title">深度学习智能生成</h3>
+                    <p class="feature-desc" data-i18n="feature_1_desc">
+                        基于机器学习代理模型与候选筛选，从目标光谱或颜色需求进入超表面结构参数探索，保留模型适用域和结果边界。
+                    </p>
+                    <div class="feature-tags">
+                        <span class="feature-tag">代理模型</span>
+                        <span class="feature-tag">候选搜索</span>
+                        <span class="feature-tag" data-i18n="feature_1_tag">模型路由</span>
+                    </div>
+                </div>
+                <div class="feature-card fade-in">
+                    <div class="feature-icon">◉</div>
+                    <h3 class="feature-title" data-i18n="feature_2_title">纳米级结构优化</h3>
+                    <p class="feature-desc" data-i18n="feature_2_desc">
+                        支持在已注册模型域内探索周期、高度、直径和材料等参数，并显示结果适用边界。
+                    </p>
+                    <div class="feature-tags">
+                        <span class="feature-tag">光谱表达</span>
+                        <span class="feature-tag">CIE 1931</span>
+                        <span class="feature-tag" data-i18n="feature_2_tag">复核接口</span>
+                    </div>
+                </div>
+                <div class="feature-card fade-in">
+                    <div class="feature-icon">◇</div>
+                    <h3 class="feature-title" data-i18n="feature_3_title">实时可视化分析</h3>
+                    <p class="feature-desc" data-i18n="feature_3_desc">
+                        支持结构预览、反射光谱和 CIE 1931 色度表达，帮助用户理解参数变化与候选结果。
+                    </p>
+                    <div class="feature-tags">
+                        <span class="feature-tag">结构预览</span>
+                        <span class="feature-tag" data-i18n="feature_3_tag">光谱分析</span>
+                        <span class="feature-tag">实时渲染</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW IT WORKS SECTION -->
+    <section class="section how-section" id="how">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="how_label">工作流程</div>
+                <h2 class="section-title" data-i18n="how_title">三步实现智能设计</h2>
+                <p class="section-desc" data-i18n="how_desc">
+                    从设计需求到候选结构，系统提供可追溯的输入、路由、表达和导出流程。
+                </p>
+            </div>
+            <div class="workflow-steps">
+                <div class="workflow-step fade-in">
+                    <div class="step-number">01</div>
+                    <h3 class="step-title" data-i18n="step_1_title">定义目标</h3>
+                    <p class="step-desc" data-i18n="step_1_desc">
+                        输入目标颜色、光谱响应或结构参数约束。系统支持CIE色坐标、RGB值、反射率曲线等多种目标定义方式。
+                    </p>
+                </div>
+                <div class="workflow-step fade-in">
+                    <div class="step-number">02</div>
+                    <h3 class="step-title" data-i18n="step_2_title">AI生成优化</h3>
+                    <p class="step-desc" data-i18n="step_2_desc">
+                        模型快速生成候选结构，并结合光谱与色度表达进行可解释筛选；结果用于早期设计和后续复核，不宣称无边界最优。
+                    </p>
+                </div>
+                <div class="workflow-step fade-in">
+                    <div class="step-number">03</div>
+                    <h3 class="step-title" data-i18n="step_3_title">可视化验证</h3>
+                    <p class="step-desc" data-i18n="step_3_desc">
+                        查看结构色效果、反射光谱与色度表达，导出结构参数文件和结果 metadata。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- RESULTS SECTION -->
+    <section class="section results-section" id="results">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="results_label">研究成果</div>
+                <h2 class="section-title" data-i18n="results_title">成果展示</h2>
+                <p class="section-desc" data-i18n="results_desc">
+                    基于本系统开展的结构色设计与仿真结果展示，覆盖可见光结构色探索和图案级参数映射。
+                </p>
+            </div>
+            <div class="results-grid">
+                <div class="result-card fade-in">
+                    <div class="result-visual">
+                        <img src="images/fdtd_preview_P200.png" alt="结构色光谱与颜色预览" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                    </div>
+                    <h3 class="result-title" data-i18n="result_1_title">可见光结构色示例</h3>
+                    <p class="result-desc" data-i18n="result_1_desc">
+                        展示结构色光谱与色度表达；具体误差数值以最终统一版本测试报告为准。
+                    </p>
+                    <div class="result-meta">
+                        <span><span class="meta-dot"></span><span data-i18n="result_1_tag1">可见光波段</span></span>
+                        <span><span class="meta-dot"></span><span data-i18n="result_1_tag2">待统一测试</span></span>
+                    </div>
+                </div>
+                <div class="result-card fade-in">
+                    <div class="result-visual">
+                        <img src="images/fano_vs_fdtd_smallD.png" alt="多色像素阵列示意" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                    </div>
+                    <h3 class="result-title" data-i18n="result_2_title">多色像素阵列集成</h3>
+                    <p class="result-desc" data-i18n="result_2_desc">
+                        实现基于单一结构参数的像素级多色调控，展示RGB三色像素阵列的集成设计，为全彩结构色显示与防伪应用奠定基础。
+                    </p>
+                    <div class="result-meta">
+                        <span><span class="meta-dot"></span><span data-i18n="result_2_tag1">像素级调控</span></span>
+                        <span><span class="meta-dot"></span><span data-i18n="result_2_tag2">RGB阵列</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- REFERENCES SECTION -->
+    <section class="section references-section" id="references">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="references_label">研究背景</div>
+                <h2 class="section-title" data-i18n="references_title">参考文献</h2>
+                <p class="section-desc" data-i18n="references_desc">
+                    本系统的理论基础与方法论参考了以下前沿文献，涵盖介质纳米光学、结构色设计及深度学习逆向设计等方向。
+                </p>
+            </div>
+            <div class="references-list">
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[1]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            Optically resonant dielectric nanostructures
+                            <span class="reference-tag classic">经典</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">Science</span>
+                            <span class="reference-year">2016</span>
+                            <span>Kuznetsov A I, et al.</span>
+                        </div>
+                        <div class="reference-summary">
+                            系统梳理了利用光学共振的介质纳米结构（如硅纳米颗粒）实现光调控的原理，为设计高效、低损耗的光学器件提供了理论框架。引用量超2800次，是介质超表面领域的奠基性综述。
+                        </div>
+                    </div>
+                </div>
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[2]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            All-dielectric metasurface for high-performance structural color
+                            <span class="reference-tag classic">经典</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">Nature Communications</span>
+                            <span class="reference-year">2020</span>
+                            <span>Yang W, et al.</span>
+                        </div>
+                        <div class="reference-summary">
+                            全介质超表面为结构色设计提供了可探索的纳米结构空间；本页展示相关公开研究背景和仿真图，不将其替代为本作品的实验结论。
+                        </div>
+                    </div>
+                </div>
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[3]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            Colorimetry, 4th Edition
+                            <span class="reference-tag standard">标准</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">CIE 015:2018</span>
+                            <span class="reference-year">2018</span>
+                            <span>CIE Central Bureau</span>
+                        </div>
+                        <div class="reference-summary">
+                            国际照明委员会发布的色度学标准第四版，定义了CIE 1931色度空间、色差计算公式等核心规范，是本系统颜色目标定义与误差评估的理论依据。
+                        </div>
+                    </div>
+                </div>
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[4]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            A deep learning approach to the forward prediction and inverse design of plasmonic metasurface structural color
+                            <span class="reference-tag ai">AI设计</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">Applied Physics Letters</span>
+                            <span class="reference-year">2021</span>
+                            <span>Roberts N B, Hedayati M K</span>
+                        </div>
+                        <div class="reference-summary">
+                            相关研究说明机器学习可用于超表面颜色预测与逆向设计；本作品将该思路组织成面向结构色验证场景的可交互算法流程。
+                        </div>
+                    </div>
+                </div>
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[5]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            Back-Propagation Optimization and Multi-Valued Artificial Neural Networks for Highly Vivid Structural Color Filter Metasurfaces
+                            <span class="reference-tag ai">AI设计</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">arXiv</span>
+                            <span class="reference-year">2023</span>
+                            <span>de Souza A C, et al.</span>
+                        </div>
+                        <div class="reference-summary">
+                            用反向传播优化和多值人工神经网络，仅用585个样本就设计出比传统RGB色域更鲜艳的彩色滤光片。提出固定结构高度下的多色联合优化策略，显著降低数据需求与制造复杂度。
+                        </div>
+                    </div>
+                </div>
+                <div class="reference-item fade-in">
+                    <div class="reference-number">[6]</div>
+                    <div class="reference-content">
+                        <div class="reference-title">
+                            Deep neural network for color prediction from a dielectric metasurface and inverse design of corresponding color filter
+                            <span class="reference-tag ai">AI设计</span>
+                        </div>
+                        <div class="reference-meta">
+                            <span class="reference-journal">Optical Materials Express</span>
+                            <span class="reference-year">2025</span>
+                            <span>Sadman S, et al.</span>
+                        </div>
+                        <div class="reference-summary">
+                            该文献讨论了从光学参数预测颜色及由颜色反推结构参数的方法；页面仅作研究背景参考，不将其指标作为本系统性能承诺。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="competition-entry" aria-labelledby="competition-entry-title">
+        <div class="section-inner" style="border:1px solid #826333;border-radius:20px;padding:32px;background:rgba(180,130,45,.07);">
+            <div class="section-label" data-i18n="demo_label">当前可运行版本</div>
+            <h2 class="section-title" id="competition-entry-title" data-i18n="demo_title">完整交互台 · 含 RCWA 参考复核</h2>
+            <p class="section-desc" data-i18n="demo_desc">主入口 app.py 提供单柱、双柱、FP 腔、光谱/色度查看、逆设计和结果导出；TiO₂/SiO₂/air 单柱还支持已审核 RCWA 参考记录的精确复核。</p>
+            <p style="line-height:1.8;margin:20px 0;color:var(--text-secondary);" data-i18n="demo_boundary">参考库共绑定 21,083 个唯一几何，限定 TM (p-pol)、0°、nG=151、Nxy=256。参考对照用于展示和前向复核，不等于代理模型全域精度、收敛证明或实验验证。</p>
+            <a id="competitionLocalLink" href="http://127.0.0.1:8512" class="btn btn-primary" target="_blank" rel="noopener" hidden style="display:none" data-i18n="demo_open">打开本机比赛交互台</a>
+            <p style="margin-top:16px;color:var(--text-muted);font-size:14px;" id="competitionLaunchHint" data-i18n="demo_launch">本地使用：启动主交互入口 app.py。在线服务尚未发布。</p>
+            <p style="margin-top:16px;color:var(--text-muted);font-size:14px;" data-i18n="demo_history">网站其他区域包含历史功能探索和示意图；当前实际开放范围以本比赛入口为准。</p>
+        </div>
+    </section>
+
+    <!-- SYSTEM SHOWCASE SECTION -->
+    <section class="section showcase-section" id="showcase">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="showcase_label">系统预览</div>
+                <h2 class="section-title" data-i18n="showcase_title">直观的设计体验</h2>
+                <p class="section-desc" data-i18n="showcase_desc">
+                    基于 Streamlit 构建的交互式 Web 界面，将结构色设计流程封装为可复核的操作面板。
+                </p>
+            </div>
+            <div class="showcase-grid">
+                <div class="showcase-image-wrapper fade-in">
+                    <img src="images/system-screenshot.png" alt="AI超表面结构色智能设计系统界面">
+                    <div class="showcase-image-overlay"></div>
+                    <div class="showcase-image-badge">Streamlit Web App</div>
+                </div>
+                <div class="showcase-content fade-in">
+                    <div class="showcase-features">
+                        <div class="showcase-feature-item">
+                            <div class="showcase-feature-icon">◈</div>
+                            <div class="showcase-feature-text">
+                                <h4 data-i18n="showcase_feature_1_title">交互式参数面板</h4>
+                                <p data-i18n="showcase_feature_1_desc">左侧滑块实时调节纳米柱周期、占空比、高度等关键参数，右侧即时渲染结构色效果与反射光谱。</p>
+                            </div>
+                        </div>
+                        <div class="showcase-feature-item">
+                            <div class="showcase-feature-icon">◎</div>
+                            <div class="showcase-feature-text">
+                                <h4 data-i18n="showcase_feature_2_title">AI智能生成</h4>
+                                <p data-i18n="showcase_feature_2_desc">输入目标CIE色坐标或RGB值，模型在当前适用域内生成候选纳米结构参数，减少早期手动试错。</p>
+                            </div>
+                        </div>
+                        <div class="showcase-feature-item">
+                            <div class="showcase-feature-icon">◊</div>
+                            <div class="showcase-feature-text">
+                                <h4 data-i18n="showcase_feature_3_title">可视化验证</h4>
+                                <p data-i18n="showcase_feature_3_desc">查看当前路线的光谱响应、色度映射和结果来源；全波与实验复核另行执行。</p>
+                            </div>
+                        </div>
+                        <div class="showcase-feature-item">
+                            <div class="showcase-feature-icon">◇</div>
+                            <div class="showcase-feature-text">
+                                <h4 data-i18n="showcase_feature_4_title">一键导出</h4>
+                                <p data-i18n="showcase_feature_4_desc">支持导出结构参数文件（JSON/CSV）、PNG 色板和结果 metadata，便于后续复核。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ARCHITECTURE SECTION -->
+    <section class="section architecture-section" id="architecture">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="architecture_label">技术架构</div>
+                <h2 class="section-title" data-i18n="architecture_title">四层引擎驱动</h2>
+                    <p class="section-desc" data-i18n="architecture_desc">
+                    系统采用分层架构设计，连接用户交互、模型表达、候选筛选与后续物理复核。
+                </p>
+            </div>
+            <div class="architecture-grid" style="grid-template-columns: 1fr;">
+                <div class="architecture-content fade-in">
+                    <div class="architecture-layer">
+                        <div class="layer-number" data-i18n="layer_1_number">01</div>
+                        <div class="layer-text">
+                            <h4 data-i18n="layer_1_title">交互层 · Streamlit Web</h4>
+                            <p data-i18n="layer_1_desc">基于Python Streamlit框架构建的响应式Web界面，提供参数滑块、色板选择器、实时预览画布等交互组件，降低用户使用门槛。</p>
+                            <div class="layer-tags">
+                                <span class="layer-tag">Python</span>
+                                <span class="layer-tag">Streamlit</span>
+                                <span class="layer-tag">WebGL</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="architecture-layer">
+                        <div class="layer-number" data-i18n="layer_2_number">02</div>
+                        <div class="layer-text">
+                            <h4 data-i18n="layer_2_title">AI引擎 · 代理模型与候选搜索</h4>
+                            <p data-i18n="layer_2_desc">核心学习模块用于正向光谱/颜色预测与候选搜索，界面同步显示模型版本、来源和适用边界。</p>
+                            <div class="layer-tags">
+                                <span class="layer-tag">PyTorch</span>
+                                <span class="layer-tag">代理模型</span>
+                                <span class="layer-tag">候选搜索</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="architecture-layer">
+                        <div class="layer-number" data-i18n="layer_3_number">03</div>
+                        <div class="layer-text">
+                            <h4 data-i18n="layer_3_title">表达层 · 光谱 / 色度</h4>
+                            <p data-i18n="layer_3_desc">统一展示光谱、CIE 1931 和结构参数来源；全波与实验复核另行执行。</p>
+                            <div class="layer-tags">
+                                <span class="layer-tag">光谱表达</span>
+                                <span class="layer-tag">CIE 1931</span>
+                                <span class="layer-tag">高保真复核</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="architecture-layer">
+                        <div class="layer-number" data-i18n="layer_4_number">04</div>
+                        <div class="layer-text">
+                            <h4 data-i18n="layer_4_title">记录层 · 文件导出</h4>
+                            <p data-i18n="layer_4_desc">组织结构参数、光谱和结果 metadata，支持重复查询和结果记录；具体效率数字以统一测试报告为准。</p>
+                            <div class="layer-tags">
+                                <span class="layer-tag">JSON</span>
+                                <span class="layer-tag">CSV</span>
+                                <span class="layer-tag">metadata</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- PERFORMANCE SECTION -->
+    <section class="section performance-section" id="performance">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="performance_label">性能证据</div>
+                <h2 class="section-title" data-i18n="performance_title">数据驱动的效率提升</h2>
+                <p class="section-desc" data-i18n="performance_desc">
+                    通过 AI 模型辅助候选搜索和颜色表达，减少早期设计中的重复试错；效率数字以统一测试报告为准。
+                </p>
+            </div>
+            <div class="performance-grid">
+                <div class="performance-stats fade-in">
+                    <div class="stat-card">
+                <div class="stat-number" data-i18n="stat_card_1_value">—</div>
+                        <div class="stat-label" data-i18n="stat_card_1_label">计算加速</div>
+                        <div class="stat-desc" data-i18n="stat_card_1_desc">模型路线内的快速候选筛选</div>
+                    </div>
+                    <div class="stat-card">
+                <div class="stat-number" data-i18n="stat_card_2_value">可追溯</div>
+                        <div class="stat-label" data-i18n="stat_card_2_label">模型来源</div>
+                        <div class="stat-desc" data-i18n="stat_card_2_desc">版本与适用域随结果展示</div>
+                    </div>
+                    <div class="stat-card">
+                <div class="stat-number" data-i18n="stat_card_3_value">CIE</div>
+                        <div class="stat-label" data-i18n="stat_card_3_label">颜色表达</div>
+                        <div class="stat-desc" data-i18n="stat_card_3_desc">色度图与光谱统一展示</div>
+                    </div>
+                    <div class="stat-card">
+                <div class="stat-number" data-i18n="stat_card_4_value">4类</div>
+                        <div class="stat-label" data-i18n="stat_card_4_label">结果导出</div>
+                        <div class="stat-desc" data-i18n="stat_card_4_desc">CSV / JSON / PNG / metadata</div>
+                    </div>
+                </div>
+                <div class="performance-chart-wrapper fade-in">
+                    <div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:#9AA7B5;font-size:18px;line-height:1.7;padding:32px;">
+                        具体性能数值在统一测试报告完成后填写<br>
+                        当前展示工程流程、模型来源与结果可追溯性
+                    </div>
+                    <div class="performance-chart-badge">Unified Test Pending</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- MODEL SECTION -->
+    <section class="section model-section" id="model">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="model_label">核心模型</div>
+                <h2 class="section-title" data-i18n="model_title">AI 代理模型与候选搜索</h2>
+                <p class="section-desc" data-i18n="model_desc">
+                    基于学习模型的光谱/颜色预测与候选搜索，将颜色需求、结构参数和可视化复核连接成统一流程。
+                </p>
+            </div>
+            <div class="model-grid">
+                <div class="model-image-wrapper fade-in">
+                    <img src="images/ml-model.png" alt="AI代理模型结构示意">
+                    <div class="model-image-overlay"></div>
+                    <div class="model-image-badge">AI Model Overview</div>
+                </div>
+                <div class="model-content fade-in">
+                    <div class="model-card">
+                        <h4 data-i18n="model_card_1_title">残差连接设计</h4>
+                        <p data-i18n="model_card_1_desc">引入跳跃连接机制缓解深层网络梯度消失问题，支持非线性映射学习；模型表现需以统一测试报告为准。</p>
+                        <div class="model-card-tags">
+                            <span class="model-card-tag">Residual Block</span>
+                            <span class="model-card-tag">Skip Connection</span>
+                        </div>
+                    </div>
+                    <div class="model-card">
+                        <h4 data-i18n="model_card_2_title">多头注意力机制</h4>
+                        <p data-i18n="model_card_2_desc">通过多头自注意力模块捕捉光谱特征中的长程依赖关系，用于复杂共振模式的特征建模与候选筛选。</p>
+                        <div class="model-card-tags">
+                            <span class="model-card-tag">Multi-Head Attention</span>
+                            <span class="model-card-tag">Feature Extraction</span>
+                        </div>
+                    </div>
+                    <div class="model-card">
+                        <h4 data-i18n="model_card_3_title">候选结构生成</h4>
+                        <p data-i18n="model_card_3_desc">围绕目标颜色生成可继续筛选的结构参数候选；结构可制造性和物理量仍需经统一高保真仿真或实验复核。</p>
+                        <div class="model-card-tags">
+                            <span class="model-card-tag">Candidate Search</span>
+                            <span class="model-card-tag">Physics Review</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- COLOR ACCURACY SECTION -->
+    <section class="section accuracy-section" id="accuracy">
+        <div class="section-inner">
+            <div class="section-header fade-in">
+                <div class="section-label" data-i18n="accuracy_label">色度表达</div>
+                <h2 class="section-title" data-i18n="accuracy_title">CIE 1931 色度表达与比对</h2>
+                <p class="section-desc" data-i18n="accuracy_desc">
+                    基于 CIE 1931 标准色度空间展示模型路线内的结果分布与目标坐标比对；物理准确性需经统一高保真仿真或实验复核。
+                </p>
+            </div>
+            <div class="accuracy-grid">
+                <div class="accuracy-image-wrapper fade-in">
+                    <img src="images/cie-chart.png" alt="CIE 1931色度图验证">
+                    <div class="accuracy-image-overlay"></div>
+                    <div class="accuracy-image-badge">CIE 1931</div>
+                </div>
+                <div class="accuracy-content fade-in">
+                    <div class="accuracy-metrics">
+                        <div class="accuracy-metric">
+                            <div class="accuracy-metric-value" data-i18n="accuracy_metric_1_value">—</div>
+                            <div class="accuracy-metric-label" data-i18n="accuracy_metric_1_label">统一测试后填写</div>
+                        </div>
+                        <div class="accuracy-metric">
+                            <div class="accuracy-metric-value" data-i18n="accuracy_metric_2_value">CIE</div>
+                            <div class="accuracy-metric-label" data-i18n="accuracy_metric_2_label">色度表达</div>
+                        </div>
+                        <div class="accuracy-metric">
+                            <div class="accuracy-metric-value" data-i18n="accuracy_metric_3_value">—</div>
+                            <div class="accuracy-metric-label" data-i18n="accuracy_metric_3_label">待统一测试</div>
+                        </div>
+                        <div class="accuracy-metric">
+                            <div class="accuracy-metric-value" data-i18n="accuracy_metric_4_value">nm</div>
+                            <div class="accuracy-metric-label" data-i18n="accuracy_metric_4_label">波段随路线</div>
+                        </div>
+                    </div>
+                    <p data-i18n="accuracy_detail" style="font-size:15px;color:var(--text-secondary);line-height:1.7;">
+                        系统将设计结果映射至 CIE 1931 标准色度图，并在当前模型路线内与目标色坐标进行比对；具体数值需以最终版本测试报告为准。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA SECTION -->
+    <section class="cta-section" id="cta">
+        <div class="cta-inner">
+            <h2 class="cta-title" data-i18n="cta_title">探索AI驱动的超表面设计</h2>
+            <p class="cta-desc" data-i18n="cta_desc">
+                通过网站式入口了解产品流程；最终在线地址和离线包在提交前统一配置。
+            </p>
+            <div class="cta-buttons">
+                <a href="#competition-entry" class="btn btn-primary">
+                    <span data-i18n="cta_primary">访问系统</span>
+                    <span>→</span>
+                </a>
+                <a href="#competition-entry" class="btn btn-ghost" data-i18n="cta_secondary">查看离线说明</a>
+            </div>
+            <p class="cta-hint" data-i18n="cta_hint" style="margin-top:16px;font-size:14px;color:var(--text-muted);">
+                在线地址、离线包和运行说明以最终竞赛提交版本为准
+            </p>
+            <div class="qr-section" style="margin-top:32px;">
+                <img src="images/qr-code.png" alt="提交前配置二维码占位" style="width:140px;height:140px;border-radius:8px;border:1px solid var(--border-subtle);">
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+        <div class="footer-inner">
+            <div class="footer-top">
+                <div class="footer-brand">
+                    <a href="#" class="logo">
+                        <div class="logo-icon">◈</div>
+                        <span data-i18n="logo">AI超表面结构色</span>
+                    </a>
+                    <p data-i18n="footer_brand">
+                        AI驱动的超表面结构色智能设计系统，面向算法模型创新与微纳光学结构色验证场景。
+                    </p>
+                </div>
+                <div class="footer-col">
+                    <h4 data-i18n="footer_nav">导航</h4>
+                    <ul>
+                        <li><a href="#hero" data-i18n="nav_home">首页</a></li>
+                        <li><a href="#features" data-i18n="nav_features">系统特性</a></li>
+                        <li><a href="#results" data-i18n="nav_results">成果展示</a></li>
+                        <li><a href="#references" data-i18n="nav_references">参考文献</a></li>
+                        <li><a href="#showcase" data-i18n="nav_showcase">系统预览</a></li>
+                        <li><a href="#architecture" data-i18n="nav_architecture">技术架构</a></li>
+                        <li><a href="#performance" data-i18n="nav_performance">性能证据</a></li>
+                        <li><a href="#model" data-i18n="nav_model">核心模型</a></li>
+                        <li><a href="#accuracy" data-i18n="nav_accuracy">色度表达</a></li>
+                    </ul>
+                </div>
+                <div class="footer-col">
+                    <h4 data-i18n="footer_resources">资源</h4>
+                    <ul>
+                        <li><a href="#" data-i18n="footer_resources_doc">系统文档</a></li>
+                        <li><a href="#references" data-i18n="footer_resources_papers">论文资料</a></li>
+                    </ul>
+                </div>
+                <div class="footer-col">
+                    <h4 data-i18n="footer_open">开源获取</h4>
+                    <ul>
+                        <li><a href="#showcase" data-i18n="footer_github">代码仓库（提交前配置）</a></li>
+                        <li><a href="#showcase" data-i18n="footer_download">离线包（提交前配置）</a></li>
+                    </ul>
+                </div>
+            </div>
+                <div class="footer-bottom">
+                    <span data-i18n="footer_copyright">© 2026 AI超表面结构色智能设计系统. 保留所有权利.</span>
+                    <div class="footer-social">
+                        <a href="#showcase" title="代码仓库（提交前配置）">⌘</a>
+                        <a href="#showcase" title="离线包（提交前配置）">◊</a>
+                    </div>
+                </div>
+        </div>
+    </footer>
+
+    <script>
+        // ===== LANGUAGE DATA =====
+        const i18n = {
+            zh: {
+                logo: 'AI超表面结构色',
+                nav_home: '首页',
+                nav_features: '系统特性',
+                nav_results: '成果展示',
+                nav_references: '参考文献',
+                nav_showcase: '系统预览',
+                nav_architecture: '技术架构',
+                nav_performance: '性能证据',
+                nav_model: '核心模型',
+                nav_accuracy: '色度表达',
+                nav_access: '访问系统',
+                hero_badge: '算法创新赛 · 算法模型创新',
+                hero_title_line1: 'AI驱动',
+                hero_title_line2: '超表面结构色',
+                hero_title_line3: '智能设计系统',
+                hero_subtitle: '以超表面结构色为验证场景的 AI 算法与可视化工作流，连接模型预测、候选筛选、光谱表达和结构参数导出。',
+                hero_trust_college: '超表面结构色验证场景',
+                hero_trust_major: '结构色验证场景',
+                hero_trust_grade: '竞赛展示版',
+                hero_cta_primary: '查看演示',
+                hero_cta_secondary: '了解更多',
+                stat_1_value: '—',
+                stat_1_label: '候选搜索',
+                stat_2_value: '可追溯',
+                stat_2_label: '颜色表达',
+                stat_3_value: 'CIE',
+                stat_3_label: '结果导出',
+                features_label: '技术能力',
+                features_title: '核心特性',
+                features_desc: '系统整合模型预测、候选筛选、光谱/色度表达与结果导出，形成面向结构色验证场景的 AI 工作流。',
+                feature_1_title: '深度学习生成',
+                feature_1_desc: '学习模型用于从颜色目标进入纳米结构参数候选搜索，并显示模型来源与适用边界。',
+                feature_1_tag: 'Model routing',
+                feature_2_title: '纳米优化引擎',
+                feature_2_desc: '通过光谱与色度表达辅助候选筛选；高保真仿真和实验复核作为独立验证环节。',
+                feature_2_tag: 'Review interface',
+                feature_3_title: '实时可视化',
+                feature_3_desc: '提供结构预览、光谱曲线和 CIE 1931 色度图映射，帮助用户理解当前路线的设计结果。',
+                feature_3_tag: 'WebGL',
+                how_label: '使用流程',
+                how_title: '三步完成设计',
+                how_desc: '从目标颜色到结构参数，系统提供清晰的输入、路由、表达和导出流程。',
+                step_1_title: '定义目标',
+                step_1_desc: '输入目标颜色（色坐标或光谱），设定工作波段与材料参数，系统初始化设计空间。',
+                step_2_title: 'AI生成优化',
+                step_2_desc: '学习模型在当前适用域内生成候选结构，并结合光谱与色度信息进行筛选。',
+                step_3_title: '可视化验证',
+                step_3_desc: '查看结构渲染、光谱曲线与色度图映射，导出 JSON/CSV/PNG 和 metadata。',
+                results_label: '研究成果',
+                results_title: '成果展示',
+                results_desc: '展示结构色仿真结果、光谱表达与图案级参数映射；实验复核作为后续工作。',
+                result_1_title: '可见光结构色示例',
+                result_1_desc: '展示结构色光谱与色度表达；具体误差数值需以最终统一版本测试报告为准。',
+                result_1_tag1: '可见光波段',
+                result_1_tag2: '待统一测试',
+                result_2_title: '多色像素阵列集成',
+                result_2_desc: '展示基于结构参数的像素级多色表达与 RGB 阵列设计示例，具体物理性能需进一步复核。',
+                result_2_tag1: '像素级调控',
+                result_2_tag2: 'RGB阵列',
+                references_label: '研究背景',
+                references_title: '参考文献',
+                references_desc: '本系统的理论基础与方法论参考了以下前沿文献，涵盖介质纳米光学、结构色设计及深度学习逆向设计等方向。',
+                showcase_label: '系统界面',
+                showcase_title: '系统预览',
+                showcase_desc: '基于 Streamlit 的交互式 Web 应用，支持参数调节、候选搜索、光谱/色度查看与结果导出。',
+                showcase_feature_1_title: '交互式参数面板',
+                showcase_feature_1_desc: '左侧滑块调节纳米结构几何参数，右侧即时渲染 3D 模型与光谱预览。',
+                showcase_feature_2_title: 'AI智能生成',
+                showcase_feature_2_desc: '输入目标色坐标，模型在当前适用域内生成候选结构参数并给出路线说明。',
+                showcase_feature_3_title: '可视化验证',
+                showcase_feature_3_desc: '查看当前路线的光谱曲线、色度映射和结果来源；全波与实验复核另行执行。',
+                showcase_feature_4_title: '一键导出',
+                showcase_feature_4_desc: '支持 JSON/CSV/PNG 和 metadata 导出，便于后续复核与记录。',
+                architecture_label: '系统架构',
+                architecture_title: '技术架构',
+                architecture_desc: '四层架构连接用户交互、上下文检查、模型表达、候选筛选和结果导出。',
+                layer_1_number: '01',
+                layer_1_title: '交互层 · Streamlit Web',
+                layer_1_desc: 'Python + Streamlit + WebGL 实现浏览器端交互式可视化',
+                layer_2_number: '02',
+                layer_2_title: 'AI引擎 · 代理模型与候选搜索',
+                layer_2_desc: '学习模型实现光谱/颜色预测与目标色候选搜索',
+                layer_3_number: '03',
+                layer_3_title: '表达层 · 光谱 / 色度',
+                layer_3_desc: '统一展示光谱、CIE 1931 和结构参数来源',
+                layer_4_number: '04',
+                layer_4_title: '记录层 · 文件导出',
+                layer_4_desc: 'NumPy + Pandas 组织结构参数、光谱和结果 metadata，便于重复查询与记录',
+                performance_label: '性能数据',
+                performance_title: '性能证据',
+                performance_desc: '系统从工程流程、模型路线和颜色表达三个维度展示可复核证据，具体指标以统一版本测试报告为准。',
+                stat_card_1_value: '—',
+                stat_card_1_label: '效率数字待统一测试',
+                stat_card_1_desc: '模型路线内候选筛选',
+                stat_card_2_value: '可追溯',
+                stat_card_2_label: '模型来源',
+                stat_card_2_desc: '版本与适用域随结果展示',
+                stat_card_3_value: 'CIE',
+                stat_card_3_label: '颜色表达',
+                stat_card_3_desc: '色度图与光谱统一展示',
+                stat_card_4_value: '4类',
+                stat_card_4_label: '结果导出',
+                stat_card_4_desc: 'CSV / JSON / PNG / metadata',
+                model_label: '深度学习',
+                model_title: 'AI 代理模型与候选搜索',
+                model_desc: '学习模型用于光谱/颜色预测与候选搜索，结果同步标注来源、版本和适用边界。',
+                model_card_1_title: '残差连接设计',
+                model_card_1_desc: '引入跳跃连接机制缓解深层网络梯度消失问题，支持非线性映射学习；模型表现以统一测试报告为准。',
+                model_card_1_tag1: 'Residual Block',
+                model_card_1_tag2: 'Skip Connection',
+                model_card_2_title: '多头注意力机制',
+                model_card_2_desc: '通过多头自注意力模块捕捉光谱特征中的长程依赖关系，用于复杂共振模式的特征建模与候选筛选。',
+                model_card_2_tag1: 'Multi-Head Attention',
+                model_card_2_tag2: 'Feature Extraction',
+                model_card_3_title: '候选结构生成',
+                model_card_3_desc: '围绕目标颜色生成可继续筛选的结构参数候选；结构可制造性和物理量仍需经统一高保真仿真或实验复核。',
+                model_card_3_tag1: 'Candidate Search',
+                model_card_3_tag2: 'Physics Review',
+                accuracy_label: '色度表达',
+                accuracy_title: 'CIE 1931 色度表达与比对',
+                accuracy_desc: '基于 CIE 1931 标准色度空间展示模型路线内的结果分布与目标坐标比对；物理准确性需经统一高保真仿真或实验复核。',
+                accuracy_metric_1_value: '—',
+                accuracy_metric_1_label: '统一测试后填写',
+                accuracy_metric_2_value: 'CIE',
+                accuracy_metric_2_label: '色度表达',
+                accuracy_metric_3_value: '—',
+                accuracy_metric_3_label: '待统一测试',
+                accuracy_metric_4_value: 'nm',
+                accuracy_metric_4_label: '波段随路线',
+                accuracy_detail: '系统将设计结果映射至 CIE 1931 标准色度图，并在当前模型路线内与目标色坐标进行比对；具体数值以最终版本测试报告为准。',
+                cta_title: '探索AI驱动的超表面设计',
+                cta_desc: '通过网站式入口了解产品流程；最终在线地址和离线包在提交前统一配置。',
+                cta_primary: '访问系统',
+                cta_secondary: '查看离线说明',
+                cta_hint: '在线地址、离线包和运行说明以最终竞赛提交版本为准',
+                footer_brand: 'AI驱动的超表面结构色智能设计系统，面向算法模型创新与微纳光学结构色验证场景。',
+                footer_nav: '导航',
+                footer_resources: '资源',
+                footer_resources_doc: '系统文档',
+                footer_resources_papers: '论文资料',
+                footer_open: '开源获取',
+                footer_github: '代码仓库（提交前配置）',
+                footer_download: '离线包（提交前配置）',
+                footer_copyright: '© 2026 AI超表面结构色智能设计系统. 保留所有权利.'
+            },
+            en: {
+                logo: 'AI Metasurface Color',
+                nav_home: 'Home',
+                nav_features: 'Features',
+                nav_results: 'Results',
+                nav_references: 'References',
+                nav_showcase: 'Preview',
+                nav_architecture: 'Architecture',
+                nav_performance: 'Performance',
+                nav_model: 'Model',
+                nav_accuracy: 'Chromaticity',
+                nav_access: 'Access System',
+                hero_badge: 'Algorithm Innovation · Model Innovation',
+                hero_title_line1: 'AI-Driven',
+                hero_title_line2: 'Metasurface',
+                hero_title_line3: 'Structural Color Design',
+                hero_subtitle: 'An AI workflow using metasurface structural color as a validation scenario, connecting model prediction, candidate screening, spectral expression and parameter export.',
+                hero_trust_college: 'Structural-color validation',
+                hero_trust_major: 'Model innovation',
+                hero_trust_grade: 'Competition demo',
+                hero_cta_primary: 'View Demo',
+                hero_cta_secondary: 'Learn More',
+                stat_1_value: '—',
+                stat_1_label: 'Candidate search',
+                stat_2_value: 'Traceable',
+                stat_2_label: 'Color expression',
+                stat_3_value: 'CIE',
+                stat_3_label: 'Result export',
+                features_label: 'Capabilities',
+                features_title: 'Core Features',
+                features_desc: 'The system integrates model prediction, candidate screening, spectral/chromaticity expression and result export for a structural-color validation workflow.',
+                feature_1_title: 'Deep Learning Generation',
+                feature_1_desc: 'Learning models support candidate search from color targets, with provenance and applicability boundaries shown in the interface.',
+                feature_1_tag: 'Model routing',
+                feature_2_title: 'Nano-Optimization Engine',
+                feature_2_desc: 'Spectral and chromaticity expressions support candidate screening; high-fidelity and experimental review remain separate validation steps.',
+                feature_2_tag: 'Review interface',
+                feature_3_title: 'Real-Time Visualization',
+                feature_3_desc: 'Structure preview, spectral curves and CIE 1931 chromaticity mapping help users inspect the active design route.',
+                feature_3_tag: 'WebGL',
+                how_label: 'Workflow',
+                how_title: 'Design in Three Steps',
+                how_desc: 'From target color to structural parameters, the system provides a clear input, routing, expression and export workflow.',
+                step_1_title: 'Define Target',
+                step_1_desc: 'Input target color (chromaticity or spectrum), set operating band and material parameters, and the system initializes the design space.',
+                step_2_title: 'AI Generation',
+                step_2_desc: 'The model returns candidates within the active applicability domain for screening and later review.',
+                step_3_title: 'Visual Verification',
+                step_3_desc: 'View structure rendering, spectral curves and chromaticity mapping, then export JSON/CSV/PNG and metadata.',
+                results_label: 'Research Results',
+                results_title: 'Results Showcase',
+                results_desc: 'Spectral, chromaticity and pattern-level parameter results are shown here; experimental review is future work.',
+                result_1_title: 'Visible-Band Structural-Color Example',
+                result_1_desc: 'Spectral and chromaticity examples are shown; numerical error claims require a final unified test report.',
+                result_1_tag1: 'Visible Band',
+                result_1_tag2: 'Unified test pending',
+                result_2_title: 'Multi-Color Pixel Array Integration',
+                result_2_desc: 'A pixel-level multi-color and RGB-array design example; physical performance requires further review.',
+                result_2_tag1: 'Pixel Control',
+                result_2_tag2: 'RGB Array',
+                references_label: 'Background',
+                references_title: 'References',
+                references_desc: 'The theoretical foundation and methodology of this system reference the following cutting-edge literature, covering dielectric nano-optics, structural color design, and deep learning inverse design.',
+                showcase_label: 'Interface',
+                showcase_title: 'System Preview',
+                showcase_desc: 'Interactive Streamlit web application supporting parameter adjustment, candidate search, spectral/chromaticity viewing and result export.',
+                showcase_feature_1_title: 'Interactive Parameter Panel',
+                showcase_feature_1_desc: 'Adjust nanostructure geometry parameters via sliders on the left, with instant 3D model and spectrum preview on the right.',
+                showcase_feature_2_title: 'AI Smart Generation',
+                showcase_feature_2_desc: 'Input target chromaticity coordinates; the model returns candidate structure parameters within the active applicability domain.',
+                showcase_feature_3_title: 'Visual Verification',
+                showcase_feature_3_desc: 'View spectral curves, chromaticity mapping and result provenance for the active route; full-wave and experimental review are separate.',
+                showcase_feature_4_title: 'One-Click Export',
+                showcase_feature_4_desc: 'Support JSON/CSV/PNG and metadata export for reproducible review and result records.',
+                architecture_label: 'Architecture',
+                architecture_title: 'System Architecture',
+                architecture_desc: 'Four layers connect user interaction, context checks, model expression, candidate screening and result export.',
+                layer_1_number: '01',
+                layer_1_title: 'Interaction · Streamlit Web',
+                layer_1_desc: 'Python + Streamlit + WebGL for browser-based interactive visualization',
+                layer_2_number: '02',
+                layer_2_title: 'AI Engine · Surrogates and Search',
+                layer_2_desc: 'Learning models for spectral/color prediction and target-color candidate search',
+                layer_3_number: '03',
+                layer_3_title: 'Expression · Spectrum / Chromaticity',
+                layer_3_desc: 'Unified display of spectrum, CIE 1931 and parameter provenance',
+                layer_4_number: '04',
+                layer_4_title: 'Records · File Export',
+                layer_4_desc: 'NumPy + Pandas organize structural parameters, spectra and result metadata for review',
+                performance_label: 'Performance',
+                performance_title: 'Performance Evidence',
+                performance_desc: 'Engineering workflow, model provenance and color expression are shown as auditable evidence; numerical metrics follow the final unified test report.',
+                stat_card_1_value: '—',
+                stat_card_1_label: 'Unified test pending',
+                stat_card_1_desc: 'Candidate screening in the active model route',
+                stat_card_2_value: 'Traceable',
+                stat_card_2_label: 'Model Provenance',
+                stat_card_2_desc: 'Version and applicability shown with results',
+                stat_card_3_value: 'CIE',
+                stat_card_3_label: 'Color Expression',
+                stat_card_3_desc: 'Chromaticity and spectrum in one view',
+                stat_card_4_value: '4 types',
+                stat_card_4_label: 'Result Export',
+                stat_card_4_desc: 'CSV / JSON / PNG / metadata',
+                model_label: 'Deep Learning',
+                model_title: 'AI Surrogate Models and Candidate Search',
+                model_desc: 'Learning models support spectral/color prediction and candidate search, with provenance, version and applicability shown alongside results.',
+                model_card_1_title: 'Residual Connection Design',
+                model_card_1_desc: 'Skip connections alleviate gradient vanishing in deep networks and support non-linear mapping learning; model performance follows the unified test report.',
+                model_card_1_tag1: 'Residual Block',
+                model_card_1_tag2: 'Skip Connection',
+                model_card_2_title: 'Multi-Head Attention',
+                model_card_2_desc: 'Multi-head self-attention modules capture long-range dependencies in spectral features for feature modeling and candidate screening.',
+                model_card_2_tag1: 'Multi-Head Attention',
+                model_card_2_tag2: 'Feature Extraction',
+                model_card_3_title: 'Candidate Structure Generation',
+                model_card_3_desc: 'Candidate parameters are generated around a target color for further screening; manufacturability and physical quantities require unified high-fidelity or experimental review.',
+                model_card_3_tag1: 'Candidate Search',
+                model_card_3_tag2: 'Physics Review',
+                accuracy_label: 'Chromaticity Expression',
+                accuracy_title: 'CIE 1931 Expression and Comparison',
+                accuracy_desc: 'CIE 1931 is used to show result distributions and target-coordinate comparisons within the active model route; physical accuracy requires unified high-fidelity or experimental review.',
+                accuracy_metric_1_value: '—',
+                accuracy_metric_1_label: 'Fill after unified test',
+                accuracy_metric_2_value: 'CIE',
+                accuracy_metric_2_label: 'Color expression',
+                accuracy_metric_3_value: '—',
+                accuracy_metric_3_label: 'Unified test pending',
+                accuracy_metric_4_value: 'nm',
+                accuracy_metric_4_label: 'Route-dependent band',
+                accuracy_detail: 'Results are mapped to the CIE 1931 chromaticity diagram and compared with target coordinates within the active model route; physical accuracy requires unified high-fidelity or experimental review.',
+                cta_title: 'Explore AI-Driven Metasurface Design',
+                cta_desc: 'Use the website entry to review the product flow; configure the final online address and offline package before submission.',
+                cta_primary: 'Access System',
+                cta_secondary: 'Offline Notes',
+                cta_hint: 'Final online address, offline package and run instructions are configured before submission',
+                footer_brand: 'AI-Driven Metasurface Structural Color Intelligent Design System for model innovation and nano-optical validation scenarios.',
+                footer_nav: 'Navigation',
+                footer_resources: 'Resources',
+                footer_resources_doc: 'Documentation',
+                footer_resources_papers: 'Papers',
+                footer_open: 'Open Source',
+                footer_github: 'Repository pending config',
+                footer_download: 'Offline package pending config',
+                footer_copyright: '© 2026 AI Metasurface Structural Color System. All rights reserved.'
+            }
+        };
+
+        Object.assign(i18n.zh, {
+            hero_subtitle: '当前比赛版提供单柱近似代理预测、候选筛选、光谱查看、结果导出和已审核 RCWA 参考复核。',
+            hero_cta_primary: '查看比赛入口', cta_primary: '查看比赛入口',
+            cta_desc: '本地完整交互入口已接入通过审核的 TiO₂/SiO₂/air 前向参考库，可对已收录结构做精确复核。',
+            cta_hint: '比赛交互台使用主入口 app.py；参考对照与代理路线分开标注。',
+            demo_label: '当前可运行版本', demo_title: '完整交互台 · 含 RCWA 参考复核',
+            demo_desc: '主入口 app.py 提供单柱、双柱、FP 腔、光谱/色度查看、逆设计和结果导出；TiO₂/SiO₂/air 单柱支持已审核 RCWA 参考记录的精确复核。',
+            demo_boundary: '参考库共绑定 21,083 个唯一几何，限定 TM (p-pol)、0°、nG=151、Nxy=256。参考对照用于展示和前向复核，不等于代理模型全域精度、收敛证明或实验验证。',
+            demo_open: '打开交互台',
+            demo_open_local: '打开本机比赛交互台',
+            demo_open_online: '打开在线比赛交互台',
+            demo_launch: '本地使用：启动主交互入口 app.py。',
+            demo_launch_local: '本地预览模式：按钮打开 127.0.0.1:8512。',
+            demo_launch_online: '在线服务：按钮打开同域 /app/ 交互台。',
+            demo_history: '网站其他区域包含历史功能探索和示意图；当前实际开放范围以本比赛入口为准。'
+        });
+        Object.assign(i18n.en, {
+            hero_subtitle: 'The competition preview offers a single-pillar approximate surrogate, candidate screening, spectra, exports and audited RCWA reference rechecks.',
+            hero_cta_primary: 'Competition Preview', cta_primary: 'Competition Preview',
+            cta_desc: 'The local full entry now includes an audited TiO₂/SiO₂/air forward-reference library for exact rechecks of recorded structures.',
+            cta_hint: 'Use the main app.py competition entry; reference comparisons and surrogate routes remain separately labeled.',
+            demo_label: 'CURRENT RUNNABLE VERSION', demo_title: 'Full interaction app · Audited RCWA recheck',
+            demo_desc: 'The main app.py entry provides single-pillar, dual-pillar and FP workflows, spectra/chromaticity views, inverse design and exports; TiO₂/SiO₂/air single pillars support exact checks against audited RCWA records.',
+            demo_boundary: 'The library binds 21,083 unique geometries under TM polarization, 0°, nG=151 and Nxy=256. Reference comparison is for display and forward checking, not a global surrogate-accuracy, convergence or experimental claim.',
+            demo_open: 'Open Competition App',
+            demo_open_local: 'Open Local Competition App',
+            demo_open_online: 'Open Online Competition App',
+            demo_launch: 'Local use: start the main app.py entry point.',
+            demo_launch_local: 'Local preview: the button opens 127.0.0.1:8512.',
+            demo_launch_online: 'Online service: the button opens the same-origin /app/ entry.',
+            demo_history: 'Other sections include historical feature exploration and illustrations. The dedicated competition entry defines what is currently available.'
+        });
+        const localDemoHost = location.protocol === 'file:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+        const competitionLink = document.getElementById('competitionLocalLink');
+        const competitionHint = document.getElementById('competitionLaunchHint');
+        function configureCompetitionLink() {
+            if (!competitionLink || !competitionHint) return;
+            competitionLink.hidden = false;
+            competitionLink.style.display = 'inline-flex';
+            competitionLink.href = localDemoHost ? 'http://127.0.0.1:8512' : '/app/';
+            const suffix = localDemoHost ? 'local' : 'online';
+            competitionLink.textContent = i18n[currentLang][`demo_open_${suffix}`];
+            competitionHint.textContent = i18n[currentLang][`demo_launch_${suffix}`];
+        }
+        let currentLang = 'zh';
+
+        function toggleLanguage() {
+            currentLang = currentLang === 'zh' ? 'en' : 'zh';
+            updateLanguage();
+        }
+
+        function updateLanguage() {
+            const texts = i18n[currentLang];
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (texts[key]) {
+                    el.textContent = texts[key];
+                }
+            });
+            // Update toggle buttons
+            const toggleText = currentLang === 'zh' ? 'EN' : '中';
+            const mobileToggleText = currentLang === 'zh' ? 'English' : '中文';
+            const langToggle = document.getElementById('langToggle');
+            const langToggleMobile = document.getElementById('langToggleMobile');
+            if (langToggle) langToggle.textContent = toggleText;
+            if (langToggleMobile) langToggleMobile.textContent = mobileToggleText;
+            // Update html lang
+            document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+            configureCompetitionLink();
+        }
+
+        updateLanguage();
+
+        // ===== MOBILE NAVIGATION =====
+        function toggleMobileNav() {
+            const mobileNav = document.getElementById('mobileNav');
+            const hamburger = document.getElementById('hamburger');
+            if (mobileNav && hamburger) {
+                mobileNav.classList.toggle('active');
+                hamburger.classList.toggle('active');
+                document.body.style.overflow = mobileNav.classList.contains('active') ? 'hidden' : '';
+            }
+        }
+
+        // ===== SMOOTH SCROLL WITH OFFSET =====
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    const offset = 80;
+                    const targetPosition = target.getBoundingClientRect().top + window.pageYOffset - offset;
+                    window.scrollTo({
+                        top: targetPosition,
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        });
+
+        // Generate nano-pillar grid
+        const nanoGrid = document.getElementById('nanoGrid');
+        const colors = [
+            'rgba(253, 167, 101, ',
+            'rgba(243, 210, 89, ',
+            'rgba(138, 43, 226, ',
+            'rgba(0, 255, 136, '
+        ];
+
+        for (let i = 0; i < 12; i++) {
+            for (let j = 0; j < 12; j++) {
+                const pillar = document.createElement('div');
+                pillar.className = 'nano-pillar';
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                const opacity = 0.3 + Math.random() * 0.7;
+                const delay = Math.random() * 3;
+                const height = 20 + Math.random() * 60;
+
+                pillar.style.left = `${j * 40 + 20}px`;
+                pillar.style.top = `${i * 40 + 20}px`;
+                pillar.style.background = `${color}${opacity})`;
+                pillar.style.boxShadow = `0 0 ${10 + Math.random() * 20}px ${color}${opacity * 0.5})`;
+                pillar.style.animationDelay = `${delay}s`;
+                pillar.style.height = `${height}px`;
+                pillar.style.width = `${16 + Math.random() * 12}px`;
+
+                nanoGrid.appendChild(pillar);
+            }
+        }
+
+        // Generate spectrum bar
+        const spectrumBar = document.getElementById('spectrumBar');
+        const spectrumColors = [
+            '#FF0000', '#FF4400', '#FF8800', '#FFCC00', '#FFFF00',
+            '#CCFF00', '#88FF00', '#44FF00', '#00FF00', '#00FF44',
+            '#00FF88', '#00FFCC', '#00FFFF', '#00CCFF', '#0088FF',
+            '#0044FF', '#0000FF', '#4400FF', '#8800FF', '#CC00FF'
+        ];
+
+        spectrumColors.forEach((color, i) => {
+            const segment = document.createElement('div');
+            segment.className = 'spectrum-segment';
+            segment.style.background = color;
+            segment.style.animationDelay = `${i * 0.1}s`;
+            segment.style.height = `${30 + Math.random() * 70}%`;
+            spectrumBar.appendChild(segment);
+        });
+
+        // Scroll animation observer
+        const revealTargets = document.querySelectorAll('.fade-in, .fade-in-up, .fade-in-scale');
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.1, rootMargin: '0px 0px -5% 0px' });
+
+        revealTargets.forEach(el => observer.observe(el));
+
+        // 兜底:页面完全加载后,把已进入(或已滚过)视口的元素直接点亮。
+        // 防止 observer 建立前页面已被滚动、或元素高于视口导致 threshold 永不满足。
+        window.addEventListener('load', () => {
+            revealTargets.forEach(el => {
+                const r = el.getBoundingClientRect();
+                if (r.top < window.innerHeight && r.bottom > 0) {
+                    el.classList.add('visible');
+                }
+            });
+        });
+
+        // 最终保险:打印或另存为整页时,强制显示全部内容。
+        window.addEventListener('beforeprint', () => {
+            revealTargets.forEach(el => el.classList.add('visible'));
+        });
+
+        // Generate floating particles
+        const particlesContainer = document.getElementById('particlesContainer');
+        const particleCount = 30;
+
+        for (let i = 0; i < particleCount; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            const size = 2 + Math.random() * 3;
+            const left = Math.random() * 100;
+            const duration = 15 + Math.random() * 20;
+            const delay = Math.random() * duration;
+            const drift = (Math.random() - 0.5) * 100;
+
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            particle.style.left = `${left}%`;
+            particle.style.animationDuration = `${duration}s`;
+            particle.style.animationDelay = `-${delay}s`;
+            particle.style.setProperty('--drift', `${drift}px`);
+
+            // Randomly assign different colors
+            const colorRoll = Math.random();
+            if (colorRoll > 0.6) {
+                particle.style.background = 'rgba(243, 210, 89, 0.3)';
+                particle.style.boxShadow = '0 0 6px rgba(243, 210, 89, 0.3)';
+            } else if (colorRoll > 0.3) {
+                particle.style.background = 'rgba(138, 43, 226, 0.3)';
+                particle.style.boxShadow = '0 0 6px rgba(138, 43, 226, 0.3)';
+            }
+
+            particlesContainer.appendChild(particle);
+        }
+
+        // Header scroll effect
+        let lastScroll = 0;
+        window.addEventListener('scroll', () => {
+            const currentScroll = window.pageYOffset;
+            const header = document.querySelector('.header');
+            if (currentScroll > 100) {
+                header.style.background = 'rgba(6, 6, 10, 0.95)';
+                header.style.borderColor = 'rgba(26, 26, 46, 0.8)';
+            } else {
+                header.style.background = 'rgba(6, 6, 10, 0.85)';
+                header.style.borderColor = 'var(--border-subtle)';
+            }
+            lastScroll = currentScroll;
+        });
+
+        // ===== LAZY LOADING FOR IMAGES =====
+        const imageObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    if (img.dataset.src) {
+                        img.src = img.dataset.src;
+                        img.removeAttribute('data-src');
+                    }
+                    img.style.opacity = '1';
+                    observer.unobserve(img);
+                }
+            });
+        }, { rootMargin: '50px' });
+
+        document.querySelectorAll('img[data-src]').forEach(img => {
+            img.style.opacity = '0';
+            imageObserver.observe(img);
+        });
+
+        // ===== PAGE LOAD COMPLETE =====
+        window.addEventListener('load', () => {
+            const loader = document.getElementById('pageLoader');
+            if (loader) {
+                setTimeout(() => {
+                    loader.classList.add('hidden');
+                }, 300);
+            }
+        });
+
+        // ===== REDUCED MOTION RESPECT =====
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (prefersReducedMotion.matches) {
+            document.querySelectorAll('.fade-in, .fade-in-up, .fade-in-scale').forEach(el => {
+                el.style.opacity = '1';
+                el.style.transform = 'none';
+                el.style.transition = 'none';
+            });
+        }
+    </script>
+</body>
+</html>
