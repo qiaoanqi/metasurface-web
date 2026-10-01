@@ -377,16 +377,15 @@ st.session_state.setdefault("ui_accent_control", "琥珀橙")
 # the same render and persist for the rest of the session.
 with st.sidebar:
     st.markdown("### 🎨 外观")
-    st.radio(
+    st.segmented_control(
         "界面主题",
-        list(_UI_THEME_OPTIONS),
+        options=list(_UI_THEME_OPTIONS),
         key="ui_theme_control",
-        horizontal=True,
         help="只改变界面颜色，不改变材料、结构参数或计算结果。",
     )
-    st.selectbox(
+    st.segmented_control(
         "强调色",
-        list(_UI_ACCENT_OPTIONS),
+        options=list(_UI_ACCENT_OPTIONS),
         key="ui_accent_control",
         help="选择按钮、边框和重点信息的强调色。",
     )
@@ -1277,16 +1276,22 @@ def _render_result_provenance(provenance):
     # 只在 Oklch 里提亮到"深色文字可读"的明度，使小字对比度达 WCAG AA。
     # 原先徽章用白字压在中等明度底上，最低只有 3.19，不达标。
     route_colors = {
-        "rcwa_surrogate": ("#42B68C", "RCWA 训练代理（ML surrogate）"),
-        "ml_surrogate": ("#5E9FFB", "机器学习代理（ML surrogate）"),
-        "far_field_postprocessing": ("#B97BFA", "远场后处理（Far-field post-processing）"),
-        "fp_tmm": ("#E5821F", "FP 腔传输矩阵（FP cavity TMM）"),
-        "lorentz_fano_fallback": ("#CA6728", "洛伦兹/Fano 解析近似"),
-        "invalid_geometry": ("#FF6559", "几何参数不可用"),
+        # The main card is for people using the tool.  Keep the exact route and
+        # model names in the audit expander below instead of leading with them.
+        "rcwa_surrogate": ("#42B68C", "快速计算"),
+        "ml_surrogate": ("#5E9FFB", "快速计算"),
+        "far_field_postprocessing": ("#B97BFA", "远场修正"),
+        "fp_tmm": ("#E5821F", "薄膜腔计算"),
+        "lorentz_fano_fallback": ("#CA6728", "解析计算"),
+        "invalid_geometry": ("#FF6559", "参数不可用"),
     }
     color, route_label = route_colors.get(
-        provenance.get("route_id"), ("#8FA0B8", provenance.get("route_label", "未知来源"))
+        provenance.get("route_id"), ("#8FA0B8", "当前路线")
     )
+    technical_route_label = str(
+        provenance.get("route_label") or provenance.get("route_id") or "未记录"
+    )
+    technical_chain = " → ".join(str(item) for item in provenance.get("chain", []))
     state_labels = {
         "loaded_and_called": "模型已调用，输出通过校验",
         "loaded": "模型已加载",
@@ -1319,25 +1324,26 @@ def _render_result_provenance(provenance):
     st.markdown(
         f"""
         <div class="source-summary" role="status" aria-label="结果来源摘要"
+             title="技术路线：{esc(technical_route_label)}；实际链路：{esc(technical_chain or '未记录')}；观察角度：{esc(provenance.get('theta_obs_deg', 0.0))}°；NA：{esc(provenance.get('na', '未启用'))}"
              style="border-left-color:{color}">
-          <div class="source-summary__head">
-            <strong>结果来源</strong>
-            <span style="background:{color};color:#0C0812;border-radius:999px;padding:3px 9px;
-                         font-size:12px;font-weight:600">{esc(route_label)}</span>
-            <span class="source-summary__status">{esc(result_status)}</span>
-          </div>
-          <div class="source-summary__context">
-            {esc(provenance['material'])} / {esc(provenance['substrate'])} ·
-            {esc(provenance['polarization'])} · 入射 {float(provenance['angle_deg']):.1f}° ·
-            观察 {float(provenance['theta_obs_deg']):.1f}° · NA {esc(provenance['na'])}
-          </div>
-          <div class="source-summary__context">实际链路：{esc(chain or '未执行')}</div>
-        </div>
+           <div class="source-summary__head">
+             <strong>当前结果</strong>
+             <span title="技术路线：{esc(technical_route_label)}"
+                   style="background:{color};color:#0C0812;border-radius:999px;padding:3px 9px;
+                          font-size:12px;font-weight:600">{esc(route_label)}</span>
+             <span class="source-summary__status">{esc(result_status)}</span>
+           </div>
+           <div class="source-summary__context">
+             {esc(provenance.get('structure_label', '当前结构'))} ·
+             {esc(provenance['material'])} / {esc(provenance['substrate'])} ·
+             {esc(provenance['polarization'])} · 入射 {float(provenance['angle_deg']):.1f}°
+           </div>
+         </div>
         """,
         unsafe_allow_html=True,
     )
     with st.expander("查看来源、边界与证据详情", expanded=False):
-        st.caption("展开后按需加载完整链路、边界说明和模型/数据证据。")
+        st.caption("需要复核时再展开；平时只看上面的结果和颜色。")
         if st.button("加载完整审计详情", key="load_audit_details"):
             st.session_state["show_audit_details"] = True
         if st.session_state.get("show_audit_details", False):
@@ -2002,6 +2008,27 @@ def _render_inverse_exports(context):
     return True
 
 
+def _inverse_display_route_label(route):
+    """Return a short route label for the main interaction surface."""
+    route_id = str((route or {}).get("route_id", ""))
+    return {
+        "rcwa_surrogate": "快速计算",
+        "ml_surrogate": "快速计算",
+        "far_field_postprocessing": "远场修正",
+        "fp_tmm": "薄膜腔计算",
+        "lorentz_fano_fallback": "解析计算",
+        "invalid_geometry": "参数不可用",
+    }.get(route_id, "当前路线")
+
+
+def _inverse_display_structure_label(structure_type):
+    return {
+        "single": "单柱",
+        "dual": "双柱",
+        "fp": "FP 腔",
+    }.get(str(structure_type), str(structure_type))
+
+
 def _render_inverse_context(context, route):
     """Show the fixed search context once so candidate cards do not repeat ambiguous state."""
     st.markdown(
@@ -2009,18 +2036,16 @@ def _render_inverse_context(context, route):
         <div class="inverse-context" aria-label="当前搜索配置">
           <strong>当前搜索配置</strong>
           <div class="inverse-context__grid">
-            <span><b>结构</b>{html.escape(context.structure_type)}</span>
+            <span><b>结构</b>{html.escape(_inverse_display_structure_label(context.structure_type))}</span>
             <span><b>材料 / 衬底</b>{html.escape(context.material)} / {html.escape(context.substrate)}</span>
             <span><b>偏振 / 入射角</b>{html.escape(context.polarization)} / {float(context.angle_deg):.1f}°</span>
-            <span><b>预览来源</b>{html.escape(route.get('route_label', 'Unknown'))}</span>
+            <span><b>当前路线</b>{html.escape(_inverse_display_route_label(route))}</span>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption(
-        "候选会标注来源；应用前请做物理复核。"
-    )
+    st.caption("先看颜色和色差，满意后应用候选。")
     # Keep the boundary visible but short: TM/0° has a usable audited-library
     # route, while the learned proxy methods remain registered for TE/0°.
     if context.structure_type == "single":
@@ -2126,6 +2151,7 @@ st.markdown(
       .inverse-target-card__rgb { margin-top:4px; color:var(--text-secondary); font-size:13px; }
       .inverse-method-row { min-width:0; padding:5px 0 2px; }
       .inverse-method-row strong { color:var(--text-primary); }
+      .inverse-method-row__status { display:inline-block; margin-left:6px; padding:1px 6px; border:1px solid var(--border-strong); border-radius:999px; color:var(--text-secondary); font-size:11px; font-style:normal; }
       .inverse-method-row span { display:block; color:var(--text-muted); font-size:12px; line-height:1.45; overflow-wrap:anywhere; word-break:break-word; }
       .pattern-boundary { min-width:0; border-left:4px solid var(--accent-strong); padding:9px 12px; margin:8px 0 14px; background:var(--bg-elevated); color:var(--text-primary); line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
       .pattern-boundary strong { color:var(--text-primary); }
@@ -3656,6 +3682,15 @@ with tab2:
         _preferred_order[0],
     )
     _primary_state = _method_states[_primary_method]
+    _method_plain_summary = {
+        "smart": "快速网格搜索",
+        "single": "单柱参数搜索",
+        "dual": "双柱联合搜索",
+        "fp": "腔长与中心波长搜索",
+        "compare": "比较不同结构路线",
+    }
+    if _inverse_structure == "single":
+        st.caption("单柱路线已保留；双柱和 FP 腔功能可在左侧“结构类型”切换。")
     primary_btn = st.button(
         f"开始搜索 · {_primary_state.label}",
         type="primary",
@@ -3663,7 +3698,10 @@ with tab2:
         disabled=not _primary_state.available,
         help=_primary_state.summary,
     )
-    st.caption(f"推荐方法：{_primary_state.summary}。{_primary_state.reason}")
+    st.caption(
+        f"当前主路线：{_method_plain_summary.get(_primary_method, _primary_state.label)}。"
+        f"{_primary_state.reason}"
+    )
 
     reference_btn = primary_btn if _primary_method == "reference" else False
     smart_btn = primary_btn if _primary_method == "smart" else False
@@ -3671,41 +3709,46 @@ with tab2:
     dual_gd_btn = primary_btn if _primary_method == "dual" else False
     fp_search_btn = primary_btn if _primary_method == "fp" else False
     ai_btn = primary_btn if _primary_method == "compare" else False
-    with st.expander("其他搜索方法与可用性", expanded=False):
-        for _method_key in _preferred_order:
-            if _method_key == _primary_method:
-                continue
-            _method = _method_states[_method_key]
-            _method_text, _method_action = st.columns([3, 1])
-            with _method_text:
-                st.markdown(
-                    f"""
-                    <div class="inverse-method-row">
-                      <strong>{html.escape(_method.label)}</strong>
-                      <span>{html.escape(_method.summary)}</span>
-                      <span>{html.escape(_method.reason)}</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with _method_action:
-                _clicked = st.button(
-                    _method.label,
-                    key=f"inverse_secondary_{_method_key}",
-                    use_container_width=True,
-                    disabled=not _method.available,
-                    help=_method.reason,
-                )
-            if _method_key == "smart":
-                smart_btn = _clicked
-            elif _method_key == "reference":
-                reference_btn = _clicked
-            elif _method_key == "single":
-                gd_btn = _clicked
-            elif _method_key == "dual":
-                dual_gd_btn = _clicked
-            elif _method_key == "fp":
-                fp_search_btn = _clicked
+    _other_method_keys = [
+        key for key in _preferred_order if key != _primary_method
+    ]
+    if _other_method_keys:
+        st.caption("下面列出当前结构下仍保留的其他路线；灰色按钮代表当前条件暂不满足。")
+        with st.expander("其他搜索方法与可用性", expanded=True):
+            for _method_key in _other_method_keys:
+                _method = _method_states[_method_key]
+                _method_status = "可用" if _method.available else "暂不可用"
+                _method_text, _method_action = st.columns([3, 1])
+                with _method_text:
+                    st.markdown(
+                        f"""
+                        <div class="inverse-method-row">
+                          <strong>{html.escape(_method.label)}</strong>
+                          <em class="inverse-method-row__status">{_method_status}</em>
+                          <span>{html.escape(_method_plain_summary.get(_method_key, _method.summary))}</span>
+                          <span>{html.escape(_method.reason)}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with _method_action:
+                    _clicked = st.button(
+                        _method.label,
+                        key=f"inverse_secondary_{_method_key}",
+                        use_container_width=True,
+                        disabled=not _method.available,
+                        help=_method.reason,
+                    )
+                if _method_key == "smart":
+                    smart_btn = _clicked
+                elif _method_key == "reference":
+                    reference_btn = _clicked
+                elif _method_key == "single":
+                    gd_btn = _clicked
+                elif _method_key == "dual":
+                    dual_gd_btn = _clicked
+                elif _method_key == "fp":
+                    fp_search_btn = _clicked
 
     if "compare" in _method_states:
         _compare_method = _method_states["compare"]
@@ -4888,82 +4931,84 @@ with tab4:
 
 # Tab 5: Spectrum & CIE Chromaticity
 with tab5:
-    col_spec, col_cie = st.columns([3, 2])
-
-    with col_spec:
-        st.subheader("反射光谱 (380-780 nm)")
+    st.subheader("光谱与颜色位置")
+    st.caption("上方看反射强弱，下方看颜色在标准色度图中的位置。")
+    with st.expander("查看详细计算条件", expanded=False):
         st.caption(forward_provenance_caption(_forward.provenance))
-        wls, refl = _forward.wavelengths_nm, _forward.reflectance
-        if not _forward.spectrum_available:
-            st.warning(f"当前结果没有可用光谱，无法绘制：{_forward.error}")
-            wls, refl = np.array([]), np.array([])
 
-        # A less panoramic aspect ratio keeps axes and labels legible when the
-        # two-column layout stacks onto a narrow mobile viewport.
-        fig5, ax5 = _get_plt().subplots(figsize=(8, 5))
-        # Color the spectrum curve with the actual computed color
-        hex_c = rgb_to_hex(_forward.rgb) if _forward.spectrum_available else "#777777"
-        if len(wls):
-            ax5.plot(wls, refl, color="#333", lw=2.5,
-                     label=str(_forward.provenance.get("geometry_summary") or "unknown"))
-            ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
-        ax5.set_xlabel("波长 (nm)")
-        ax5.set_ylabel("反射率")
-        ax5.set_title("反射光谱")
-        ax5.set_xlim(380, 780)
-        ax5.set_ylim(0, 1.08)
-        ax5.set_xticks(np.arange(380, 781, 80))
-        ax5.tick_params(axis="both", labelsize=8)
-        ax5.grid(True, alpha=0.25)
-        if len(wls):
-            ax5.legend(loc="upper right", fontsize=8, framealpha=0.85)
-        fig5.tight_layout(pad=1.1)
-        st.pyplot(fig5); _get_plt().close(fig5)
+    # Keep the two plots in one vertical reading flow.  The old 3:2 columns
+    # compressed both figures on the normal 1114px browser viewport and made
+    # their labels compete with each other.
+    st.markdown("#### 反射光谱 · 380–780 nm")
+    wls, refl = _forward.wavelengths_nm, _forward.reflectance
+    if not _forward.spectrum_available:
+        st.warning(f"当前结果没有可用光谱，无法绘制：{_forward.error}")
+        wls, refl = np.array([]), np.array([])
 
-    with col_cie:
-        st.subheader("CIE 1931 色度图")
-        st.caption(forward_provenance_caption(_forward.provenance))
-        try:
-            _cie_plot = build_cie_plot_data(_forward, _CIE_X, _CIE_Y, _CIE_Z)
-        except Exception as exc:
-            st.error(f"CIE 标准轨迹不可用：{type(exc).__name__}: {exc}")
-            _cie_plot = None
-        if _cie_plot is not None:
-            fig_cie, ax_cie = _get_plt().subplots(figsize=(5, 5))
-            locus = _cie_plot.spectral_locus_xy
+    fig5, ax5 = _get_plt().subplots(figsize=(8, 5))
+    # Color the spectrum curve with the actual computed color
+    hex_c = rgb_to_hex(_forward.rgb) if _forward.spectrum_available else "#777777"
+    if len(wls):
+        ax5.plot(wls, refl, color="#333", lw=2.5,
+                 label=str(_forward.provenance.get("geometry_summary") or "unknown"))
+        ax5.fill_between(wls, 0, refl, alpha=0.12, color=hex_c)
+    ax5.set_xlabel("波长 (nm)")
+    ax5.set_ylabel("反射率")
+    ax5.set_title("反射光谱")
+    ax5.set_xlim(380, 780)
+    ax5.set_ylim(0, 1.08)
+    ax5.set_xticks(np.arange(380, 781, 80))
+    ax5.tick_params(axis="both", labelsize=8)
+    ax5.grid(True, alpha=0.25)
+    if len(wls):
+        ax5.legend(loc="upper right", fontsize=8, framealpha=0.85)
+    fig5.tight_layout(pad=1.1)
+    st.pyplot(fig5); _get_plt().close(fig5)
+
+    st.divider()
+    st.markdown("#### CIE 1931 色度位置")
+    st.caption("红点是当前颜色；马蹄形轨迹和三角形用于定位与比较。")
+    try:
+        _cie_plot = build_cie_plot_data(_forward, _CIE_X, _CIE_Y, _CIE_Z)
+    except Exception as exc:
+        st.error(f"CIE 标准轨迹不可用：{type(exc).__name__}: {exc}")
+        _cie_plot = None
+    if _cie_plot is not None:
+        fig_cie, ax_cie = _get_plt().subplots(figsize=(8, 6))
+        locus = _cie_plot.spectral_locus_xy
+        ax_cie.plot(
+            locus[:, 0], locus[:, 1], "k-", lw=1.2, alpha=0.8,
+            label="CIE 1931 光谱轨迹",
+        )
+        ax_cie.fill(locus[:, 0], locus[:, 1], alpha=0.05, color="gray")
+        srgb_primaries_xy = _cie_plot.srgb_triangle_xy
+        ax_cie.plot(
+            srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
+            "k--", lw=0.8, alpha=0.5, label="sRGB 色域",
+        )
+        ax_cie.plot(0.3127, 0.3290, "k+", ms=8, alpha=0.5, label="D65")
+        if _cie_plot.current.available:
+            xy = _cie_plot.current.xy
             ax_cie.plot(
-                locus[:, 0], locus[:, 1], "k-", lw=1.2, alpha=0.8,
-                label="CIE 1931 光谱轨迹",
+                xy[0], xy[1], "o", color=hex_c, ms=10,
+                markeredgecolor="white", markeredgewidth=1.5,
+                label="当前颜色",
             )
-            ax_cie.fill(locus[:, 0], locus[:, 1], alpha=0.05, color="gray")
-            srgb_primaries_xy = _cie_plot.srgb_triangle_xy
-            ax_cie.plot(
-                srgb_primaries_xy[:, 0], srgb_primaries_xy[:, 1],
-                "k--", lw=0.8, alpha=0.5, label="sRGB 色域",
-            )
-            ax_cie.plot(0.3127, 0.3290, "k+", ms=8, alpha=0.5, label="D65")
-            if _cie_plot.current.available:
-                xy = _cie_plot.current.xy
-                ax_cie.plot(
-                    xy[0], xy[1], "o", color=hex_c, ms=10,
-                    markeredgecolor="white", markeredgewidth=1.5,
-                    label="当前规范结果",
-                )
-                ax_cie.plot(xy[0], xy[1], "o", color=hex_c, ms=14, alpha=0.3)
-                ax_cie.set_title(f"CIE 1931 xy: ({xy[0]:.4f}, {xy[1]:.4f})")
-            else:
-                ax_cie.set_title("CIE 1931 xy：当前点不可用")
-                st.warning(f"当前 CIE 点不可用，未绘制占位点：{_cie_plot.current.reason}")
-            ax_cie.set_xlabel("x")
-            ax_cie.set_ylabel("y")
-            ax_cie.set_xlim(0, 0.75)
-            ax_cie.set_ylim(0, 0.85)
-            ax_cie.set_aspect("equal")
-            ax_cie.grid(True, alpha=0.2)
-            ax_cie.legend(fontsize=6, loc="lower left")
-            fig_cie.tight_layout()
-            st.pyplot(fig_cie)
-            _get_plt().close(fig_cie)
+            ax_cie.plot(xy[0], xy[1], "o", color=hex_c, ms=14, alpha=0.3)
+            ax_cie.set_title(f"当前颜色位置  ({xy[0]:.4f}, {xy[1]:.4f})")
+        else:
+            ax_cie.set_title("当前颜色位置不可用")
+            st.warning(f"当前 CIE 点不可用，未绘制占位点：{_cie_plot.current.reason}")
+        ax_cie.set_xlabel("x")
+        ax_cie.set_ylabel("y")
+        ax_cie.set_xlim(0, 0.75)
+        ax_cie.set_ylim(0, 0.85)
+        ax_cie.set_aspect("equal")
+        ax_cie.grid(True, alpha=0.2)
+        ax_cie.legend(fontsize=8, loc="lower left")
+        fig_cie.tight_layout()
+        st.pyplot(fig_cie)
+        _get_plt().close(fig_cie)
 
 
     # === Declared-route gamut comparison ===
@@ -5514,7 +5559,7 @@ with tab5:
         )
     if _difference_unavailable_reason:
         if not st.session_state.get("ml_accel", False):
-            _difference_notice = "开启 ML 加速后可运行模型差异分析。"
+            _difference_notice = "ML 加速已关闭；开启后可运行模型差异分析。"
         else:
             _difference_notice = (
                 f"当前模型差异分析不可用：{_difference_unavailable_reason}。")
