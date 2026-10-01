@@ -20,6 +20,7 @@ from ui_cie_contracts import (
     GamutSamples, build_cie_plot_data, evaluate_gamut, forward_provenance_caption,
 )
 from ui_engine_session import (
+    ENGINE_LIBRARY_KEY, ENGINE_SESSION_KEY,
     LibraryIdentity, bind_engine_library, configure_engine_far_field,
     engine_library_matches, get_session_engine, make_local_bound_engine,
 )
@@ -284,6 +285,9 @@ def _load_audited_reference_sample() -> None:
     # Keep this demonstration on the transparent analytical route so the
     # comparison visibly separates the current route from the audited RCWA.
     set_bool_value(st.session_state, _BOOL_CONTROLS["ml_accel"], False)
+    # The color picker is created later in the script.  It reads this existing
+    # session value without also receiving a widget default, which avoids
+    # Streamlit's "value set via Session State API" warning on callbacks.
     st.session_state["inverse_target_picker"] = _AUDITED_REFERENCE_SAMPLE["target_hex"]
     st.session_state["_audited_sample_notice"] = (
         "已加载已审核示例：TiO2/SiO2/air · TM · 0° · "
@@ -304,6 +308,24 @@ migrate_session_state(
 # ===================== Streamlit UI =====================
 def get_engine():
     """Return the mutable engine owned by this Streamlit session only."""
+    # FP-TMM does not use the single-column grid.  Clear the mutable grid when
+    # crossing a structure route boundary so a ~60k-row single-column grid
+    # cannot survive into an FP session or be reused accidentally on return.
+    # Keep the session engine object itself stable: analysis snapshots and
+    # Streamlit tests rely on one session-owned engine identity.
+    structure_mode = str(st.session_state.get("structure_type", "single"))
+    previous_mode = st.session_state.get("_ui_engine_structure_mode")
+    if previous_mode != structure_mode:
+        existing_engine = st.session_state.get(ENGINE_SESSION_KEY)
+        if existing_engine is not None:
+            existing_engine.grid_params = np.zeros((0, 3))
+            existing_engine.grid_rgb = np.zeros((0, 3))
+            existing_engine.grid_lab = np.zeros((0, 3))
+            existing_engine.grid_xy = np.zeros((0, 2))
+            existing_engine._grid_library_initialized = False
+            existing_engine._ui_library_identity = None
+        st.session_state.pop(ENGINE_LIBRARY_KEY, None)
+        st.session_state["_ui_engine_structure_mode"] = structure_mode
     initialize_grid = st.session_state.get("structure_type") != "fp"
     return get_session_engine(
         st.session_state,
@@ -1227,19 +1249,10 @@ def _render_result_provenance(provenance):
             # Read/hash small evidence only after explicit user request.
             asset_bits = []
             try:
-                manifest_path = os.path.join(os.path.dirname(__file__), ".state", "pool_manifest.json")
-                d65_path = os.path.join(os.path.dirname(__file__), ".state", "d65_colorimetry_v1_r2.json")
-                with open(manifest_path, "r", encoding="utf-8") as handle:
-                    manifest = json.load(handle)
-                with open(d65_path, "r", encoding="utf-8") as handle:
-                    d65 = json.load(handle)
-                pool_path = manifest.get("pool_path", "unknown")
-                pool_sha = manifest.get("pool_sha256", "unknown")
-                d65_version = d65.get("evidence_version", "unknown")
-                d65_passed = bool(d65.get("passed", False))
-                asset_bits.append(f"论文2池 manifest: {pool_path} ({pool_sha[:12]}…)")
-                asset_bits.append(f"D65 evidence: {d65_version} ({'通过' if d65_passed else '未通过'})")
-                asset_bits.append("当前 UI 路由直接使用论文2池: 否；当前结果来自上方标注的模型/解析路线")
+                asset_bits.append(
+                    "竞赛运行包不携带论文2池 manifest 或科研控制面；"
+                    "当前结果来自上方标注的模型/解析路线"
+                )
             except Exception as exc:
                 asset_bits.append(f"证据状态不可用: {type(exc).__name__}")
             model_files = []
@@ -1292,7 +1305,7 @@ def _render_reference_recheck_details(
     forward,
 ):
     """Show an exact lookup against the audited competition RCWA reference set."""
-    st.subheader("真实 RCWA 参考复核")
+    st.subheader("已审核 RCWA 参考复核")
     st.caption(
         "只读取已审核的 TiO2/SiO2/air 参考库；查询要求完整匹配几何和边界，"
         "不插值、不写入训练数据。"
@@ -1800,6 +1813,24 @@ def _render_inverse_context(context, route):
         "逆设计候选按各自搜索路径标注来源；候选 ΔE 只表示当前模型空间内的匹配度，"
         "不替代直接 RCWA 或实验复核。"
     )
+    # The audited display sample is deliberately bound to TM/p polarization,
+    # while the currently registered single-pillar inverse methods are only
+    # validated for TE at normal incidence.  Explain the disabled search
+    # state at the point of use instead of leaving the user to infer it from a
+    # grey button.
+    if (
+        context.structure_type == "single"
+        and (
+            not str(context.polarization).startswith("TE")
+            or abs(float(context.angle_deg)) >= 1e-9
+        )
+    ):
+        st.info(
+            f"当前前向复核条件为 {html.escape(str(context.polarization))} / "
+            f"{float(context.angle_deg):.1f}°；已注册的单柱逆设计搜索仅支持 TE (s-pol)、0°。"
+            "如需运行逆设计，请在左侧将偏振切换为 TE (s-pol) 并保持入射角 0°；"
+            "这不会改变已审核 TM 参考库的条件。"
+        )
 
 
 def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_text,
@@ -3249,7 +3280,8 @@ with tab2:
 
     col_pick, col_target = st.columns([1, 2])
     with col_pick:
-        picker_hex = st.color_picker("目标颜色", "#80c8ff", key="inverse_target_picker")
+        st.session_state.setdefault("inverse_target_picker", "#80c8ff")
+        picker_hex = st.color_picker("目标颜色", key="inverse_target_picker")
     target_r = int(picker_hex[1:3], 16)
     target_g = int(picker_hex[3:5], 16)
     target_b = int(picker_hex[5:7], 16)
@@ -3437,7 +3469,7 @@ with tab2:
                     _store_inverse_run(
                         _inverse_context, "smart", "智能网格",
                         _normalized_smart_candidates(_inverse_context, result))
-                    st.success(f"🎯 智能网格完成 · 最佳候选 {hex_sg} · ΔE2000={de_sg:.1f}")
+                    st.success(f"🎯 智能网格完成 · 本次搜索排名第一 {hex_sg} · ΔE2000={de_sg:.1f}")
                     _sg_contract = _inverse_candidate_contract(
                         "smart_grid", material, substrate, polarization, angle
                     )
@@ -3467,7 +3499,7 @@ with tab2:
 
     if gd_btn and _inverse_context.geometry_valid:
         _clear_inverse_results()
-        with st.spinner("🎯 单柱梯度优化中 (numpy Adam, ~2-4秒)..."):
+        with st.spinner("🎯 单柱梯度候选搜索中（numpy Adam）..."):
             try:
                 # torch autograd (fast with optimized torch on server)
                 result = ml_module._inverse_design_ml_serial(
@@ -3511,10 +3543,10 @@ with tab2:
                             parameters={"d": d_gd, "h": h_gd, "p": p_gd},
                             predicted_rgb=pred_rgb, delta_e2000=de_gd,
                         ),))
-                    st.success(f"🎉 单柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    st.success(f"🎉 单柱梯度候选搜索完成 · 本次返回 {hex_gd} · ΔE2000={de_gd:.1f}")
                     if de_gd > 20:
                         st.warning(
-                            f"当前目标色与最佳候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
+                            f"当前目标色与本次返回候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
                             "这表示目标可能超出当前材料/模型色域；可尝试切换材料、衬底或 FP 腔，"
                             "并在应用前进行高保真复核。"
                         )
@@ -3528,14 +3560,14 @@ with tab2:
                             _inverse_context, "single",
                             {"d": d_gd, "h": h_gd, "p": p_gd})
                     st.button("应用此候选", on_click=_apply_gd_cb, key="apply_gd_result", use_container_width=True)
-                    st.caption("✳️ 梯度优化找到最优解，如果不满意，可用RL搜索作为起点重新优化")
+                    st.caption("✳️ 这是当前搜索返回的候选；如需继续探索，可用 RL 搜索或手动微调")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"单柱梯度优化失败: {e}")
 
     if _inverse_structure == "dual" and dual_gd_btn and _inverse_context.geometry_valid:
         _clear_inverse_results()
-        with st.spinner("📊 双柱梯度优化中 (numpy Adam, ~3-5秒)..."):
+        with st.spinner("📊 双柱梯度候选搜索中（numpy Adam）..."):
             try:
                 # numpy finite-difference (no torch needed)
                 result = ml_module._inverse_design_dual_numpy(
@@ -3579,10 +3611,10 @@ with tab2:
                             },
                             predicted_rgb=pred_rgb, delta_e2000=de_gd,
                         ),))
-                    st.success(f"🎉 双柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    st.success(f"🎉 双柱梯度候选搜索完成 · 本次返回 {hex_gd} · ΔE2000={de_gd:.1f}")
                     if de_gd > 20:
                         st.warning(
-                            f"当前目标色与最佳候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
+                            f"当前目标色与本次返回候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
                             "这表示目标可能超出当前材料/模型色域；可尝试切换材料、衬底或 FP 腔，"
                             "并在应用前进行高保真复核。"
                         )
@@ -3597,7 +3629,7 @@ with tab2:
                             {"d1": d1_gd, "h1": h1_gd, "d2": d2_gd,
                              "h2": h2_gd, "p": p_gd})
                     st.button("应用此候选", on_click=_apply_dual_gd_cb, key="apply_dual_gd_result", use_container_width=True)
-                    st.caption("✳️ 梯度优化找到最优解5参数(D1,H1,D2,H2,P)，如果不满意，可手动微调")
+                    st.caption("✳️ 这是当前搜索返回的五参数候选；如需继续探索，可手动微调")
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化失败: {e}")
@@ -3734,7 +3766,7 @@ with tab2:
                 st.session_state.fp_search_cache = {}
             if cache_key in st.session_state.fp_search_cache:
                 top3 = st.session_state.fp_search_cache[cache_key]
-                st.success(f"从缓存加载，瞬间完成! 共 {len(st.session_state.fp_search_cache)} 组缓存")
+                st.success(f"命中缓存，跳过重复计算 · 共 {len(st.session_state.fp_search_cache)} 组缓存")
             else:
                 target_rgb = np.array([fp_tr, fp_tg, fp_tb]) / 255.0
                 target_lab = rgb_to_lab(target_rgb)
