@@ -442,6 +442,7 @@
             margin: 0 auto;
             padding: 0 80px;
             width: 100%;
+            box-sizing: border-box;
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 80px;
@@ -452,6 +453,7 @@
 
         .hero-content {
             max-width: 640px;
+            min-width: 0;
         }
 
         .hero-badge {
@@ -573,6 +575,7 @@
         .hero-visual {
             position: relative;
             height: 560px;
+            min-width: 0;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2436,6 +2439,9 @@
                 padding: 0 20px;
                 padding-top: 80px;
             }
+            /* Mobile users should see the name and entry action before the decorative preview. */
+            .hero-content { order: -1; }
+            .hero-visual { order: 0; }
             .hero-title {
                 font-size: 32px;
                 line-height: 1.2;
@@ -3678,7 +3684,7 @@
 
         Object.assign(i18n.zh, {
             hero_subtitle: '当前比赛版提供单柱近似代理预测、候选筛选、光谱查看、结果导出和已审核 RCWA 参考复核。',
-            hero_cta_primary: '查看比赛入口', cta_primary: '查看比赛入口',
+            hero_cta_primary: '进入设计系统', cta_primary: '进入设计系统',
             cta_desc: '本地完整交互入口已接入通过审核的 TiO₂/SiO₂/air 前向参考库，可对已收录结构做精确复核。',
             cta_hint: '比赛交互台使用主入口 app.py；参考对照与代理路线分开标注。',
             demo_label: '当前可运行版本', demo_title: '完整交互台 · 含 RCWA 参考复核',
