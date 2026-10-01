@@ -18,7 +18,6 @@ CORE_FILES = (
     "ui_inverse_contracts.py", "ui_model_difference_contracts.py",
     "ui_model_resources.py", "ui_pattern_contracts.py", "ui_session_migration.py",
     ".streamlit/config.toml",
-    ".state/pool_manifest.json", ".state/d65_colorimetry_v1_r2.json",
     "protocols/forward_mlp_v8_sub_conversion_v1.json",
     "models/evidence/forward_mlp_v8_sub_conversion_v1.json",
     "models/forward_mlp_v8_sub.onnx", "models/forward_mlp_v8_sub.onnx.data",

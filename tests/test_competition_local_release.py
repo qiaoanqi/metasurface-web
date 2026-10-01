@@ -44,3 +44,10 @@ def test_delivery_docs_keep_scientific_boundary_explicit():
     text = (ROOT / "competition/11_本地离线演示说明.md").read_text(encoding="utf-8")
     assert "不做最近邻、插值或训练" in text
     assert "不是全域收敛或模型准确率证明" in text
+
+
+def test_bundle_builder_excludes_research_control_plane_and_history_archives():
+    script = (ROOT / "scripts/build_web_deployment_bundle.py").read_text(encoding="utf-8")
+    assert ".state/pool_manifest.json" not in script
+    assert ".state/d65_colorimetry_v1_r2.json" not in script
+    assert 'ignore=shutil.ignore_patterns("*.zip", "*.pptx")' in script

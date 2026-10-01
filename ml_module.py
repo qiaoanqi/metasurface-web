@@ -17,7 +17,6 @@ def _ensure_model_file(rel_path):
             repo_id=_MODEL_REPO, filename=rel_path,
             cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.hf_cache'),
             local_dir=os.path.dirname(os.path.abspath(__file__)),
-            local_dir_use_symlinks=False,
             timeout=5)
         return downloaded
     except Exception:
@@ -166,6 +165,11 @@ def _predict_rcwa_wavelength(material, substrate, d_nm, h_nm, p_nm):
     sess = _RCWA_WL_SESSIONS.get(material)
     if sess is None:
         return None
+    return _predict_rcwa_wavelength_with_session(sess, material, substrate, d_nm, h_nm, p_nm)
+
+
+def _predict_rcwa_wavelength_with_session(sess, material, substrate, d_nm, h_nm, p_nm):
+    """Run one already-selected wavelength-conditioned surrogate session."""
     WLS = np.linspace(380, 780, 81)
     sub_code = float(SUBSTRATE_CODES.get(substrate, 0))
     d_norm = (d_nm - 50) / 300
@@ -180,6 +184,52 @@ def _predict_rcwa_wavelength(material, substrate, d_nm, h_nm, p_nm):
     input_name = sess.get_inputs()[0].name
     result = sess.run(None, {input_name: batch})[0]
     return result.flatten().astype(np.float64)
+
+
+def freeze_rcwa_spectrum_predictor(material, substrate, angle_deg=0.0):
+    """Capture one registered RCWA-surrogate family for repeated UI evaluation.
+
+    The returned callable keeps the selected session object(s), so later registry
+    changes cannot make a tolerance series switch to generic ML or another RCWA
+    surrogate family.  ``None`` means no eligible registered route exists.
+    """
+    fixed_angle = float(angle_deg)
+    if abs(fixed_angle) >= 5:
+        return None
+
+    wl_session = _RCWA_WL_SESSIONS.get(material)
+    if wl_session is not None:
+        def predict_wavelength(d_nm, h_nm, p_nm, angle_deg=fixed_angle, polarization="TE"):
+            if float(angle_deg) != fixed_angle:
+                return None
+            spec = _predict_rcwa_wavelength_with_session(
+                wl_session, material, substrate, d_nm, h_nm, p_nm)
+            return None if spec is None else np.clip(spec, 0, None)
+
+        predict_wavelength.route_family = "rcwa_wavelength_surrogate"
+        predict_wavelength.session_count = 1
+        return predict_wavelength
+
+    sessions = tuple(_get_rcwa_sessions(material, substrate))
+    if not sessions:
+        return None
+
+    def predict_ensemble(d_nm, h_nm, p_nm, angle_deg=fixed_angle, polarization="TE"):
+        if float(angle_deg) != fixed_angle:
+            return None
+        x = _build_rcwa_input(
+            d_nm, h_nm, p_nm, fixed_angle, polarization, material, substrate)
+        specs = []
+        for session in sessions:
+            input_name = session.get_inputs()[0].name
+            specs.append(session.run(None, {input_name: x})[0][0])
+        if not specs:
+            return None
+        return np.clip(np.mean(specs, axis=0), 0, None)
+
+    predict_ensemble.route_family = "rcwa_ensemble_surrogate"
+    predict_ensemble.session_count = len(sessions)
+    return predict_ensemble
 
 def init_dual_ml():
     global _DUAL_ORT_AVAILABLE, _DUAL_ORT_SESSION, _DUAL_IS_V3
@@ -311,6 +361,23 @@ def predict_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE", materia
             return np.clip(spec, 0, None)
     # 回退Fano模型
     if not _ORT_AVAILABLE:
+        return None
+    x = _build_input(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
+    spec = _run_onnx(_ORT_SESSION, x)
+    return np.clip(spec, 0, None)
+
+
+def predict_generic_spectrum(d_nm, h_nm, p_nm, angle_deg=0.0, polarization="TE",
+                             material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
+    """Predict with the generic angle-conditioned ML model only.
+
+    This bypasses the near-normal RCWA-surrogate router.  It is intended for
+    comparisons such as an angle sweep where every sample must come from the
+    same model family.
+    """
+    if material not in MATERIAL_CODES or substrate not in SUBSTRATE_CODES:
+        return None
+    if not _ORT_AVAILABLE or _ORT_SESSION is None:
         return None
     x = _build_input(d_nm, h_nm, p_nm, angle_deg, polarization, material, substrate)
     spec = _run_onnx(_ORT_SESSION, x)

@@ -17,6 +17,85 @@ _GRID_CACHE_VERSION = "v1"
 os.makedirs(_GRID_CACHE_DIR, exist_ok=True)
 
 
+_LAB_NEAREST_WORKSPACE_BUDGET_BYTES = 16 * 1024 * 1024
+_LAB_NEAREST_TARGET_CHUNK = 64
+_LAB_NEAREST_GRID_CHUNK = 4096
+
+
+def _lab_nearest_workspace_bytes(target_chunk: int, grid_chunk: int,
+                                 itemsize: int = 8) -> int:
+    """Conservative peak bytes for one exact blockwise Lab comparison."""
+    target_chunk = int(target_chunk)
+    grid_chunk = int(grid_chunk)
+    itemsize = int(itemsize)
+    if target_chunk <= 0 or grid_chunk <= 0 or itemsize <= 0:
+        raise ValueError("workspace dimensions and itemsize must be positive")
+    pair_count = target_chunk * grid_chunk
+    delta_bytes = pair_count * 3 * itemsize
+    distance_bytes = pair_count * itemsize
+    row_state_bytes = target_chunk * (2 * itemsize + np.dtype(np.intp).itemsize)
+    return delta_bytes + distance_bytes + row_state_bytes
+
+
+def exact_nearest_lab_indices_blockwise(
+    target_lab: np.ndarray,
+    grid_lab: np.ndarray,
+    *,
+    target_chunk: int = _LAB_NEAREST_TARGET_CHUNK,
+    grid_chunk: int = _LAB_NEAREST_GRID_CHUNK,
+) -> np.ndarray:
+    """Return exact squared-Lab nearest indices with global first-index ties."""
+    targets = np.asarray(target_lab)
+    grid = np.asarray(grid_lab)
+    if targets.ndim < 1 or targets.shape[-1] != 3:
+        raise ValueError("target_lab must have shape (..., 3)")
+    if grid.ndim != 2 or grid.shape[1] != 3:
+        raise ValueError("grid_lab must have shape (N, 3)")
+    target_shape = targets.shape[:-1]
+    targets = targets.reshape(-1, 3)
+    if targets.shape[0] == 0 or grid.shape[0] == 0:
+        raise ValueError("target_lab and grid_lab must be non-empty")
+    if (not np.issubdtype(targets.dtype, np.number)
+            or not np.issubdtype(grid.dtype, np.number)
+            or np.issubdtype(targets.dtype, np.complexfloating)
+            or np.issubdtype(grid.dtype, np.complexfloating)):
+        raise TypeError("target_lab and grid_lab must contain real numbers")
+
+    work_dtype = np.result_type(targets.dtype, grid.dtype, np.float32)
+    targets = targets.astype(work_dtype, copy=False)
+    grid = grid.astype(work_dtype, copy=False)
+    if not np.all(np.isfinite(targets)) or not np.all(np.isfinite(grid)):
+        raise ValueError("target_lab and grid_lab must contain only finite values")
+
+    target_chunk = int(target_chunk)
+    grid_chunk = int(grid_chunk)
+    workspace = _lab_nearest_workspace_bytes(
+        target_chunk, grid_chunk, np.dtype(work_dtype).itemsize)
+    if workspace > _LAB_NEAREST_WORKSPACE_BUDGET_BYTES:
+        raise ValueError("requested Lab nearest-neighbour workspace exceeds 16 MiB")
+
+    indices = np.empty(targets.shape[0], dtype=np.intp)
+    for target_start in range(0, targets.shape[0], target_chunk):
+        target_end = min(target_start + target_chunk, targets.shape[0])
+        target_block = targets[target_start:target_end]
+        best_distances = np.full(target_block.shape[0], np.inf, dtype=work_dtype)
+        best_indices = np.zeros(target_block.shape[0], dtype=np.intp)
+
+        for grid_start in range(0, grid.shape[0], grid_chunk):
+            grid_end = min(grid_start + grid_chunk, grid.shape[0])
+            delta = target_block[:, None, :] - grid[grid_start:grid_end][None, :, :]
+            np.square(delta, out=delta)
+            distances = np.sum(delta, axis=2)
+            local_indices = np.argmin(distances, axis=1)
+            local_distances = distances[np.arange(target_block.shape[0]), local_indices]
+            update = local_distances < best_distances
+            best_distances[update] = local_distances[update]
+            best_indices[update] = grid_start + local_indices[update]
+
+        indices[target_start:target_end] = best_indices
+    return indices.reshape(target_shape)
+
+
 # ===================== Material Library =====================
 class MaterialLibrary:
     CAUCHY: dict = {
@@ -213,7 +292,12 @@ def _single_pillar_complex(d_nm, h_nm, p_nm, material, polarization, angle_deg, 
 
 
 class MetaSurfaceColorEngine:
-    def __init__(self):
+    def __init__(
+        self, *, use_disk_grid_cache: bool = True,
+        initialize_grid_library: bool = True,
+    ):
+        self._use_disk_grid_cache = bool(use_disk_grid_cache)
+        self._grid_library_initialized = bool(initialize_grid_library)
         self._cache = {}
         self.d_min, self.d_max = 50.0, 350.0
         self.h_min, self.h_max = 80.0, 600.0
@@ -226,15 +310,29 @@ class MetaSurfaceColorEngine:
         self._enable_far_field = False
         self._na = 0.1
         self._theta_obs_deg = 0.0
+        if not self._grid_library_initialized:
+            self.grid_params = np.zeros((0, 3))
+            self.grid_rgb = np.zeros((0, 3))
+            self.grid_lab = np.zeros((0, 3))
+            self.grid_xy = np.zeros((0, 2))
+            return
         try:
             default_key = (self._last_material, self._last_substrate, self._last_polarization, self._last_angle)
-            # Try loading from on-disk cache first (survives app restarts)
-            loaded = self._load_grid_disk(default_key)
+            # Disk caching remains the default for existing consumers. Isolated
+            # callers can require a current-code build without touching pickle.
+            loaded = (
+                self._load_grid_disk(default_key)
+                if self._use_disk_grid_cache else None
+            )
             if loaded is not None:
                 self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = loaded
             else:
                 self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = self._build_library()
-                self._save_grid_disk(default_key, (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy))
+                if self._use_disk_grid_cache:
+                    self._save_grid_disk(
+                        default_key,
+                        (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy),
+                    )
         except Exception as e:
             import traceback
             logging.error(f"Library build failed: {e}")
@@ -628,6 +726,7 @@ class MetaSurfaceColorEngine:
             self._last_material, self._last_substrate if self._last_substrate else "SiO2 (fused silica)")
 
     def rebuild_library(self, material: str, substrate: str, polarization: str, angle_deg: float):
+        self._grid_library_initialized = True
         key = (material, substrate, polarization, angle_deg)
         self._last_material = material
         self._last_substrate = substrate
@@ -636,8 +735,9 @@ class MetaSurfaceColorEngine:
         if key in self._cache:
             self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy = self._cache[key]
             return
-        # Try on-disk cache (persists across app restarts)
-        loaded = self._load_grid_disk(key)
+        # Try on-disk cache (persists across app restarts) unless this engine
+        # was explicitly created for an isolated current-code operation.
+        loaded = self._load_grid_disk(key) if self._use_disk_grid_cache else None
         if loaded is not None:
             self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy = loaded
             self._cache[key] = (self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy)
@@ -650,7 +750,9 @@ class MetaSurfaceColorEngine:
             d_vals, h_vals, p_vals, n550, material,
             substrate if substrate else "SiO2 (fused silica)")
         self._cache[key] = (self.grid_rgb, self.grid_params, self.grid_lab, self.grid_xy)
-        self._save_grid_disk(key, (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy))
+        if self._use_disk_grid_cache:
+            self._save_grid_disk(
+                key, (self.grid_params, self.grid_rgb, self.grid_lab, self.grid_xy))
 
     @staticmethod
     def _grid_cache_path(key):
@@ -679,9 +781,7 @@ class MetaSurfaceColorEngine:
             pass
 
     def nearest_lab_indices(self, target_lab: np.ndarray) -> np.ndarray:
-        target_lab = np.asarray(target_lab, dtype=float)
-        diff = target_lab[:, None, :] - self.grid_lab[None, :, :]
-        return np.argmin(np.sum(diff * diff, axis=2), axis=1)
+        return exact_nearest_lab_indices_blockwise(target_lab, self.grid_lab)
 
     def inverse_design(self, target_rgb: np.ndarray, progress_callback=None):
         target_rgb = clamp01(np.asarray(target_rgb, dtype=float))
@@ -935,14 +1035,7 @@ class MetaSurfaceColorEngine:
         arr = np.asarray(img).astype(float) / 255.0
         flat = arr.reshape(-1, 3)
         target_lab = rgb_to_lab(flat)
-        # Batch search to avoid memory explosion on large images
-        batch_size = 500
-        indices = np.empty(len(flat), dtype=int)
-        for start in range(0, len(flat), batch_size):
-            end = min(start + batch_size, len(flat))
-            batch_lab = target_lab[start:end]
-            diff = batch_lab[:, None, :] - self.grid_lab[None, :, :]
-            indices[start:end] = np.argmin(np.sum(diff * diff, axis=2), axis=1)
+        indices = exact_nearest_lab_indices_blockwise(target_lab, self.grid_lab)
         params = self.grid_params[indices].reshape(arr.shape[0], arr.shape[1], 3)
         mapped_rgb = self.grid_rgb[indices].reshape(arr.shape[0], arr.shape[1], 3)
         return arr, mapped_rgb, params

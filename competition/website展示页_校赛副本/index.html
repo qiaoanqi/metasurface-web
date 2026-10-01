@@ -22,10 +22,10 @@
     <meta property="og:description" content="面向超表面结构色验证的 AI 设计与可视化工作流，连接候选搜索、光谱表达和结果导出。">
     <meta property="og:type" content="website">
     <meta property="og:url" content="">
-    <meta property="og:image" content="images/fdtd_preview_P200.png">
+    <meta property="og:image" content="images/system-screenshot.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="AI超表面结构色智能设计系统 - 结构色光谱与颜色预览">
+    <meta property="og:image:alt" content="AI超表面结构色智能设计系统 - 交互界面预览">
     <meta property="og:site_name" content="AI超表面结构色智能设计系统">
     <meta property="og:locale" content="zh_CN">
 
@@ -33,8 +33,8 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="AI超表面结构色智能设计系统">
     <meta name="twitter:description" content="面向超表面结构色验证的 AI 设计与可视化工作流，连接候选搜索、光谱表达和结果导出。">
-    <meta name="twitter:image" content="images/fdtd_preview_P200.png">
-    <meta name="twitter:image:alt" content="AI超表面结构色智能设计系统 - 结构色光谱与颜色预览">
+    <meta name="twitter:image" content="images/system-screenshot.png">
+    <meta name="twitter:image:alt" content="AI超表面结构色智能设计系统 - 交互界面预览">
 
     <!-- Canonical -->
     <link rel="canonical" href="">
@@ -56,20 +56,13 @@
 
         :root {
             /* =================================================================
-               色彩令牌 · 派生自本次采样观察到的可达色
-               来源:engine.compute_spectrum,TiO2(anatase)/SiO2 单柱正向光谱。
-               采样范围:D 80-300nm(步长10) x H 100-560nm(步长20) x P {300,420,520}nm,
-                         排除 P < 1.2D,共 1536 组有效样本,按色相分段取最高彩度。
+               色彩令牌 · 用于网站视觉层，不作为当前物理参考库或性能数据。
+               早期采样笔记仅保留在源码中供追溯；交互结果以本地已审核参考入口为准。
                明度调整在 Oklch 感知均匀空间完成,色相不漂移。
                对比度:正文 5.35~18.12:1,强调色 6.88~13.38:1,全部通过 WCAG AA。
-
-               注:在上述采样范围内,暖端观察到彩度 68~83,冷端(青/蓝)仅 8~11。
-                   原品牌色 #00D4FF 落在本次采样未覆盖到的高彩度冷色区,
-                   故改用采样中实测存在的暖端色。这是采样范围内的观察结论,
-                   不构成"该体系物理上不能产生青色"的证明。
                ================================================================= */
 
-            /* 底色:从真实紫端 #463757 (D=80 H=540 P=300nm) 派生 */
+            /* 底色：网站视觉令牌，不代表物理仿真结果 */
             --bg-deep: #0C0812;
             --bg-surface: #18121E;
             --bg-elevated: #251F2B;
@@ -81,12 +74,12 @@
             --text-secondary: #AFB1B2;
             --text-muted: #888B8C;
 
-            /* 强调色:每色可追溯到一组真实纳米柱参数 */
-            --accent:        #FDA765;  /* 琥珀 ← #E87C00  D=250 H=140 P=300nm  C=78.5 */
-            --accent-strong: #FC6B2E;  /* 焰橙 ← #E05100  D=300 H=100 P=420nm  C=83.3 */
-            --accent-soft:   #F3D259;  /* 金   ← #BB9B00  D=220 H=100 P=300nm  C=68.6 */
-            --accent-cool:   #C191F5;  /* 紫   ← #463757  D=80  H=540 P=300nm  C=21.9 */
-            --accent-moss:   #A8C07A;  /* 苔绿 ← #758E47  D=170 H=120 P=300nm  C=40.6 */
+            /* 强调色：网站视觉令牌 */
+            --accent:        #FDA765;
+            --accent-strong: #FC6B2E;
+            --accent-soft:   #F3D259;
+            --accent-cool:   #C191F5;
+            --accent-moss:   #A8C07A;
 
             --accent-dim:       rgba(253, 167, 101, 0.12);
             --accent-soft-dim:  rgba(243, 210, 89, 0.10);
@@ -2817,7 +2810,7 @@
                     <div class="feature-icon">◈</div>
                     <h3 class="feature-title" data-i18n="feature_1_title">目标色候选搜索</h3>
                     <p class="feature-desc" data-i18n="feature_1_desc">
-                        基于机器学习代理模型与候选筛选，从目标光谱或颜色需求进入超表面结构参数探索，保留模型适用域和结果边界。
+                        基于机器学习代理模型与候选筛选，从目标颜色进入超表面结构参数探索，保留模型适用域和结果边界。
                     </p>
                     <div class="feature-tags">
                         <span class="feature-tag">代理模型</span>
@@ -2827,7 +2820,7 @@
                 </div>
                 <div class="feature-card fade-in">
                     <div class="feature-icon">◉</div>
-                    <h3 class="feature-title" data-i18n="feature_2_title">纳米级结构优化</h3>
+                    <h3 class="feature-title" data-i18n="feature_2_title">纳米结构参数探索</h3>
                     <p class="feature-desc" data-i18n="feature_2_desc">
                         支持在已注册模型域内探索周期、高度、直径和材料等参数，并显示结果适用边界。
                     </p>
@@ -2844,7 +2837,7 @@
                         支持结构预览、反射光谱和 CIE 1931 色度表达，帮助用户理解参数变化与候选结果。
                     </p>
                     <div class="feature-tags">
-                        <span class="feature-tag">结构预览</span>
+                        <span class="feature-tag">色度映射</span>
                         <span class="feature-tag" data-i18n="feature_3_tag">光谱分析</span>
                         <span class="feature-tag">结构预览</span>
                     </div>
@@ -2868,7 +2861,7 @@
                     <div class="step-number">01</div>
                     <h3 class="step-title" data-i18n="step_1_title">定义目标</h3>
                     <p class="step-desc" data-i18n="step_1_desc">
-                        输入目标颜色、光谱响应或结构参数约束。系统支持CIE色坐标、RGB值、反射率曲线等多种目标定义方式。
+                        输入目标颜色（RGB/HEX）或直接调节结构参数；系统同步展示当前路线的光谱和色度表达。
                     </p>
                 </div>
                 <div class="workflow-step fade-in">
@@ -2902,11 +2895,11 @@
             <div class="results-grid">
                 <div class="result-card fade-in">
                     <div class="result-visual">
-                        <img src="images/fdtd_preview_P200.png" alt="结构色光谱与颜色预览" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                        <img src="images/fdtd_preview_P200.png" alt="历史探索示意：结构色光谱与颜色预览" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
                     </div>
                     <h3 class="result-title" data-i18n="result_1_title">可见光结构色示例</h3>
                     <p class="result-desc" data-i18n="result_1_desc">
-                        展示结构色光谱与色度表达；具体误差数值以最终统一版本测试报告为准。
+                        历史探索示意图，用于说明光谱与色度表达；当前可复核结果以交互台的已审核参考入口为准。
                     </p>
                     <div class="result-meta">
                         <span><span class="meta-dot"></span><span data-i18n="result_1_tag1">可见光波段</span></span>
@@ -2915,11 +2908,11 @@
                 </div>
                 <div class="result-card fade-in">
                     <div class="result-visual">
-                        <img src="images/fano_vs_fdtd_smallD.png" alt="像素级结构色示意" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+                        <img src="images/fano_vs_fdtd_smallD.png" alt="历史探索示意：像素级结构色映射" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
                     </div>
                     <h3 class="result-title" data-i18n="result_2_title">像素级结构色示例</h3>
                     <p class="result-desc" data-i18n="result_2_desc">
-                        展示结构参数到颜色表达的像素级映射示例；具体物理性能需经独立高保真仿真或实验复核。
+                        历史探索示意图，展示结构参数到颜色表达的像素级映射；具体物理性能需经独立高保真仿真或实验复核。
                     </p>
                     <div class="result-meta">
                         <span><span class="meta-dot"></span><span data-i18n="result_2_tag1">像素级调控</span></span>
@@ -2954,7 +2947,7 @@
                             <span>Kuznetsov A I, et al.</span>
                         </div>
                         <div class="reference-summary">
-                            系统梳理了利用光学共振的介质纳米结构（如硅纳米颗粒）实现光调控的原理，为设计高效、低损耗的光学器件提供了理论框架。引用量超2800次，是介质超表面领域的奠基性综述。
+                            系统梳理了利用光学共振的介质纳米结构实现光调控的原理，为设计高效、低损耗的光学器件提供了理论框架。本页将其作为研究背景参考。
                         </div>
                     </div>
                 </div>
@@ -3022,7 +3015,7 @@
                             <span>de Souza A C, et al.</span>
                         </div>
                         <div class="reference-summary">
-                            用反向传播优化和多值人工神经网络，仅用585个样本就设计出比传统RGB色域更鲜艳的彩色滤光片。提出固定结构高度下的多色联合优化策略，显著降低数据需求与制造复杂度。
+                            讨论反向传播优化和人工神经网络在结构色滤光片设计中的应用；本页仅将其作为相关研究背景，不复述未经核验的样本量或性能数字。
                         </div>
                     </div>
                 </div>
@@ -3051,7 +3044,7 @@
         <div class="section-inner" style="border:1px solid #826333;border-radius:20px;padding:32px;background:rgba(180,130,45,.07);">
             <div class="section-label" data-i18n="demo_label">当前可运行版本</div>
             <h2 class="section-title" id="competition-entry-title" data-i18n="demo_title">完整交互台 · 含 RCWA 参考复核</h2>
-            <p class="section-desc" data-i18n="demo_desc">主入口 app.py 提供单柱、双柱、FP 腔、光谱/色度查看、逆设计和结果导出；TiO₂/SiO₂/air 单柱还支持已审核 RCWA 参考记录的精确复核。</p>
+            <p class="section-desc" data-i18n="demo_desc">主入口 app.py 以单柱路线为比赛主线，提供光谱/色度查看、逆设计和结果导出；双柱与 FP 腔属于辅助演示扩展。TiO₂/SiO₂/air 单柱支持已审核 RCWA 参考记录的精确复核。</p>
             <p style="line-height:1.8;margin:20px 0;color:var(--text-secondary);" data-i18n="demo_boundary">参考库共绑定 21,083 个唯一几何，限定 TM (p-pol)、0°、nG=151、Nxy=256。参考对照用于展示和前向复核，不等于代理模型全域精度、收敛证明或实验验证。</p>
             <a id="competitionLocalLink" href="http://127.0.0.1:8512" class="btn btn-primary" target="_blank" rel="noopener" hidden style="display:none" data-i18n="demo_open">打开本机比赛交互台</a>
             <p style="margin-top:16px;color:var(--text-muted);font-size:14px;" id="competitionLaunchHint" data-i18n="demo_launch">本地使用：启动主交互入口 app.py。在线服务尚未发布。</p>
@@ -3131,7 +3124,7 @@
                             <div class="layer-tags">
                                 <span class="layer-tag">Python</span>
                                 <span class="layer-tag">Streamlit</span>
-                                <span class="layer-tag">WebGL</span>
+                                <span class="layer-tag">Matplotlib</span>
                             </div>
                         </div>
                     </div>
@@ -3141,7 +3134,7 @@
                             <h4 data-i18n="layer_2_title">AI引擎 · 代理模型与候选搜索</h4>
                             <p data-i18n="layer_2_desc">核心学习模块用于正向光谱/颜色预测与候选搜索，界面同步显示模型版本、来源和适用边界。</p>
                             <div class="layer-tags">
-                                <span class="layer-tag">PyTorch</span>
+                                <span class="layer-tag">ONNX / 解析路线</span>
                                 <span class="layer-tag">代理模型</span>
                                 <span class="layer-tag">候选搜索</span>
                             </div>
@@ -3242,16 +3235,16 @@
                         <h4 data-i18n="model_card_1_title">候选搜索路由</h4>
                         <p data-i18n="model_card_1_desc">根据结构类型和材料配置选择当前可用的预测或解析路线，并将来源同步到结果区。</p>
                         <div class="model-card-tags">
-                            <span class="model-card-tag">Residual Block</span>
-                            <span class="model-card-tag">Skip Connection</span>
+                            <span class="model-card-tag">模型路由</span>
+                            <span class="model-card-tag">候选筛选</span>
                         </div>
                     </div>
                     <div class="model-card">
                         <h4 data-i18n="model_card_2_title">光谱到颜色</h4>
                         <p data-i18n="model_card_2_desc">由同一路线的光谱计算 RGB、CIE 1931 和 ΔE2000，便于用户核对颜色表达。</p>
                         <div class="model-card-tags">
-                            <span class="model-card-tag">Multi-Head Attention</span>
-                            <span class="model-card-tag">Feature Extraction</span>
+                            <span class="model-card-tag">CIE 1931</span>
+                            <span class="model-card-tag">光谱转换</span>
                         </div>
                     </div>
                     <div class="model-card">
@@ -3427,12 +3420,12 @@
                 feature_2_tag: 'Review interface',
                 feature_3_title: '可视化分析',
                 feature_3_desc: '提供结构预览、光谱曲线和 CIE 1931 色度图映射，帮助用户理解当前路线的设计结果。',
-                feature_3_tag: 'WebGL',
+                feature_3_tag: '色度映射',
                 how_label: '使用流程',
                 how_title: '三步完成设计',
                 how_desc: '从目标颜色到结构参数，系统提供清晰的输入、路由、表达和导出流程。',
                 step_1_title: '定义目标',
-                step_1_desc: '输入目标颜色（色坐标或光谱），设定工作波段与材料参数，系统初始化设计空间。',
+                step_1_desc: '输入目标颜色（RGB/HEX），或直接调节结构参数；系统初始化当前可用的设计空间。',
                 step_2_title: 'AI生成优化',
                 step_2_desc: '学习模型在当前适用域内生成候选结构，并结合光谱与色度信息进行筛选。',
                 step_3_title: '可视化验证',
@@ -3467,7 +3460,7 @@
                 architecture_desc: '四层架构连接用户交互、上下文检查、模型表达、候选筛选和结果导出。',
                 layer_1_number: '01',
                 layer_1_title: '交互层 · Streamlit Web',
-                layer_1_desc: 'Python + Streamlit + WebGL 实现浏览器端交互式可视化',
+                layer_1_desc: 'Python + Streamlit + Matplotlib/CSS 实现浏览器端交互式可视化',
                 layer_2_number: '02',
                 layer_2_title: 'AI引擎 · 代理模型与候选搜索',
                 layer_2_desc: '学习模型实现光谱/颜色预测与目标色候选搜索',
@@ -3497,11 +3490,11 @@
                 model_desc: '学习模型用于光谱/颜色预测与候选搜索，结果同步标注来源、版本和适用边界。',
                 model_card_1_title: '候选搜索路由',
                 model_card_1_desc: '根据结构类型和材料配置选择当前可用的预测或解析路线，并将来源同步到结果区。',
-                model_card_1_tag1: 'Residual Block',
+                model_card_1_tag1: '模型路由',
                 model_card_1_tag2: 'Skip Connection',
                 model_card_2_title: '光谱到颜色',
                 model_card_2_desc: '由同一路线的光谱计算 RGB、CIE 1931 和 ΔE2000，便于用户核对颜色表达。',
-                model_card_2_tag1: 'Multi-Head Attention',
+                model_card_2_tag1: '色度转换',
                 model_card_2_tag2: 'Feature Extraction',
                 model_card_3_title: '候选结构生成',
                 model_card_3_desc: '围绕目标颜色生成可继续筛选的结构参数候选；结构可制造性和物理量仍需经统一高保真仿真或实验复核。',
@@ -3573,7 +3566,7 @@
                 feature_2_tag: 'Review interface',
                 feature_3_title: 'Visual Analysis',
                 feature_3_desc: 'Structure preview, spectral curves and CIE 1931 chromaticity mapping help users inspect the active design route.',
-                feature_3_tag: 'WebGL',
+                feature_3_tag: 'Color mapping',
                 how_label: 'Workflow',
                 how_title: 'Design in Three Steps',
                 how_desc: 'From target color to structural parameters, the system provides a clear input, routing, expression and export workflow.',
@@ -3613,7 +3606,7 @@
                 architecture_desc: 'Four layers connect user interaction, context checks, model expression, candidate screening and result export.',
                 layer_1_number: '01',
                 layer_1_title: 'Interaction · Streamlit Web',
-                layer_1_desc: 'Python + Streamlit + WebGL for browser-based interactive visualization',
+                layer_1_desc: 'Python + Streamlit + Matplotlib/CSS for browser-based interactive visualization',
                 layer_2_number: '02',
                 layer_2_title: 'AI Engine · Surrogates and Search',
                 layer_2_desc: 'Learning models for spectral/color prediction and target-color candidate search',
@@ -3643,11 +3636,11 @@
                 model_desc: 'Learning models support spectral/color prediction and candidate search, with provenance, version and applicability shown alongside results.',
                 model_card_1_title: 'Candidate Search Routing',
                 model_card_1_desc: 'The active prediction or analytic route is selected from the structure and material configuration, with provenance carried into the result.',
-                model_card_1_tag1: 'Residual Block',
+                model_card_1_tag1: 'Model routing',
                 model_card_1_tag2: 'Skip Connection',
                 model_card_2_title: 'Spectrum to Color',
                 model_card_2_desc: 'RGB, CIE 1931 and ΔE2000 are computed from the same route spectrum so users can inspect the color expression.',
-                model_card_2_tag1: 'Multi-Head Attention',
+                model_card_2_tag1: 'Color conversion',
                 model_card_2_tag2: 'Feature Extraction',
                 model_card_3_title: 'Candidate Structure Generation',
                 model_card_3_desc: 'Candidate parameters are generated around a target color for further screening; manufacturability and physical quantities require unified high-fidelity or experimental review.',
@@ -3688,7 +3681,7 @@
             cta_desc: '本地完整交互入口已接入通过审核的 TiO₂/SiO₂/air 前向参考库，可对已收录结构做精确复核。',
             cta_hint: '比赛交互台使用主入口 app.py；参考对照与代理路线分开标注。',
             demo_label: '当前可运行版本', demo_title: '完整交互台 · 含 RCWA 参考复核',
-            demo_desc: '主入口 app.py 提供单柱、双柱、FP 腔、光谱/色度查看、逆设计和结果导出；TiO₂/SiO₂/air 单柱支持已审核 RCWA 参考记录的精确复核。',
+            demo_desc: '主入口 app.py 以单柱路线为比赛主线，提供光谱/色度查看、逆设计和结果导出；双柱与 FP 腔属于辅助演示扩展。TiO₂/SiO₂/air 单柱支持已审核 RCWA 参考记录的精确复核。',
             demo_boundary: '参考库共绑定 21,083 个唯一几何，限定 TM (p-pol)、0°、nG=151、Nxy=256。参考对照用于展示和前向复核，不等于代理模型全域精度、收敛证明或实验验证。',
             demo_open: '打开交互台',
             demo_open_local: '打开本机比赛交互台',
@@ -3704,7 +3697,7 @@
             cta_desc: 'The local full entry now includes an audited TiO₂/SiO₂/air forward-reference library for exact rechecks of recorded structures.',
             cta_hint: 'Use the main app.py competition entry; reference comparisons and surrogate routes remain separately labeled.',
             demo_label: 'CURRENT RUNNABLE VERSION', demo_title: 'Full interaction app · Audited RCWA recheck',
-            demo_desc: 'The main app.py entry provides single-pillar, dual-pillar and FP workflows, spectra/chromaticity views, inverse design and exports; TiO₂/SiO₂/air single pillars support exact checks against audited RCWA records.',
+            demo_desc: 'The main app.py entry uses the single-pillar route as the competition main line for spectra/chromaticity views, inverse design and exports; dual-pillar and FP are auxiliary demo extensions. TiO₂/SiO₂/air single pillars support exact checks against audited RCWA records.',
             demo_boundary: 'The library binds 21,083 unique geometries under TM polarization, 0°, nG=151 and Nxy=256. Reference comparison is for display and forward checking, not a global surrogate-accuracy, convergence or experimental claim.',
             demo_open: 'Open Competition App',
             demo_open_local: 'Open Local Competition App',
