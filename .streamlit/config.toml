@@ -1,0 +1,24 @@
+# Streamlit 主题 —— 与展示页共用同一套设计令牌
+#
+# 取色来源:competition 展示页 design_tokens.json
+# 每个强调色都来自本项目正向求解器可实际生成的结构色
+# (TiO2(anatase)/SiO2 单柱,engine.compute_spectrum 只读采样)。
+#
+# 这里声明主题的目的:让 Streamlit 自己把底色/文字/控件色渲染对,
+# 从而减少 app.py 里对 [data-testid="..."] 这类内部选择器的依赖
+# —— 那些选择器会随 Streamlit 版本变动而失效。
+
+[theme]
+base = "dark"
+primaryColor = "#FDA765"              # 琥珀 ← D=250 H=140 P=300nm
+backgroundColor = "#0C0812"           # 页面底色,由真实紫端 #463757 派生
+secondaryBackgroundColor = "#18121E"  # 侧栏/控件/表面
+textColor = "#F3F5F5"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# 竞赛展示页隐藏开发工具栏，避免把 File change / Rerun 暴露给终端用户。
+toolbarMode = "minimal"

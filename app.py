@@ -1241,7 +1241,7 @@ def _render_result_provenance(provenance):
             )
 
 
-def _render_reference_recheck(
+def _render_reference_recheck_details(
     *,
     structure_type,
     material,
@@ -1255,7 +1255,6 @@ def _render_reference_recheck(
     forward,
 ):
     """Show an exact lookup against the audited competition RCWA reference set."""
-    st.divider()
     st.subheader("真实 RCWA 参考复核")
     st.caption(
         "只读取已审核的 TiO2/SiO2/air 参考库；查询要求完整匹配几何和边界，"
@@ -1404,6 +1403,12 @@ def _render_reference_recheck(
         use_container_width=True,
         key="download_reference_recheck",
     )
+
+
+def _render_reference_recheck(**kwargs):
+    """Keep high-fidelity comparison available without taking over the preview."""
+    with st.expander("高保真参考对照（按需展开）", expanded=False):
+        _render_reference_recheck_details(**kwargs)
 
 
 def _inverse_candidate_contract(method, material, substrate, polarization, angle_deg):
@@ -1762,7 +1767,7 @@ def _render_inverse_context(context, route):
 def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_text,
                                    contract, material, substrate, polarization, angle_deg,
                                    apply_key=None, apply_callback=None):
-    """Render a comparable candidate card with source, context and boundary."""
+    """Render a scan-friendly candidate card with technical details on demand."""
     rgb_text = ", ".join(str(int(v)) for v in rgb_value)
     card_color = "#2A1C12" if rank == 1 else "var(--bg-surface)"
     st.markdown(
@@ -1780,24 +1785,25 @@ def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_te
           </div>
           <div style="min-width:0;margin-top:8px;font-size:12px;line-height:1.5;color:var(--text-secondary);
                       overflow-wrap:anywhere;word-break:break-word">
-            <b style="color:var(--text-primary)">参数：</b>{html.escape(params_text)}<br>
-            <b style="color:var(--text-primary)">方法：</b>{html.escape(contract['method'])} ·
-            <b style="color:var(--text-primary)">模型：</b>{html.escape(contract['model'])}<br>
-            <span style="color:var(--text-muted)">上下文：</span>{html.escape(material)} / {html.escape(substrate)} ·
-            {html.escape(polarization)} · θ={float(angle_deg):.1f}°<br>
-            <span style="color:var(--accent-soft)">边界：</span>{html.escape(contract['boundary'])}
+            <b style="color:var(--text-primary)">参数：</b>{html.escape(params_text)}
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    with st.expander(f"查看候选来源与适用边界 · #{int(rank)}", expanded=False):
+        st.markdown(
+            f"**方法**：{contract['method']}  \n"
+            f"**模型**：{contract['model']}  \n"
+            f"**上下文**：{material} / {substrate} · {polarization} · θ={float(angle_deg):.1f}°  \n"
+            f"**边界**：{contract['boundary']}"
+        )
     if apply_key and apply_callback:
         st.button("应用此候选", key=apply_key, on_click=apply_callback, use_container_width=True)
 
 
-st.title("🎨 超表面结构色设计台")
-st.caption("竞赛展示版 · 交互设计台 · 代理模型 / 解析近似 / FP-TMM · CIEDE2000")
-st.caption("当前结果的来源、模型版本和适用边界均可在预览区审计；代理预测不等同于本次直接 RCWA。")
+st.title("超表面结构色设计")
+st.caption("输入目标颜色，搜索结构，查看光谱并导出结果。")
 st.markdown(
     """
     <style>
@@ -1825,7 +1831,7 @@ st.markdown(
       .block-container { padding-top: clamp(1rem, 3vw, 2rem) !important; padding-left: clamp(.75rem, 3vw, 3rem) !important; padding-right: clamp(.75rem, 3vw, 3rem) !important; }
       [data-testid="stAppViewContainer"] { overflow-x: hidden; }
       [data-testid="stSidebar"] * { overflow-wrap: anywhere; word-break: break-word; }
-      h1 { font-size: clamp(2rem, 3.1vw, 2.75rem) !important; line-height: 1.12 !important; overflow-wrap: anywhere; word-break: break-word; margin-bottom: .25rem !important; letter-spacing: -.02em; }
+      h1 { font-size: clamp(2rem, 3.1vw, 2.75rem) !important; line-height: 1.12 !important; overflow-wrap: anywhere; word-break: break-word; margin-bottom: .25rem !important; letter-spacing: 0; }
       .competition-banner { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; margin:10px 0 14px; padding:10px 12px; border:1px solid var(--border-strong); border-left:4px solid var(--accent); border-radius:10px; background:linear-gradient(90deg, #1A1024, var(--bg-surface)); color:var(--text-primary); font-size:13px; line-height:1.5; }
       .competition-banner strong { color:var(--accent-soft); }
       [data-baseweb="tab-list"] { gap: 2px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -ms-overflow-style:none; }
@@ -1909,7 +1915,6 @@ st.markdown(
     <div class="competition-banner" aria-label="竞赛展示模式">
       <strong>竞赛展示模式</strong>
       <span>目标颜色 → 候选搜索 → 光谱 / 色度 → 结果导出</span>
-      <span style="color:var(--text-muted)">科研训练、holdout 与控制面不在此页面运行</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1917,7 +1922,7 @@ st.markdown(
 st.markdown(
     """
     <div class="workflow-hint" aria-label="工作流">
-      工作流：侧栏设置参数 → 预览颜色与来源 → 在“光谱”页核对，或进入“逆设计”搜索候选。
+      使用顺序：输入目标颜色 → 调整结构 → 查看结果 → 导出记录。
     </div>
     """,
     unsafe_allow_html=True,
@@ -2832,6 +2837,7 @@ with tab1:
                   border-radius:16px;box-shadow:0 8px 32px {hex_color}66,
                   inset 0 1px 0 rgba(255,255,255,0.3);flex-shrink:0;"></div>
       <div style="color:#e0e0e0;min-width:0;overflow-wrap:anywhere;word-break:break-word;">
+        <div style="font-size:12px;opacity:0.72;margin-bottom:4px;">当前路线颜色 · 由当前路线光谱计算</div>
         <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{"不可用" if not _color_available else hex_color}</div>
         <div style="font-size:14px;opacity:0.85;">{"当前路由未生成可用颜色" if not _color_available else f"RGB({r255}, {g255}, {b255})"}</div>
         <div style="margin-top:10px;font-size:13px;opacity:0.6;line-height:1.6;">
@@ -3454,6 +3460,12 @@ with tab2:
                             predicted_rgb=pred_rgb, delta_e2000=de_gd,
                         ),))
                     st.success(f"🎉 单柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    if de_gd > 20:
+                        st.warning(
+                            f"当前目标色与最佳候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
+                            "这表示目标可能超出当前材料/模型色域；可尝试切换材料、衬底或 FP 腔，"
+                            "并在应用前进行高保真复核。"
+                        )
                     _render_inverse_candidate_card(
                         1, hex_gd, rc, de_gd,
                         f"D={d_gd:.1f}nm · H={h_gd:.1f}nm · P={p_gd:.1f}nm",
@@ -3516,6 +3528,12 @@ with tab2:
                             predicted_rgb=pred_rgb, delta_e2000=de_gd,
                         ),))
                     st.success(f"🎉 双柱梯度优化完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                    if de_gd > 20:
+                        st.warning(
+                            f"当前目标色与最佳候选仍有较大色差（ΔE2000={de_gd:.1f}）。"
+                            "这表示目标可能超出当前材料/模型色域；可尝试切换材料、衬底或 FP 腔，"
+                            "并在应用前进行高保真复核。"
+                        )
                     _render_inverse_candidate_card(
                         1, hex_gd, rc, de_gd,
                         f"D1={d1_gd:.1f}nm · H1={h1_gd:.1f}nm · D2={d2_gd:.1f}nm · H2={h2_gd:.1f}nm · P={p_gd:.1f}nm",
