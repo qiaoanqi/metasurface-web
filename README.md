@@ -1,8 +1,18 @@
 ﻿# AI超表面结构色智能设计系统
 
-面向超表面结构色验证场景的 AI 设计与可视化工作流。当前竞赛主线是本地可复核的单柱参数探索、光谱/色度表达、已审核参考复核和结果导出；双柱、FP 腔及其他材料属于辅助演示路线，具体可用范围以交互页的来源标注为准。
+面向竞赛展示的超表面结构色设计与可视化系统。当前主线是单柱参数探索、光谱/色度表达、已审核 TiO₂/SiO₂/air 参考复核和结果导出；其他结构与材料路线按交互页的来源标注运行。
 
-公网地址、代码仓库和队伍身份信息在提交前单独配置，不在脱敏项目说明中固定历史地址或个人信息。
+## 当前入口
+
+- 在线展示页：<http://47.111.14.70/>
+- 在线交互页：<http://47.111.14.70/app/>
+- GitHub 代码仓库：<https://github.com/qiaoanqi/metasurface-web>
+- 系统文档与资源索引：[competition/13_公开资源索引.md](competition/13_公开资源索引.md)
+- 离线包：<https://github.com/qiaoanqi/metasurface-web/releases/download/competition-web-v1.0.0/ai_metasurface_web_bundle_v1.zip>
+
+二维码当前直接指向在线交互页 `/app/`。公网 IP 变更后，需要同步更新二维码、网站链接和本文件中的地址。
+
+报名系统中的队伍身份信息仍单独填写，公开仓库只保留竞赛运行时、展示页和脱敏说明。
 
 ---
 ## 功能概览
@@ -14,7 +24,7 @@
 | 🖼 图案生成 | 上传图片 → 逐像素匹配纳米柱 → 超表面阵列可视化 |
 | 🗺 色域映射 | CIE 1931 色度图上叠加 sRGB 色域、材料色域边界对比 |
 | 📊 光谱分析 | 反射光谱曲线、入射角扫描、偏振对比 |
-| 🧠 AI 分析 | DeepSeek 大模型解读颜色物理机理 + 参数优化建议 |
+| 🧭 路由提示 | 按结构、材料、衬底和入射条件提示当前可用路线 |
 | 🔬 远场传播 | 角谱理论 + NA 锥积分，模拟人眼/显微镜观察效果 |
 | 📦 数据导出 | 光谱 CSV、色板 PNG、逆设计结果 JSON 一键下载 |
 
@@ -30,85 +40,48 @@
 - Python 3.10+
 - Windows / Linux / macOS
 
-### 一键运行
-
-**Windows：** 双击 `run.bat`（首次自动安装依赖）
-
-**Linux/macOS：**
-```bash
-chmod +x run.sh
-./run.sh
-```
-
-### 手动安装
+### 启动竞赛交互台
 
 ```bash
-pip install -r requirements.txt
-streamlit run app.py --server.port 8501
+python -m pip install -r requirements-web.txt
+python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8512
 ```
 
-浏览器打开 `http://localhost:8501`
+浏览器打开 `http://127.0.0.1:8512/`。Windows、Linux 和 macOS 的完整说明见 [competition/11_本地离线演示说明.md](competition/11_本地离线演示说明.md)。
 
 ---
 
-## 目录结构
+## 目录导航
 
 ```
-├── app.py              # Streamlit 主程序
-├── engine.py           # 物理引擎（Lorentz/Fano共振 + 逆设计搜索）
-├── torch_model.py      # PyTorch 批量物理模型 + 梯度逆设计
-├── ml_module.py        # ML 代理模型（ResMLP ONNX推理 + numpy梯度优化）
-├── fp_cavity.py        # FP 腔传输矩阵法（金属镜 / DBR介质镜）
-├── rl_design.py        # Q-Learning 强化学习逆设计
-├── ccm.py              # 耦合补偿模型 (CCM): f_eff = f0 + Δf(L,W)
-├── color_utils.py      # CIE 1931 色度学工具（XYZ/Lab/ΔE2000）
-├── llm/                # 大模型模块（DeepSeek API）
-├── models/             # ONNX 模型权重 + PyTorch checkpoint
-│   ├── forward_mlp_v8_sub.onnx    # 单柱 ML 模型（含衬底编码）
-│   ├── dual_mlp_v3_multi.onnx     # 双柱 ML 模型
-│   └── rl_qtable.pkl              # RL Q表
-├── data/               # 数据集与预处理
-├── requirements.txt    # Python 依赖
-├── run.bat / run.sh    # 一键运行脚本
-├── .env.example        # 环境变量模板
-└── README.md
+├── app.py                              # Streamlit 交互入口
+├── engine.py / ml_module.py            # 前向路线与代理模型
+├── color_utils.py                      # CIE 1931 / Lab / ΔE2000
+├── competition/                        # 竞赛文档、参考库和展示页
+├── competition/website展示页_校赛副本/ # 网站式展示页
+├── deployment/                         # ECS、Nginx 和 systemd 部署文件
+├── scripts/                            # 发布包、manifest 和健康检查脚本
+├── requirements-web.txt                # 竞赛运行时依赖
+└── dist/                               # 本地生成的发布包（ZIP 不进 Git）
 ```
 
 ---
 
-## 环境配置
+## 运行边界
 
-复制 `.env.example` 为 `.env`，填入 API 密钥：
-
-```ini
-DEEPSEEK_API_KEY=你的DeepSeek密钥
-HF_TOKEN=你的HuggingFace令牌（可选）
-```
-
-- `DEEPSEEK_API_KEY`：用于 AI 智能分析功能，不填则 AI 分析不可用
-- `HF_TOKEN`：用于从 HuggingFace Hub 自动下载模型，本地已有 models/ 则无需
-
----
-
-## 可选依赖
-
-| 依赖 | 用途 | 安装命令 |
-|------|------|---------|
-| PyTorch | 梯度逆设计、RL训练、批量色卡、灵敏度分析 | `pip install torch` |
-
-不装 PyTorch 时，系统会自动降级为纯 numpy/ONNX 路径，核心功能不受影响。
+竞赛包默认关闭外部大模型功能，不需要 API 密钥。页面中的代理预测、解析路线和参考复核会分别标注来源；参考库只对已收录整数几何做精确命中，不做最近邻或插值。
 
 ---
 
 ## 云端部署
 
-### 阿里云（提交前配置）
+### 当前阿里云入口
 
-公网地址、端口和 HTTPS 状态以最终部署复核记录为准。推荐校赛展示实例为 4 vCPU / 16 GB RAM / 100 GB SSD；本地离线包作为公网故障时的备份。
+- 展示页：<http://47.111.14.70/>
+- 交互页：<http://47.111.14.70/app/>
+- 健康检查：<http://47.111.14.70/health>
 
-### HuggingFace Spaces（备选）
-
-`qiaoanqi/metasurface-color-designer`
+部署、更新和回滚命令见 [deployment/DEPLOY_TO_ECS.md](deployment/DEPLOY_TO_ECS.md)。
 
 ---
 
@@ -121,18 +94,15 @@ HF_TOKEN=你的HuggingFace令牌（可选）
 | 逆设计 | 网格搜索 · Q-Learning RL · PyTorch 梯度优化 |
 | 色度学 | CIE 1931 · CIEDE2000 · sRGB · ConvexHull 色域 |
 | 前端 | Streamlit · Matplotlib · 纯CSS纳米柱渲染 |
-| LLM | DeepSeek Chat API · 定制 Prompt 工程 |
-| 部署 | ONNX Runtime · Alibaba Cloud · Nginx + Streamlit · HuggingFace Spaces |
+| 部署 | ONNX Runtime · Alibaba Cloud · Nginx + Streamlit |
 
 ---
 
-## 项目报告
+## 发布资源
 
-详见 `AI超表面结构色设计_项目报告.docx`（含完整技术文档、测试数据、参考文献）。
+- 资源索引：[competition/13_公开资源索引.md](competition/13_公开资源索引.md)
+- 本地交付清单：[competition/12_校赛本地交付清单.md](competition/12_校赛本地交付清单.md)
+- ECS 部署说明：[deployment/README.md](deployment/README.md)
+- 离线包：<https://github.com/qiaoanqi/metasurface-web/releases/tag/competition-web-v1.0.0>
 
-## 致谢
-
-- 指导教师甘文老师
-- 长沙理工大学物理与电子科学学院
-- CIE 015:2018 色度学标准
-- DeepSeek 大模型 API
+公网可访问只表示竞赛展示服务正常，不代表科研控制面或实验验证已经完成。

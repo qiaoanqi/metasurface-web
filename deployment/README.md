@@ -2,6 +2,8 @@
 
 这个目录对应“网站发布”，与 `competition/*cloud*.zip` 的 RCWA 批量计算包分开。
 
+当前竞赛发布入口：展示页 `http://47.111.14.70/`，交互页 `http://47.111.14.70/app/`，代码和文档见 `https://github.com/qiaoanqi/metasurface-web`，离线包见 GitHub Release `competition-web-v1.0.0`。二维码绑定交互页；公网 IP 变更后需要重新生成二维码并复测。
+
 部署后：
 
 - `http://服务器公网IP/`：网站展示页；

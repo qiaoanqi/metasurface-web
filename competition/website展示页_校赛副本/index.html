@@ -3308,7 +3308,7 @@
         <div class="cta-inner">
             <h2 class="cta-title" data-i18n="cta_title">探索AI驱动的超表面设计</h2>
             <p class="cta-desc" data-i18n="cta_desc">
-                通过网站式入口了解产品流程；最终在线地址和离线包在提交前统一配置。
+                在线展示页连接同域交互台；代码仓库、系统文档和离线包已统一整理。
             </p>
             <div class="cta-buttons">
                 <a href="#competition-entry" class="btn btn-primary">
@@ -3318,10 +3318,11 @@
                 <a href="#competition-entry" class="btn btn-ghost" data-i18n="cta_secondary">查看离线说明</a>
             </div>
             <p class="cta-hint" data-i18n="cta_hint" style="margin-top:16px;font-size:14px;color:var(--text-muted);">
-                在线地址、离线包和运行说明以最终竞赛提交版本为准
+                在线交互台、代码仓库、系统文档和离线包均指向当前竞赛版本
             </p>
             <div class="qr-section" style="margin-top:32px;">
-                <img src="images/qr-code.png" alt="提交前配置二维码占位" style="width:140px;height:140px;border-radius:8px;border:1px solid var(--border-subtle);">
+                <img src="images/qr-code.png" alt="扫码打开在线交互台" style="width:140px;height:140px;border-radius:8px;border:1px solid var(--border-subtle);">
+                <p data-i18n="qr_caption" style="margin-top:12px;font-size:13px;color:var(--text-muted);">扫码打开在线交互台</p>
             </div>
         </div>
     </section>
@@ -3356,23 +3357,23 @@
                 <div class="footer-col">
                     <h4 data-i18n="footer_resources">资源</h4>
                     <ul>
-                        <li><a href="#" data-i18n="footer_resources_doc">系统文档</a></li>
+                        <li><a id="systemDocsLink" href="https://github.com/qiaoanqi/metasurface-web/blob/master/competition/11_%E6%9C%AC%E5%9C%B0%E7%A6%BB%E7%BA%BF%E6%BC%94%E7%A4%BA%E8%AF%B4%E6%98%8E.md" target="_blank" rel="noopener" data-i18n="footer_resources_doc">系统文档</a></li>
                         <li><a href="#references" data-i18n="footer_resources_papers">论文资料</a></li>
                     </ul>
                 </div>
                 <div class="footer-col">
                     <h4 data-i18n="footer_open">开源获取</h4>
                     <ul>
-                        <li><a href="#showcase" data-i18n="footer_github">代码仓库（提交前配置）</a></li>
-                        <li><a href="#showcase" data-i18n="footer_download">离线包（提交前配置）</a></li>
+                        <li><a id="githubLink" href="https://github.com/qiaoanqi/metasurface-web" target="_blank" rel="noopener" data-i18n="footer_github">代码仓库</a></li>
+                        <li><a id="offlineLink" href="https://github.com/qiaoanqi/metasurface-web/releases/download/competition-web-v1.0.0/ai_metasurface_web_bundle_v1.zip" target="_blank" rel="noopener" data-i18n="footer_download">下载离线包</a></li>
                     </ul>
                 </div>
             </div>
                 <div class="footer-bottom">
                     <span data-i18n="footer_copyright">© 2026 AI超表面结构色智能设计系统. 保留所有权利.</span>
                     <div class="footer-social">
-                        <a href="#showcase" title="代码仓库（提交前配置）">⌘</a>
-                        <a href="#showcase" title="离线包（提交前配置）">◊</a>
+                        <a href="https://github.com/qiaoanqi/metasurface-web" target="_blank" rel="noopener" title="代码仓库">⌘</a>
+                        <a href="https://github.com/qiaoanqi/metasurface-web/releases/download/competition-web-v1.0.0/ai_metasurface_web_bundle_v1.zip" target="_blank" rel="noopener" title="下载离线包">◊</a>
                     </div>
                 </div>
         </div>
@@ -3513,18 +3514,19 @@
                 accuracy_metric_4_label: '可见光波段 nm',
                 accuracy_detail: '系统将设计结果映射至 CIE 1931 标准色度图，并在当前模型路线内与目标色坐标进行比对；具体数值以最终版本测试报告为准。',
                 cta_title: '探索AI驱动的超表面设计',
-                cta_desc: '通过网站式入口了解产品流程；最终在线地址和离线包在提交前统一配置。',
+                cta_desc: '在线展示页连接同域交互台；代码仓库、系统文档和离线包已统一整理。',
                 cta_primary: '访问系统',
                 cta_secondary: '查看离线说明',
-                cta_hint: '在线地址、离线包和运行说明以最终竞赛提交版本为准',
+                cta_hint: '在线交互台、代码仓库、系统文档和离线包均指向当前竞赛版本',
                 footer_brand: 'AI驱动的超表面结构色智能设计系统，面向算法模型创新与微纳光学结构色验证场景。',
                 footer_nav: '导航',
                 footer_resources: '资源',
                 footer_resources_doc: '系统文档',
                 footer_resources_papers: '论文资料',
                 footer_open: '开源获取',
-                footer_github: '代码仓库（提交前配置）',
-                footer_download: '离线包（提交前配置）',
+                footer_github: '代码仓库',
+                footer_download: '下载离线包',
+                qr_caption: '扫码打开在线交互台',
                 footer_copyright: '© 2026 AI超表面结构色智能设计系统. 保留所有权利.'
             },
             en: {
@@ -3659,18 +3661,19 @@
                 accuracy_metric_4_label: 'Visible band nm',
                 accuracy_detail: 'Results are mapped to the CIE 1931 chromaticity diagram and compared with target coordinates within the active model route; physical accuracy requires unified high-fidelity or experimental review.',
                 cta_title: 'Explore AI-Driven Metasurface Design',
-                cta_desc: 'Use the website entry to review the product flow; configure the final online address and offline package before submission.',
+                cta_desc: 'The showcase page connects to the same-origin interaction app; code, documentation and the offline package are organized together.',
                 cta_primary: 'Access System',
                 cta_secondary: 'Offline Notes',
-                cta_hint: 'Final online address, offline package and run instructions are configured before submission',
+                cta_hint: 'The interaction app, repository, documentation and offline package point to this competition release',
                 footer_brand: 'AI-Driven Metasurface Structural Color Intelligent Design System for model innovation and nano-optical validation scenarios.',
                 footer_nav: 'Navigation',
                 footer_resources: 'Resources',
                 footer_resources_doc: 'Documentation',
                 footer_resources_papers: 'Papers',
                 footer_open: 'Open Source',
-                footer_github: 'Repository pending config',
-                footer_download: 'Offline package pending config',
+                footer_github: 'Code repository',
+                footer_download: 'Download offline package',
+                qr_caption: 'Scan to open the online interaction app',
                 footer_copyright: '© 2026 AI Metasurface Structural Color System. All rights reserved.'
             }
         };

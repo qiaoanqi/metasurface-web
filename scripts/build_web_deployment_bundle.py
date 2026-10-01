@@ -31,6 +31,7 @@ COMPETITION_FILES = (
     "competition/tio2_air_day_color_audit_20260930.json",
     "competition/11_本地离线演示说明.md",
     "competition/12_校赛本地交付清单.md",
+    "competition/13_公开资源索引.md",
 )
 
 MODEL_GLOB = "models/forward_mlp_rcwa_*.onnx"
