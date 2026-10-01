@@ -44,7 +44,7 @@ from ui_pattern_contracts import (
 from ui_session_migration import (
     BoolControlSpec, EnumControlSpec, NumericControlSpec,
     ML_ACCEL_PREFERENCE_INITIALIZED_KEY, initialize_bool_preference_marker,
-    migrate_session_state, set_bool_value, set_numeric_value,
+    migrate_session_state, set_bool_value, set_enum_value, set_numeric_value,
     sync_bool_from_widget, sync_enum_from_widget, sync_numeric_from_widget,
     sync_bool_preference_from_widget,
 )
@@ -254,6 +254,43 @@ _BOOL_CONTROLS = {
     "far_field": BoolControlSpec("far_field", "far_field_control", False),
     "ml_accel": BoolControlSpec("ml_accel", "ml_accel_control", False),
 }
+
+# This is a deterministic, exact-match reference example for the competition
+# demo. It is intentionally a UI preset, not a recommendation or a training
+# sample. The reference library remains the authority for the stored color.
+_AUDITED_REFERENCE_SAMPLE = {
+    "material": "TiO2 (anatase)",
+    "substrate": "SiO2 (fused silica)",
+    "polarization": "TM (p-pol)",
+    "angle_deg": 0.0,
+    "diameter_nm": 140.0,
+    "height_nm": 281.0,
+    "period_nm": 407.0,
+    "target_hex": "#242d49",
+}
+
+
+def _load_audited_reference_sample() -> None:
+    """Load the exact geometry used by the audited competition reference set."""
+    set_enum_value(st.session_state, _ENUM_CONTROLS["structure"], "single")
+    set_enum_value(st.session_state, _ENUM_CONTROLS["material"], _AUDITED_REFERENCE_SAMPLE["material"])
+    set_enum_value(st.session_state, _ENUM_CONTROLS["substrate"], _AUDITED_REFERENCE_SAMPLE["substrate"])
+    set_enum_value(st.session_state, _ENUM_CONTROLS["polarization"], _AUDITED_REFERENCE_SAMPLE["polarization"])
+    set_numeric_value(st.session_state, _NUMERIC_CONTROLS["angle"], _AUDITED_REFERENCE_SAMPLE["angle_deg"])
+    set_numeric_value(st.session_state, _NUMERIC_CONTROLS["single_d"], _AUDITED_REFERENCE_SAMPLE["diameter_nm"])
+    set_numeric_value(st.session_state, _NUMERIC_CONTROLS["single_h"], _AUDITED_REFERENCE_SAMPLE["height_nm"])
+    set_numeric_value(st.session_state, _NUMERIC_CONTROLS["period"], _AUDITED_REFERENCE_SAMPLE["period_nm"])
+    set_bool_value(st.session_state, _BOOL_CONTROLS["far_field"], False)
+    # Keep this demonstration on the transparent analytical route so the
+    # comparison visibly separates the current route from the audited RCWA.
+    set_bool_value(st.session_state, _BOOL_CONTROLS["ml_accel"], False)
+    st.session_state["inverse_target_picker"] = _AUDITED_REFERENCE_SAMPLE["target_hex"]
+    st.session_state["_audited_sample_notice"] = (
+        "已加载已审核示例：TiO2/SiO2/air · TM · 0° · "
+        "D/H/P=140/281/407 nm。展开“高保真参考对照”查看精确命中结果。"
+    )
+    st.session_state["_expand_reference_recheck_once"] = True
+    _clear_inverse_results()
 
 initialize_bool_preference_marker(
     st.session_state, _BOOL_CONTROLS["ml_accel"],
@@ -1407,7 +1444,8 @@ def _render_reference_recheck_details(
 
 def _render_reference_recheck(**kwargs):
     """Keep high-fidelity comparison available without taking over the preview."""
-    with st.expander("高保真参考对照（按需展开）", expanded=False):
+    expanded = bool(st.session_state.pop("_expand_reference_recheck_once", False))
+    with st.expander("高保真参考对照（按需展开）", expanded=expanded):
         _render_reference_recheck_details(**kwargs)
 
 
@@ -1927,10 +1965,24 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+_audited_sample_notice = st.session_state.pop("_audited_sample_notice", "")
+if _audited_sample_notice:
+    st.success(_audited_sample_notice)
 
 # Sidebar controls
 with st.sidebar:
     st.header('⚙️ 参数控制')
+    st.button(
+        "加载已审核示例",
+        key="load_audited_reference_sample",
+        use_container_width=True,
+        on_click=_load_audited_reference_sample,
+        help=(
+            "载入一个已存在于 TiO2/SiO2/air RCWA 参考库中的精确整数几何，"
+            "用于现场演示颜色与光谱复核；不会插值、训练或修改数据。"
+        ),
+    )
+    st.caption("TiO2/SiO2/air · TM · 0° · D/H/P=140/281/407 nm")
     _structure_options = ['单柱', '双柱', 'FP 腔（Fabry-Pérot）']
     st.radio(
         '📏 结构类型',

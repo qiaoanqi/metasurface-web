@@ -77,6 +77,11 @@ _v5/
 *.png
 data/*
 models/
+!models/
+models/*
+!models/evidence/
+models/evidence/*
+!models/evidence/forward_mlp_v8_sub_conversion_v1.json
 演示视频.mp4
 AI超表面结构色设计_项目报告.docx
 
@@ -108,3 +113,7 @@ _evt_paragraph.tex
 !data/ellipse_gate1_invariants.pkl
 !data/ellipse_gate2_result.pkl
 !data/ng_probe_elliptical_*.pkl
+
+# Competition web release artifacts (regenerate from the versioned sources)
+dist/ai_metasurface_web_bundle_v1.zip
+dist/ui-release-manifest.json
