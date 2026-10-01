@@ -305,6 +305,101 @@ migrate_session_state(
     tuple(_ENUM_CONTROLS.values()), tuple(_BOOL_CONTROLS.values()),
 )
 
+# ===================== UI appearance =====================
+# Keep appearance preferences in this Streamlit session.  They are deliberately
+# separate from the physical/model controls so changing a theme never changes
+# a simulation input or invalidates a computed result.
+_UI_THEME_OPTIONS = {
+    "深色": "dark",
+    "浅色": "light",
+    "高对比": "contrast",
+}
+_UI_ACCENT_OPTIONS = {
+    "琥珀橙": "amber",
+    "靛蓝": "indigo",
+    "青绿色": "teal",
+    "紫罗兰": "violet",
+}
+_UI_THEME_BASE = {
+    "dark": {
+        "bg_deep": "#0C0812", "bg_surface": "#18121E", "bg_elevated": "#251F2B",
+        "border_subtle": "#342D3C", "border_strong": "#51495C",
+        "text_primary": "#F3F5F5", "text_secondary": "#AFB1B2", "text_muted": "#888B8C",
+        "scrim": "rgba(12, 8, 18, .78)", "preview_start": "#1A1A2E", "preview_end": "#16213E",
+        "substrate_start": "#3A3A5C", "substrate_end": "#252540", "highlight_surface": "#2A1C12",
+        "button_bg": "#251F2B", "button_text": "#F3F5F5", "code_bg": "#100C16",
+    },
+    "light": {
+        "bg_deep": "#F4F7FB", "bg_surface": "#FFFFFF", "bg_elevated": "#EEF2F7",
+        "border_subtle": "#D9E1EC", "border_strong": "#B7C4D5",
+        "text_primary": "#182230", "text_secondary": "#475569", "text_muted": "#64748B",
+        "scrim": "rgba(15, 23, 42, .72)", "preview_start": "#E8EEF8", "preview_end": "#DCE6F5",
+        "substrate_start": "#A8B6CB", "substrate_end": "#7E8DA6", "highlight_surface": "#FFF4E8",
+        "button_bg": "#FFFFFF", "button_text": "#182230", "code_bg": "#F8FAFC",
+    },
+    "contrast": {
+        "bg_deep": "#000000", "bg_surface": "#0B0B0B", "bg_elevated": "#171717",
+        "border_subtle": "#707070", "border_strong": "#D4D4D4",
+        "text_primary": "#FFFFFF", "text_secondary": "#F5F5F5", "text_muted": "#D4D4D4",
+        "scrim": "rgba(0, 0, 0, .84)", "preview_start": "#111111", "preview_end": "#252525",
+        "substrate_start": "#666666", "substrate_end": "#333333", "highlight_surface": "#3A2B00",
+        "button_bg": "#111111", "button_text": "#FFFFFF", "code_bg": "#050505",
+    },
+}
+_UI_ACCENT_PALETTE = {
+    "amber": {
+        "dark": {"accent": "#FDA765", "accent_strong": "#FC6B2E", "accent_soft": "#F3D259", "accent_cool": "#C191F5"},
+        "light": {"accent": "#B45309", "accent_strong": "#C2410C", "accent_soft": "#9A3412", "accent_cool": "#6D28D9"},
+        "contrast": {"accent": "#FFD000", "accent_strong": "#FF7A00", "accent_soft": "#FFFF00", "accent_cool": "#D8B4FE"},
+    },
+    "indigo": {
+        "dark": {"accent": "#8AB4FF", "accent_strong": "#4F8CFF", "accent_soft": "#B9D3FF", "accent_cool": "#C4B5FD"},
+        "light": {"accent": "#2563EB", "accent_strong": "#1D4ED8", "accent_soft": "#6D28D9", "accent_cool": "#0E7490"},
+        "contrast": {"accent": "#8AB4FF", "accent_strong": "#4F8CFF", "accent_soft": "#D9E7FF", "accent_cool": "#C4B5FD"},
+    },
+    "teal": {
+        "dark": {"accent": "#65D6C5", "accent_strong": "#14B8A6", "accent_soft": "#99F6E4", "accent_cool": "#7DD3FC"},
+        "light": {"accent": "#0F766E", "accent_strong": "#0D9488", "accent_soft": "#115E59", "accent_cool": "#0369A1"},
+        "contrast": {"accent": "#5EEAD4", "accent_strong": "#2DD4BF", "accent_soft": "#CCFBF1", "accent_cool": "#BAE6FD"},
+    },
+    "violet": {
+        "dark": {"accent": "#C4B5FD", "accent_strong": "#8B5CF6", "accent_soft": "#DDD6FE", "accent_cool": "#93C5FD"},
+        "light": {"accent": "#7C3AED", "accent_strong": "#6D28D9", "accent_soft": "#6B21A8", "accent_cool": "#2563EB"},
+        "contrast": {"accent": "#C4B5FD", "accent_strong": "#A78BFA", "accent_soft": "#EDE9FE", "accent_cool": "#BFDBFE"},
+    },
+}
+
+st.session_state.setdefault("ui_theme_control", "深色")
+st.session_state.setdefault("ui_accent_control", "琥珀橙")
+
+# Render these controls before the page CSS is emitted.  Streamlit reruns the
+# script after a selection, so the current values are available to the CSS in
+# the same render and persist for the rest of the session.
+with st.sidebar:
+    st.markdown("### 🎨 外观")
+    st.radio(
+        "界面主题",
+        list(_UI_THEME_OPTIONS),
+        key="ui_theme_control",
+        horizontal=True,
+        help="只改变界面颜色，不改变材料、结构参数或计算结果。",
+    )
+    st.selectbox(
+        "强调色",
+        list(_UI_ACCENT_OPTIONS),
+        key="ui_accent_control",
+        help="选择按钮、边框和重点信息的强调色。",
+    )
+    st.caption("主题偏好仅保存在当前浏览器会话。")
+    st.divider()
+
+_UI_THEME_MODE = _UI_THEME_OPTIONS.get(
+    st.session_state.get("ui_theme_control", "深色"), "dark")
+_UI_ACCENT_MODE = _UI_ACCENT_OPTIONS.get(
+    st.session_state.get("ui_accent_control", "琥珀橙"), "amber")
+_UI_STYLE = dict(_UI_THEME_BASE[_UI_THEME_MODE])
+_UI_STYLE.update(_UI_ACCENT_PALETTE[_UI_ACCENT_MODE][_UI_THEME_MODE])
+
 # ===================== Streamlit UI =====================
 def get_engine():
     """Return the mutable engine owned by this Streamlit session only."""
@@ -1947,7 +2042,7 @@ def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_te
                                    apply_key=None, apply_callback=None):
     """Render a scan-friendly candidate card with technical details on demand."""
     rgb_text = ", ".join(str(int(v)) for v in rgb_value)
-    card_color = "#2A1C12" if rank == 1 else "var(--bg-surface)"
+    card_color = "var(--highlight-surface)" if rank == 1 else "var(--bg-surface)"
     st.markdown(
         f"""
         <div style="width:100%;max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;
@@ -2084,6 +2179,72 @@ st.markdown(
         .inverse-target-card__swatch { width:72px; height:72px; flex-basis:72px; }
         .mapping-summary { grid-template-columns:1fr; }
       }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"""
+    <style id="ui-theme-vars">
+      /* The selected palette is emitted after the shared stylesheet so it
+         overrides the default tokens without changing the existing layout. */
+      :root {{
+        --bg-deep: {_UI_STYLE['bg_deep']};
+        --bg-surface: {_UI_STYLE['bg_surface']};
+        --bg-elevated: {_UI_STYLE['bg_elevated']};
+        --border-subtle: {_UI_STYLE['border_subtle']};
+        --border-strong: {_UI_STYLE['border_strong']};
+        --text-primary: {_UI_STYLE['text_primary']};
+        --text-secondary: {_UI_STYLE['text_secondary']};
+        --text-muted: {_UI_STYLE['text_muted']};
+        --accent: {_UI_STYLE['accent']};
+        --accent-strong: {_UI_STYLE['accent_strong']};
+        --accent-soft: {_UI_STYLE['accent_soft']};
+        --accent-cool: {_UI_STYLE['accent_cool']};
+        --focus-ring: {_UI_STYLE['accent']};
+        --focus-halo: color-mix(in srgb, {_UI_STYLE['accent']} 28%, transparent);
+        --scrim: {_UI_STYLE['scrim']};
+        --preview-start: {_UI_STYLE['preview_start']};
+        --preview-end: {_UI_STYLE['preview_end']};
+        --substrate-start: {_UI_STYLE['substrate_start']};
+        --substrate-end: {_UI_STYLE['substrate_end']};
+        --highlight-surface: {_UI_STYLE['highlight_surface']};
+        --button-bg: {_UI_STYLE['button_bg']};
+        --button-text: {_UI_STYLE['button_text']};
+        --code-bg: {_UI_STYLE['code_bg']};
+      }}
+      html, body, .stApp {{ background: var(--bg-deep) !important; color: var(--text-primary); }}
+      [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{ background: var(--bg-deep) !important; color: var(--text-primary); }}
+      [data-testid="stHeader"] {{ background: var(--bg-deep) !important; }}
+      [data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"],
+      [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+      label, legend, .stRadio p, .stSelectbox p {{ color: var(--text-primary); }}
+      [data-testid="stCaptionContainer"] {{ color: var(--text-muted) !important; }}
+      [data-testid="stButton"] button, [data-testid="stDownloadButton"] button {{
+        background: var(--button-bg) !important;
+        color: var(--button-text) !important;
+        border-color: var(--border-strong) !important;
+      }}
+      [data-testid="stButton"] button:hover, [data-testid="stDownloadButton"] button:hover {{
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+      }}
+      [data-baseweb="select"] > div, [data-baseweb="input"] > div,
+      [data-baseweb="textarea"] > div {{
+        background: var(--bg-surface) !important;
+        border-color: var(--border-subtle) !important;
+        color: var(--text-primary) !important;
+      }}
+      [data-baseweb="select"] input, [data-baseweb="input"] input,
+      [data-baseweb="textarea"] textarea {{ color: var(--text-primary) !important; }}
+      [role="radiogroup"] label {{ color: var(--text-primary) !important; }}
+      [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{
+        background: var(--bg-surface) !important;
+        color: var(--text-primary) !important;
+        border-color: var(--border-subtle) !important;
+      }}
+      .competition-banner {{ background: linear-gradient(90deg, var(--bg-elevated), var(--bg-surface)); }}
+      .theme-swatch {{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; background:var(--accent); }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -3023,12 +3184,12 @@ with tab1:
         param_info = f"D={diameter:.0f}nm  H={height:.0f}nm  P={period:.0f}nm"
     st.markdown(f"""
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:16px;
-                background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                background:linear-gradient(135deg, var(--preview-start) 0%, var(--preview-end) 100%);
                 border-radius:16px;margin-bottom:20px;">
       <div style="width:clamp(88px,30vw,130px);height:clamp(88px,30vw,130px);background:{hex_color};
                   border-radius:16px;box-shadow:0 8px 32px {hex_color}66,
                   inset 0 1px 0 rgba(255,255,255,0.3);flex-shrink:0;"></div>
-      <div style="color:#e0e0e0;min-width:0;overflow-wrap:anywhere;word-break:break-word;">
+      <div style="color:var(--text-primary);min-width:0;overflow-wrap:anywhere;word-break:break-word;">
         <div style="font-size:12px;opacity:0.72;margin-bottom:4px;">当前路线颜色 · 由当前路线光谱计算</div>
         <div style="font-size:24px;font-weight:700;margin-bottom:6px;">{"不可用" if not _color_available else hex_color}</div>
         <div style="font-size:14px;opacity:0.85;">{"当前路由未生成可用颜色" if not _color_available else f"RGB({r255}, {g255}, {b255})"}</div>
@@ -3099,8 +3260,8 @@ with tab1:
         period_w = period * scale * 0.45
 
         st.markdown(f"""
-        <div style="background:#1a1a2e;border-radius:16px;padding:24px 24px 16px 24px;">
-          <div style="text-align:center;color:#888;font-size:12px;margin-bottom:16px;
+        <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:16px;padding:24px 24px 16px 24px;">
+          <div style="text-align:center;color:var(--text-muted);font-size:12px;margin-bottom:16px;
                       letter-spacing:0.5px;">
             CROSS-SECTION &nbsp;&middot;&nbsp; {param_info}
           </div>
@@ -3108,7 +3269,7 @@ with tab1:
                       height:230px;position:relative;">
             <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);
                         width:{period_w*2.2:.0f}px;height:{sh}px;
-                        background:linear-gradient(180deg, #3a3a5c, #252540);
+                        background:linear-gradient(180deg, var(--substrate-start), var(--substrate-end));
                         border-radius:4px 4px 0 0;"></div>
             <div style="position:absolute;bottom:{sh}px;left:50%;transform:translateX(-50%);
                         width:{period_w*2.2:.0f}px;height:2px;
@@ -3123,7 +3284,7 @@ with tab1:
             <div style="position:absolute;bottom:{sh}px;left:calc(50% + {pw/2+16:.0f}px);
                         width:1px;height:{ph:.0f}px;background:rgba(255,255,255,0.15);"></div>
             <div style="position:absolute;bottom:{sh+ph/2:.0f}px;left:calc(50% + {pw/2+22:.0f}px);
-                        color:#666;font-size:10px;">{height:.0f}</div>
+                        color:var(--text-muted);font-size:10px;">{height:.0f}</div>
           </div>
         </div>
         """, unsafe_allow_html=True)
