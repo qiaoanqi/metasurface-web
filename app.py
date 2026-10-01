@@ -5099,7 +5099,7 @@ with tab5:
 
     # === Frozen Fano vs generic-ONNX model difference ===
     st.divider()
-    st.subheader("模型间差异分析（Fano 近似 vs generic ONNX）")
+    st.subheader("模型差异分析")
     _difference_contract = model_difference_contracts.GENERIC_ONNX_ROUTE
     _difference_context_issue = _difference_contract.context_issue(
         material, substrate, polarization, angle)
@@ -5137,30 +5137,35 @@ with tab5:
         os.path.dirname(__file__), _difference_contract.model_relative_path)
     _difference_source_pt_path = os.path.join(
         os.path.dirname(__file__), _difference_contract.source_pt_relative_path)
-    st.caption(
-        "左侧路线：torch_model.batch_lorentzian_spectrum（Lorentz/Fano 半解析近似）；"
-        f"右侧路线：{_difference_contract.route_id}；"
-        f"模型：{_difference_model_path}；版本：{_difference_contract.model_version}；"
-        f"graph SHA-256={_difference_contract.model_sha256}；"
-        f"external-data SHA-256={_difference_contract.external_data_sha256}。"
-    )
-    st.caption(
-        f"源 PT：{_difference_source_pt_path}；source PT SHA-256={_difference_contract.source_pt_sha256}；"
-        f"训练提交 {_difference_contract.training_commit}；"
-        f"转换提交 {_difference_contract.conversion_commit}；"
-        f"协议 canonical SHA-256={_difference_contract.conversion_protocol_sha256}；"
-        f"结果 canonical SHA-256={_difference_contract.conversion_result_sha256}。"
-        "这些文件只在点击运行后加载并校验。"
-    )
-    st.caption(
-        f"{_difference_contract.pair_evidence_text(material, substrate)}"
-        f"{_difference_contract.boundary_text}"
-        "指标仅为两条模型路线输出经同一 color_utils 色度管线得到的模型间 CIEDE2000 差异；"
-        "不是 RCWA 精度、实验误差或人眼感知阈值。"
-    )
+    st.caption("对比快速近似模型与 ML 模型的颜色输出，检查两条路线是否一致。")
+    with st.expander("查看技术详情", expanded=False):
+        st.caption(
+            "左侧路线：torch_model.batch_lorentzian_spectrum（Lorentz/Fano 半解析近似）；"
+            f"右侧路线：{_difference_contract.route_id}；"
+            f"模型：{_difference_model_path}；版本：{_difference_contract.model_version}；"
+            f"graph SHA-256={_difference_contract.model_sha256}；"
+            f"external-data SHA-256={_difference_contract.external_data_sha256}。"
+        )
+        st.caption(
+            f"源 PT：{_difference_source_pt_path}；source PT SHA-256={_difference_contract.source_pt_sha256}；"
+            f"训练提交 {_difference_contract.training_commit}；"
+            f"转换提交 {_difference_contract.conversion_commit}；"
+            f"协议 canonical SHA-256={_difference_contract.conversion_protocol_sha256}；"
+            f"结果 canonical SHA-256={_difference_contract.conversion_result_sha256}。"
+            "这些文件只在点击运行后加载并校验。"
+        )
+        st.caption(
+            f"{_difference_contract.pair_evidence_text(material, substrate)}"
+            f"{_difference_contract.boundary_text}"
+            "指标仅为两条模型路线输出经同一 color_utils 色度管线得到的模型间 CIEDE2000 差异；"
+            "不是 RCWA 精度、实验误差或人眼感知阈值。"
+        )
     if _difference_unavailable_reason:
-        _difference_notice = (
-            f"当前模型间差异分析不可用：{_difference_unavailable_reason}。")
+        if not st.session_state.get("ml_accel", False):
+            _difference_notice = "开启 ML 加速后可运行模型差异分析。"
+        else:
+            _difference_notice = (
+                f"当前模型差异分析不可用：{_difference_unavailable_reason}。")
         if _difference_structure_not_applicable:
             st.info(_difference_notice)
         else:
