@@ -208,10 +208,21 @@
             gap: 40px;
         }
 
+        /* Keep the language switch and primary entry as one intentional
+           control group.  Without this rule the inline children wrapped at
+           medium widths and appeared as two cramped, unrelated rows. */
+        .nav-cta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
         .nav-links {
             display: flex;
             gap: 32px;
             list-style: none;
+            flex-shrink: 0;
         }
 
         .nav-links a {
@@ -219,6 +230,7 @@
             text-decoration: none;
             font-size: 14px;
             font-weight: 500;
+            white-space: nowrap;
             transition: color 0.2s ease;
             position: relative;
         }
@@ -256,6 +268,7 @@
             text-decoration: none;
             border: none;
             font-family: inherit;
+            white-space: nowrap;
         }
 
         .btn-primary {
@@ -2405,14 +2418,22 @@
             }
         }
 
-        /* The in-app browser commonly gives this page an ~800px CSS viewport. */
-        @media (max-width: 900px) {
-            .header-inner { padding: 0 24px; }
+        /* Nine links plus the entry action need more room than a tablet header
+           can provide. Keep every destination in the mobile menu instead of
+           squeezing the labels into unreadable wrapped columns. */
+        @media (max-width: 1300px) {
+            .header-inner { padding: 0 32px; }
             .nav { display: none; }
             .hamburger { display: flex; }
             .mobile-nav { display: flex; }
-            .logo { max-width: 230px; min-width: 0; }
-            .logo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .logo { max-width: none; min-width: 0; }
+            .logo span { white-space: nowrap; }
+        }
+
+        @media (max-width: 900px) {
+            .header-inner { padding: 0 24px; }
+            .logo { max-width: 230px; }
+            .logo span { overflow: hidden; text-overflow: ellipsis; }
         }
 
         @media (max-width: 768px) {
