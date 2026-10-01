@@ -7,7 +7,7 @@
 本版 SHA-256：
 
 ```text
-26DCBFBE461A2DEBB2E769C5D41A5F84FA87BA3D93E6B5815B9EF8C7DE92142C
+0C114C8A40D35587544BDD353BBB3B2D687608669CB3504C1F1B8E1F01D52E63
 ```
 
 包内 TiO2/SiO2/air 参考记录 SHA-256：
@@ -21,20 +21,20 @@
 在 ECS 实例详情页进入“上传/下载文件”，选择本地 ZIP，目标路径填写：
 
 ```text
-/root/ai_metasurface_web_bundle_v1.zip
+/root/ai_metasurface_web_bundle_v1_release_20261001.zip
 ```
 
-注意：目标是一个以 `.zip` 结尾的普通文件，不要先创建同名目录，也不要把 ZIP 上传到 `/root/ai_metasurface_web_bundle_v1.zip/`。Cloud Assistant 的“发送文件”入口只适合几十 KB 的脚本；这个 168 MB 发布包应使用实例详情页的文件上传入口。
+注意：目标是一个以 `.zip` 结尾的普通文件，不要先创建同名目录，也不要把 ZIP 上传到 `/root/ai_metasurface_web_bundle_v1_release_20261001.zip/`。Cloud Assistant 的“发送文件”入口只适合几十 KB 的脚本；这个 168 MB 发布包应使用实例详情页的文件上传入口。
 
 ## 3. Cloud Assistant 执行部署命令
 
 上传完成后，在同一台 ECS、同一地域执行下面的 Shell 命令。先校验包，再解压到临时目录；如果已有旧版，会自动改名保留，不覆盖删除。
 
 ```bash
-set -Eeuo pipefail
+set -eu
 
-ZIP=/root/ai_metasurface_web_bundle_v1.zip
-EXPECTED=3B1596C23071925D97465D17A785B798AEF2F37771054D29B96B6C93E4CAC740
+ZIP=/root/ai_metasurface_web_bundle_v1_release_20261001.zip
+EXPECTED=0C114C8A40D35587544BDD353BBB3B2D687608669CB3504C1F1B8E1F01D52E63
 test -f "$ZIP"
 printf '%s  %s\n' "$EXPECTED" "$ZIP" | sha256sum -c -
 

@@ -29,6 +29,9 @@ python3 -m venv "${INSTALL_ROOT}/.venv"
 
 install -d -m 0750 -o metasurface -g metasurface "${INSTALL_ROOT}/.runtime-home"
 chown -R metasurface:metasurface "${INSTALL_ROOT}"
+# The release stage is created by mktemp with mode 0700. Nginx must be able to
+# traverse the application root to serve the public showcase files.
+chmod 0755 "${INSTALL_ROOT}"
 
 install -m 0644 "${INSTALL_ROOT}/deployment/systemd/metasurface-streamlit.service" \
     "/etc/systemd/system/${SERVICE_NAME}.service"
