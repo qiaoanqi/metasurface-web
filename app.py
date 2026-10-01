@@ -59,7 +59,7 @@ from ui_forward_routes import (
     MappingCellResult,
 )
 from ui_inverse_contracts import (
-    InverseContext, InverseRun, build_inverse_candidate,
+    InverseContext, InverseMethodState, InverseRun, build_inverse_candidate,
     candidate_parameter_updates, fp_search_cache_key,
     invalidate_inverse_run, inverse_context_fingerprint,
     inverse_method_registry, inverse_run_matches, serialize_inverse_run,
@@ -83,7 +83,7 @@ from color_utils import (
     spectrum_to_xyz, xyz_to_srgb, spectrum_to_srgb, clamp01,
     srgb_to_linear, rgb_to_xyz, xyz_to_xy, rgb_to_xy,
     xyz_to_lab, rgb_to_lab, rgb_to_hex, rgb_255,
-    delta_e76, delta_e2000,
+    delta_e76, delta_e2000, delta_e2000_scalar,
 )
 from competition.reference_library import (
     ReferenceLibraryError,
@@ -290,7 +290,7 @@ def _load_audited_reference_sample() -> None:
     # Streamlit's "value set via Session State API" warning on callbacks.
     st.session_state["inverse_target_picker"] = _AUDITED_REFERENCE_SAMPLE["target_hex"]
     st.session_state["_audited_sample_notice"] = (
-        "已加载已审核示例：TiO2/SiO2/air · TM · 0° · "
+        "已加载可复核示例：TiO2/SiO2/air · TM · 0° · "
         "D/H/P=140/281/407 nm。展开“高保真参考对照”查看精确命中结果。"
     )
     st.session_state["_expand_reference_recheck_once"] = True
@@ -1465,6 +1465,18 @@ def _render_reference_recheck(**kwargs):
 def _inverse_candidate_contract(method, material, substrate, polarization, angle_deg):
     """Describe an inverse candidate's actual search route and its scientific boundary."""
     method_key = str(method).lower()
+    if method_key in {
+        "reference", "audited_reference", "reference_library",
+    }:
+        return {
+            "method": "已审核 RCWA 参考库颜色近邻搜索",
+            "model": "competition/tio2_air_reference_records_v1.jsonl",
+            "route_id": "audited_rcwa_reference",
+            "boundary": (
+                "候选来自已审核 JSONL 中的完整 RCWA 记录；只按已存颜色排序，"
+                "不插值、不训练、不把参考记录当作代理模型预测。"
+            ),
+        }
     if method_key in {"smart_grid", "rcwa", "rcwa surrogate", "rcwa-trained"}:
         model_name = _rcwa_model_version(material, substrate)
         if model_name == "不可用":
@@ -1596,9 +1608,10 @@ def _dual_domain_manifest_verified(context, *, manifest_path=None, model_path=No
 
 
 def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
-                           dual_ready, compare_enabled, fp_mirror_type=""):
+                           dual_ready, compare_enabled, fp_mirror_type="",
+                           far_field_enabled=False):
     """Return the structure-specific registry for the current context."""
-    return inverse_method_registry(
+    states = inverse_method_registry(
         context,
         supported_material=context.material in ml_module.MATERIAL_CODES,
         supported_substrate=context.substrate in ml_module.SUBSTRATE_CODES,
@@ -1613,6 +1626,47 @@ def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
         compare_enabled=compare_enabled,
         fp_mirror_type=fp_mirror_type,
     )
+    # The audited reference library is a separate, data-backed route.  It is
+    # intentionally offered for TM/normal-incidence single-pillar contexts
+    # only; TE keeps the existing proxy registry unchanged.
+    if context.structure_type == "single" and not str(context.polarization).startswith("TE"):
+        try:
+            reference_library = load_reference_library()
+            supported, support_reason = reference_library.supports_display_conditions(
+                context.material, context.substrate, context.polarization,
+                context.angle_deg, structure_type="single",
+                far_field_enabled=bool(far_field_enabled),
+            )
+            reference_available = bool(context.geometry_valid and supported)
+            if not context.geometry_valid:
+                reference_reason = "不可用：当前几何无效。"
+            elif not supported:
+                reference_reason = f"不可用：{support_reason}"
+            else:
+                reference_reason = (
+                    f"可用：已绑定 {reference_library.unique_geometry_count:,} 个唯一几何；"
+                    "结果来自已审核 RCWA 记录。"
+                )
+            states["reference"] = InverseMethodState(
+                "reference", "已审核参考库",
+                "按 ΔE2000 从已审核 RCWA 记录中排序候选",
+                reference_available, reference_reason, scope="reference_library",
+            )
+        except ReferenceLibraryError as exc:
+            states["reference"] = InverseMethodState(
+                "reference", "已审核参考库",
+                "按 ΔE2000 从已审核 RCWA 记录中排序候选",
+                False, f"不可用：参考库审核绑定失败（{exc}）。",
+                scope="reference_library",
+            )
+        except Exception as exc:
+            states["reference"] = InverseMethodState(
+                "reference", "已审核参考库",
+                "按 ΔE2000 从已审核 RCWA 记录中排序候选",
+                False, f"不可用：参考库加载异常（{type(exc).__name__}）。",
+                scope="reference_library",
+            )
+    return states
 
 
 _INVERSE_RESULT_KEYS = (
@@ -1620,7 +1674,7 @@ _INVERSE_RESULT_KEYS = (
     "_gd_d", "_gd_h", "_gd_p", "_gd_hex", "_gd_de", "_gd_rgb",
     "_dual_gd_d1", "_dual_gd_h1", "_dual_gd_d2", "_dual_gd_h2",
     "_dual_gd_p", "_dual_gd_hex", "_dual_gd_de", "_dual_gd_rgb",
-    "_ai_candidates",
+    "_ai_candidates", "_reference_matches",
 )
 
 
@@ -1685,6 +1739,66 @@ def _normalized_smart_candidates(context, candidates):
                 "p": params.period_nm,
             },
             predicted_rgb=rgb, delta_e76=de76, delta_e2000=de2000,
+        ))
+    return tuple(records)
+
+
+def _reference_library_candidates(context, *, limit=5):
+    """Return exact audited reference matches ranked by CIEDE2000.
+
+    The library stores the audited Lab/sRGB values beside every full spectrum.
+    This route only ranks those existing records; it never interpolates a
+    missing geometry or calls a surrogate model.
+    """
+    if context.structure_type != "single":
+        raise ValueError("已审核参考库只支持单柱结构")
+    reference_library = load_reference_library()
+    supported, support_reason = reference_library.supports_display_conditions(
+        context.material, context.substrate, context.polarization,
+        context.angle_deg, structure_type=context.structure_type,
+        far_field_enabled=False,
+    )
+    if not supported:
+        raise ValueError(support_reason)
+    target_lab = rgb_to_lab(np.asarray(context.target_rgb, dtype=float) / 255.0)
+    scored = [
+        (
+            float(delta_e2000_scalar(target_lab, match.lab_d65)),
+            match,
+        )
+        for match in reference_library.by_geometry.values()
+    ]
+    scored.sort(key=lambda item: (item[0], item[1].geometry))
+    return tuple(scored[:max(1, int(limit))])
+
+
+def _normalized_reference_candidates(context, scored_candidates):
+    """Build strict inverse-run records for audited reference candidates."""
+    contract = _inverse_candidate_contract(
+        "audited_reference", context.material, context.substrate,
+        context.polarization, context.angle_deg,
+    )
+    target_lab = rgb_to_lab(np.asarray(context.target_rgb, dtype=float) / 255.0)
+    records = []
+    for rank, (de2000, match) in enumerate(scored_candidates, start=1):
+        rgb = np.asarray(match.srgb_display, dtype=float)
+        records.append(build_inverse_candidate(
+            context,
+            method_id="reference", method_label="已审核参考库", rank=rank,
+            structure_type="single",
+            candidate_context=_candidate_context(
+                "single", context.material, context.substrate,
+                context.polarization, context.angle_deg,
+            ),
+            route_id=contract["route_id"], route_label=contract["method"],
+            model_version=contract["model"], boundary=contract["boundary"],
+            parameters={
+                "d": match.geometry[0], "h": match.geometry[1],
+                "p": match.geometry[2],
+            },
+            predicted_rgb=rgb,
+            delta_e76=delta_e76(target_lab, match.lab_d65),
+            delta_e2000=de2000,
         ))
     return tuple(records)
 
@@ -1810,27 +1924,22 @@ def _render_inverse_context(context, route):
         unsafe_allow_html=True,
     )
     st.caption(
-        "逆设计候选按各自搜索路径标注来源；候选 ΔE 只表示当前模型空间内的匹配度，"
-        "不替代直接 RCWA 或实验复核。"
+        "候选会标注来源；应用前请做物理复核。"
     )
-    # The audited display sample is deliberately bound to TM/p polarization,
-    # while the currently registered single-pillar inverse methods are only
-    # validated for TE at normal incidence.  Explain the disabled search
-    # state at the point of use instead of leaving the user to infer it from a
-    # grey button.
-    if (
-        context.structure_type == "single"
-        and (
-            not str(context.polarization).startswith("TE")
-            or abs(float(context.angle_deg)) >= 1e-9
-        )
-    ):
-        st.info(
-            f"当前前向复核条件为 {html.escape(str(context.polarization))} / "
-            f"{float(context.angle_deg):.1f}°；已注册的单柱逆设计搜索仅支持 TE (s-pol)、0°。"
-            "如需运行逆设计，请在左侧将偏振切换为 TE (s-pol) 并保持入射角 0°；"
-            "这不会改变已审核 TM 参考库的条件。"
-        )
+    # Keep the boundary visible but short: TM/0° has a usable audited-library
+    # route, while the learned proxy methods remain registered for TE/0°.
+    if context.structure_type == "single":
+        is_te = str(context.polarization).startswith("TE")
+        is_normal = abs(float(context.angle_deg)) < 1e-9
+        if not is_te and is_normal:
+            st.caption(
+                "TM / 0°：已审核参考库可用；代理模型仍限 TE / 0°。"
+            )
+        elif not is_te or not is_normal:
+            st.info(
+                f"当前条件为 {html.escape(str(context.polarization))} / "
+                f"{float(context.angle_deg):.1f}°；可用搜索路线受注册条件限制。"
+            )
 
 
 def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_text,
@@ -2004,16 +2113,16 @@ if _audited_sample_notice:
 with st.sidebar:
     st.header('⚙️ 参数控制')
     st.button(
-        "加载已审核示例",
+        "加载可复核示例",
         key="load_audited_reference_sample",
         use_container_width=True,
         on_click=_load_audited_reference_sample,
         help=(
-            "载入一个已存在于 TiO2/SiO2/air RCWA 参考库中的精确整数几何，"
-            "用于现场演示颜色与光谱复核；不会插值、训练或修改数据。"
+            "点击后自动填入一组已存在于审核 RCWA 参考库中的精确几何，"
+            "并立即可在预览、光谱和参考复核中查看；不会插值、训练或修改数据。"
         ),
     )
-    st.caption("TiO2/SiO2/air · TM · 0° · D/H/P=140/281/407 nm")
+    st.caption("点一次即可载入可复核参数：TiO2 / SiO2 / air · TM · 0°")
     _structure_options = ['单柱', '双柱', 'FP 腔（Fabry-Pérot）']
     st.radio(
         '📏 结构类型',
@@ -3276,7 +3385,7 @@ with tab1:
 # Tab 2: Inverse Design
 with tab2:
     st.subheader("逆设计")
-    st.caption("先确认目标色与搜索配置，再运行一个推荐方法；候选仍需独立物理复核。")
+    st.caption("选目标色，运行推荐搜索；结果可应用后再复核。")
 
     col_pick, col_target = st.columns([1, 2])
     with col_pick:
@@ -3353,9 +3462,31 @@ with tab2:
         dual_ready=_dual_ml_ready,
         compare_enabled=ENABLE_MULTI_SCHEME_SEARCH,
         fp_mirror_type=st.session_state.get("fp_mirror_type", ""),
+        far_field_enabled=bool(_far_field_enabled),
+    )
+    # Far-field and geometry validity are intentionally outside
+    # InverseContext's export identity.  Drop a reference-library run when
+    # its current display conditions no longer support that exact route.
+    _existing_inverse_run = st.session_state.get("_inverse_run")
+    _reference_state = _method_states.get("reference")
+    if (
+        isinstance(_existing_inverse_run, InverseRun)
+        and _existing_inverse_run.method_id == "reference"
+        and (_reference_state is None or not _reference_state.available)
+    ):
+        _clear_inverse_results()
+    # If a live, exact-pair RCWA proxy session is already bound, preserve its
+    # existing primary entry and keep the audited-library route in the
+    # secondary list.  On the normal local demo path no such session exists,
+    # so TM/0° promotes the fully usable audited route to the main button.
+    _reference_primary = (
+        "reference" in _method_states and not bool(_rcwa_ml_ready)
     )
     _preferred_order = {
-        "single": ["smart", "single"],
+        "single": (
+            ["reference", "smart", "single"] if _reference_primary
+            else ["smart", "single"]
+        ),
         "dual": ["dual"],
         "fp": ["fp"],
     }[_inverse_structure]
@@ -3373,6 +3504,7 @@ with tab2:
     )
     st.caption(f"推荐方法：{_primary_state.summary}。{_primary_state.reason}")
 
+    reference_btn = primary_btn if _primary_method == "reference" else False
     smart_btn = primary_btn if _primary_method == "smart" else False
     gd_btn = primary_btn if _primary_method == "single" else False
     dual_gd_btn = primary_btn if _primary_method == "dual" else False
@@ -3405,6 +3537,8 @@ with tab2:
                 )
             if _method_key == "smart":
                 smart_btn = _clicked
+            elif _method_key == "reference":
+                reference_btn = _clicked
             elif _method_key == "single":
                 gd_btn = _clicked
             elif _method_key == "dual":
@@ -3435,6 +3569,63 @@ with tab2:
             st.error("当前单柱参数无效：D > P 会导致纳米柱越过单元边界。已禁用逆设计候选和结果导出，请先调小 D 或增大 P。")
         else:
             st.error("当前结构参数无效；已禁用逆设计候选和结果导出，请先修正侧栏几何参数。")
+
+    if reference_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
+        with st.spinner("🎯 从已审核 RCWA 参考库中按颜色排序..."):
+            try:
+                _reference_matches = _reference_library_candidates(
+                    _inverse_context, limit=5)
+                if not _reference_matches:
+                    st.warning("参考库中没有可用记录。")
+                else:
+                    st.session_state._reference_matches = _reference_matches
+                    _reference_records = _normalized_reference_candidates(
+                        _inverse_context, _reference_matches)
+                    _store_inverse_run(
+                        _inverse_context, "reference", "已审核参考库",
+                        _reference_records,
+                    )
+                    st.success(
+                        f"已审核参考库搜索完成 · 返回 {len(_reference_matches)} 个精确 RCWA 候选"
+                        f" · 最佳 ΔE2000={_reference_matches[0][0]:.2f}"
+                    )
+            except ReferenceLibraryError as exc:
+                st.error(f"参考库审核绑定失败，未生成候选：{exc}")
+            except Exception as exc:
+                st.warning(f"已审核参考库搜索失败：{type(exc).__name__}：{exc}")
+
+    _reference_matches = st.session_state.get("_reference_matches")
+    if _reference_matches and inverse_run_matches(
+            st.session_state.get("_inverse_run"), _inverse_context):
+        _reference_contract = _inverse_candidate_contract(
+            "audited_reference", material, substrate, polarization, angle)
+        st.caption(
+            "以下候选均为参考库中已有的完整 RCWA 记录；只做颜色排序，不是插值或代理模型预测。"
+        )
+        for _rank, (_de, _match) in enumerate(_reference_matches, start=1):
+            _reference_rgb = np.asarray(_match.srgb_display, dtype=float)
+            _reference_hex = rgb_to_hex(_reference_rgb)
+            _reference_rgb255 = rgb_255(_reference_rgb)
+            _reference_params_text = (
+                f"D={_match.geometry[0]}nm · H={_match.geometry[1]}nm · "
+                f"P={_match.geometry[2]}nm · 记录 #{_match.record.get('index', '?')}"
+            )
+
+            def _apply_reference_cb(
+                _d=_match.geometry[0], _h=_match.geometry[1],
+                _p=_match.geometry[2],
+            ):
+                _apply_inverse_candidate(
+                    _inverse_context, "single", {"d": _d, "h": _h, "p": _p})
+
+            _render_inverse_candidate_card(
+                _rank, _reference_hex, _reference_rgb255, _de,
+                _reference_params_text, _reference_contract,
+                material, substrate, polarization, angle,
+                apply_key=f"apply_reference_result_{_rank}",
+                apply_callback=_apply_reference_cb,
+            )
 
     if smart_btn and _inverse_context.geometry_valid:
         _clear_inverse_results()
