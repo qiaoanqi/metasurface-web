@@ -327,7 +327,7 @@ _UI_THEME_BASE = {
         "text_primary": "#F3F5F5", "text_secondary": "#AFB1B2", "text_muted": "#888B8C",
         "scrim": "rgba(12, 8, 18, .78)", "preview_start": "#1A1A2E", "preview_end": "#16213E",
         "substrate_start": "#3A3A5C", "substrate_end": "#252540", "highlight_surface": "#2A1C12",
-        "button_bg": "#251F2B", "button_text": "#F3F5F5", "code_bg": "#100C16",
+        "button_bg": "#251F2B", "button_text": "#F3F5F5", "accent_ink": "#160D05", "code_bg": "#100C16",
     },
     "light": {
         "bg_deep": "#F4F7FB", "bg_surface": "#FFFFFF", "bg_elevated": "#EEF2F7",
@@ -335,7 +335,7 @@ _UI_THEME_BASE = {
         "text_primary": "#182230", "text_secondary": "#475569", "text_muted": "#64748B",
         "scrim": "rgba(15, 23, 42, .72)", "preview_start": "#E8EEF8", "preview_end": "#DCE6F5",
         "substrate_start": "#A8B6CB", "substrate_end": "#7E8DA6", "highlight_surface": "#FFF4E8",
-        "button_bg": "#FFFFFF", "button_text": "#182230", "code_bg": "#F8FAFC",
+        "button_bg": "#FFFFFF", "button_text": "#182230", "accent_ink": "#FFFFFF", "code_bg": "#F8FAFC",
     },
     "contrast": {
         "bg_deep": "#000000", "bg_surface": "#0B0B0B", "bg_elevated": "#171717",
@@ -343,7 +343,7 @@ _UI_THEME_BASE = {
         "text_primary": "#FFFFFF", "text_secondary": "#F5F5F5", "text_muted": "#D4D4D4",
         "scrim": "rgba(0, 0, 0, .84)", "preview_start": "#111111", "preview_end": "#252525",
         "substrate_start": "#666666", "substrate_end": "#333333", "highlight_surface": "#3A2B00",
-        "button_bg": "#111111", "button_text": "#FFFFFF", "code_bg": "#050505",
+        "button_bg": "#111111", "button_text": "#FFFFFF", "accent_ink": "#000000", "code_bg": "#050505",
     },
 }
 _UI_ACCENT_PALETTE = {
@@ -1351,7 +1351,7 @@ def _render_result_provenance(provenance):
             asset_bits = []
             try:
                 asset_bits.append(
-                    "竞赛运行包不携带论文2池 manifest 或科研控制面；"
+                    "当前运行包不携带论文2池 manifest 或科研控制面；"
                     "当前结果来自上方标注的模型/解析路线"
                 )
             except Exception as exc:
@@ -2237,6 +2237,7 @@ st.markdown(
         --highlight-surface: {_UI_STYLE['highlight_surface']};
         --button-bg: {_UI_STYLE['button_bg']};
         --button-text: {_UI_STYLE['button_text']};
+        --accent-ink: {_UI_STYLE['accent_ink']};
         --code-bg: {_UI_STYLE['code_bg']};
       }}
       html, body, .stApp {{ background: var(--bg-deep) !important; color: var(--text-primary); }}
@@ -2251,11 +2252,47 @@ st.markdown(
         color: var(--button-text) !important;
         border-color: var(--border-strong) !important;
       }}
-      [data-testid="stButton"] button:hover, [data-testid="stDownloadButton"] button:hover {{
-        border-color: var(--accent) !important;
-        color: var(--accent) !important;
-      }}
-      [data-baseweb="select"] > div, [data-baseweb="input"] > div,
+       [data-testid="stButton"] button:hover, [data-testid="stDownloadButton"] button:hover {{
+         border-color: var(--accent) !important;
+         color: var(--accent) !important;
+       }}
+       [data-baseweb="button-group"] {{
+         background: var(--bg-surface) !important;
+         border-radius: 8px;
+       }}
+       [data-baseweb="button-group"] button[data-testid^="stBaseButton-segmented_control"] {{
+         background: var(--button-bg) !important;
+         color: var(--button-text) !important;
+         border: 1px solid var(--border-strong) !important;
+       }}
+       [data-baseweb="button-group"] button[data-testid="stBaseButton-segmented_controlActive"] {{
+         background: var(--accent) !important;
+         color: var(--accent-ink) !important;
+         border-color: var(--accent) !important;
+       }}
+       [data-baseweb="button-group"] button[data-testid^="stBaseButton-segmented_control"]:hover {{
+         border-color: var(--accent) !important;
+         color: var(--accent-ink) !important;
+         background: var(--accent) !important;
+       }}
+       [data-testid="stFileUploaderDropzone"] {{
+         background: var(--bg-elevated) !important;
+         border: 1px dashed var(--border-strong) !important;
+         color: var(--text-secondary) !important;
+       }}
+       [data-testid="stFileUploaderDropzone"] button {{
+         background: var(--button-bg) !important;
+         color: var(--button-text) !important;
+         border-color: var(--border-strong) !important;
+       }}
+       [data-testid="stFileUploaderDropzone"] button:hover {{
+         border-color: var(--accent) !important;
+         color: var(--accent) !important;
+       }}
+       [data-testid="stFileUploaderDropzoneInstructions"] span {{
+         color: var(--text-muted) !important;
+       }}
+       [data-baseweb="select"] > div, [data-baseweb="input"] > div,
       [data-baseweb="textarea"] > div {{
         background: var(--bg-surface) !important;
         border-color: var(--border-subtle) !important;
@@ -2277,8 +2314,8 @@ st.markdown(
 )
 st.markdown(
     """
-    <div class="competition-banner" aria-label="竞赛展示模式">
-      <strong>竞赛展示模式</strong>
+    <div class="competition-banner" aria-label="设计工作流">
+      <strong>设计工作流</strong>
       <span>目标颜色 → 候选搜索 → 光谱 / 色度 → 结果导出</span>
     </div>
     """,
@@ -2287,7 +2324,7 @@ st.markdown(
 st.markdown(
     """
     <div class="workflow-hint" aria-label="工作流">
-      使用顺序：输入目标颜色 → 调整结构 → 查看结果 → 导出记录。
+      工作流：侧栏设置参数 → 预览颜色与来源 → 查看结果 → 导出记录。
     </div>
     """,
     unsafe_allow_html=True,
@@ -6087,7 +6124,7 @@ except Exception as e:
     pass
 
 st.sidebar.markdown("---")
-st.sidebar.caption("AI超表面结构色设计 · 竞赛展示版")
+st.sidebar.caption("AI超表面结构色设计 · 科研工作台")
 st.sidebar.caption("结果路线: 代理模型 / Lorentz-Fano / FP-TMM + CIE 1931")
 st.sidebar.markdown("---")
-st.sidebar.caption("作品信息与团队信息请在报名系统单独填写")
+st.sidebar.caption("项目与团队信息请在项目文档中补充")
