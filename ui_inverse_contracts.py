@@ -365,6 +365,7 @@ def inverse_method_registry(
     dual_ready: bool,
     dual_domain_verified: bool,
     compare_enabled: bool,
+    rl_ready: bool = False,
     fp_mirror_type: str = "",
 ) -> dict[str, InverseMethodState]:
     """Return methods belonging to the selected structure, failing closed."""
@@ -403,6 +404,19 @@ def inverse_method_registry(
                 "可用：这是跨结构比较，不作为当前结构的推荐主方法。" if context.geometry_valid
                 else "不可用：当前几何无效。",
                 scope="cross_structure",
+            )
+        # RL is an optional route kept out of the legacy registry unless its
+        # local q-table and runtime model binding have both been verified.
+        # The default keeps the pure contract tests backwards-compatible while
+        # the application can expose the real route when it is runnable.
+        if rl_ready:
+            states["rl"] = InverseMethodState(
+                "rl", "RL Q-learning", "本地 Q-table 离散探索",
+                bool(smart_ok and context.geometry_valid),
+                "可用：本地 q-table 与 RCWA 代理 session 已绑定；结果建议再做前向复核。"
+                if smart_ok and context.geometry_valid else
+                "不可用：RL 需要同一材料/衬底的 TE、0° RCWA 代理 session。",
+                scope="local_qtable",
             )
         return states
 

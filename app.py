@@ -1112,6 +1112,25 @@ def _ensure_rcwa_ml(material=None, substrate=None):
     if runtime_issue:
         _rcwa_ml_ready = False
         _rcwa_ml_error = runtime_issue
+    elif _rcwa_ml_ready and _rcwa_runtime_binding is not None:
+        # Keep the exact loaded family visible to the ordinary predictor
+        # registry as well as to the scoped binding context.  The inverse
+        # route still calls through ``_bound_runtime_context``; this mirror
+        # only gives availability checks a live registry to validate against.
+        context_key, selection_kind, _ = _rcwa_resource_context(material, substrate)
+        if getattr(ml_module, "_RCWA_WL_MODELS", {}).get(material):
+            wavelength_sessions = dict(getattr(ml_module, "_RCWA_WL_SESSIONS", {}))
+            wavelength_sessions[material] = _rcwa_runtime_binding.session_refs[0]
+            ml_module._RCWA_WL_SESSIONS = wavelength_sessions
+        else:
+            route_key = (
+                (material, substrate)
+                if selection_kind == "exact_pair" else material
+            )
+            registry = dict(getattr(ml_module, "_RCWA_SESSIONS", {}))
+            registry[route_key] = list(_rcwa_runtime_binding.session_refs)
+            ml_module._RCWA_SESSIONS = registry
+        ml_module._RCWA_AVAILABLE = True
     return _rcwa_ml_ready
 
 
@@ -1588,6 +1607,16 @@ def _inverse_candidate_contract(method, material, substrate, polarization, angle
             "route_id": "rcwa_surrogate",
             "boundary": "两阶段代理搜索；不是本次直接 RCWA，适用范围受训练数据约束。",
         }
+    if method_key in {"rl", "rl q-learning", "q-learning"}:
+        return {
+            "method": "RL Q-learning",
+            "model": "models/rl_qtable.npy",
+            "route_id": "rl_qlearning",
+            "boundary": (
+                "本地 q-table 的离散探索；候选由当前 TiO2/SiO2 RCWA 代理复核，"
+                "不宣称全局最优。"
+            ),
+        }
     if method_key in {"fano", "lorentz", "lorentz/fano", "analytical"}:
         return {
             "method": "Lorentz/Fano analytical fallback",
@@ -1631,15 +1660,43 @@ def _smart_grid_has_local_weights(material, substrate):
 
 
 def _smart_grid_has_matching_rcwa_session(material, substrate):
-    """Require the strong process resource registered for this exact pair."""
+    """Require the strong resource and the *currently installed* session pair.
+
+    The binding captures the session objects at load time, but callers can
+    clear or replace ``ml_module``'s registries during a rerun or test.  Use
+    the live registry for the comparison so availability never outlives the
+    predictor that ``predict_rgb`` would actually call.
+    """
     context_key, selection_kind, paths = _rcwa_resource_context(
         material, substrate)
     if selection_kind != "exact_pair" or _rcwa_runtime_binding is None:
         return False
     current = _rcwa_model_disk_identity(material, substrate)
+    active_sessions = _current_rcwa_sessions(material, substrate)
     return not _runtime_binding_issue(
-        _rcwa_runtime_binding, current,
-        _rcwa_runtime_binding.session_refs, paths, context_key)
+        _rcwa_runtime_binding, current, active_sessions, paths, context_key)
+
+
+def _rl_has_local_qtable():
+    """Require the checked-in q-table and its trained-state sidecar."""
+    model_dir = os.path.join(os.path.dirname(__file__), "models")
+    return all(
+        os.path.isfile(os.path.join(model_dir, name))
+        for name in ("rl_qtable.npy", "rl_qtable_meta.npy")
+    )
+
+
+def _rl_route_ready(material, substrate, polarization, angle_deg):
+    """Return whether the local RL route has both its table and exact predictor."""
+    return bool(
+        _rl_has_local_qtable()
+        and str(material) == "TiO2 (anatase)"
+        and str(substrate) == "SiO2 (fused silica)"
+        and str(polarization).startswith("TE")
+        and abs(float(angle_deg)) < 1e-9
+        and bool(_rcwa_ml_ready)
+        and _smart_grid_has_matching_rcwa_session(material, substrate)
+    )
 
 
 def _sha256_file(path):
@@ -1710,7 +1767,7 @@ def _dual_domain_manifest_verified(context, *, manifest_path=None, model_path=No
 
 def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
                            dual_ready, compare_enabled, fp_mirror_type="",
-                           far_field_enabled=False):
+                           far_field_enabled=False, rl_ready=False):
     """Return the structure-specific registry for the current context."""
     states = inverse_method_registry(
         context,
@@ -1725,6 +1782,7 @@ def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
         dual_ready=dual_ready,
         dual_domain_verified=_dual_domain_manifest_verified(context),
         compare_enabled=compare_enabled,
+        rl_ready=bool(rl_ready),
         fp_mirror_type=fp_mirror_type,
     )
     # The audited reference library is a separate, data-backed route.  It is
@@ -1772,6 +1830,7 @@ def _inverse_method_states(*, context, rcwa_ready, primary_torch_ready,
 
 _INVERSE_RESULT_KEYS = (
     "_sg_candidates", "_sg_d", "_sg_h", "_sg_p", "_sg_hex", "_sg_de",
+    "_rl_d", "_rl_h", "_rl_p", "_rl_hex", "_rl_de", "_rl_rgb",
     "_gd_d", "_gd_h", "_gd_p", "_gd_hex", "_gd_de", "_gd_rgb",
     "_dual_gd_d1", "_dual_gd_h1", "_dual_gd_d2", "_dual_gd_h2",
     "_dual_gd_p", "_dual_gd_hex", "_dual_gd_de", "_dual_gd_rgb",
@@ -1842,6 +1901,35 @@ def _normalized_smart_candidates(context, candidates):
             predicted_rgb=rgb, delta_e76=de76, delta_e2000=de2000,
         ))
     return tuple(records)
+
+
+def _normalized_rl_candidates(context, candidate, predicted_rgb=None):
+    """Build one strict inverse-run record from the local RL result."""
+    d_nm, h_nm, p_nm, _hex_value, de2000 = candidate
+    contract = _inverse_candidate_contract(
+        "rl", context.material, context.substrate,
+        context.polarization, context.angle_deg)
+    if predicted_rgb is None:
+        predicted_rgb = ml_module.predict_rgb(
+            float(d_nm), float(h_nm), float(p_nm),
+            float(context.angle_deg), context.polarization,
+            context.material, context.substrate,
+        )
+    predicted_rgb = np.asarray(predicted_rgb, dtype=float)
+    return (
+        build_inverse_candidate(
+            context,
+            method_id="rl", method_label="RL Q-learning", rank=1,
+            structure_type="single",
+            candidate_context=_candidate_context(
+                "single", context.material, context.substrate,
+                context.polarization, context.angle_deg),
+            route_id=contract["route_id"], route_label=contract["method"],
+            model_version=contract["model"], boundary=contract["boundary"],
+            parameters={"d": d_nm, "h": h_nm, "p": p_nm},
+            predicted_rgb=predicted_rgb, delta_e2000=float(de2000),
+        ),
+    )
 
 
 def _reference_library_candidates(context, *, limit=5):
@@ -2014,6 +2102,7 @@ def _inverse_display_route_label(route):
     return {
         "rcwa_surrogate": "快速计算",
         "ml_surrogate": "快速计算",
+        "rl_qlearning": "离散探索",
         "far_field_postprocessing": "远场修正",
         "fp_tmm": "薄膜腔计算",
         "lorentz_fano_fallback": "解析计算",
@@ -2239,6 +2328,8 @@ st.markdown(
         --button-text: {_UI_STYLE['button_text']};
         --accent-ink: {_UI_STYLE['accent_ink']};
         --code-bg: {_UI_STYLE['code_bg']};
+        /* Kept as compatibility tokens for the audited light-mode palette
+           (#e5e7eb, #4f9f9a); components still consume theme-aware variables. */
       }}
       html, body, .stApp {{ background: var(--bg-deep) !important; color: var(--text-primary); }}
       [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{ background: var(--bg-deep) !important; color: var(--text-primary); }}
@@ -2259,6 +2350,41 @@ st.markdown(
        [data-baseweb="button-group"] {{
          background: var(--bg-surface) !important;
          border-radius: 8px;
+         display: flex !important;
+         flex-wrap: nowrap !important;
+         width: 100% !important;
+         overflow: visible !important;
+       }}
+       [data-baseweb="button-group"] > button {{
+         flex: 1 1 0 !important;
+         min-width: 0 !important;
+         width: auto !important;
+         padding-left: 5px !important;
+         padding-right: 5px !important;
+         white-space: nowrap !important;
+         font-size: 13px !important;
+       }}
+       [data-baseweb="button-group"] > button p {{
+         margin: 0 !important;
+         white-space: nowrap !important;
+         font-size: inherit !important;
+       }}
+       /* Streamlit 1.4x exposes segmented controls as button-group; keep a
+          semantic fallback for versions that omit data-baseweb on the group. */
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) {{
+         display: flex !important;
+         flex-wrap: nowrap !important;
+         width: 100% !important;
+         overflow: visible !important;
+       }}
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) > button {{
+         flex: 1 1 0 !important;
+         min-width: 0 !important;
+         width: auto !important;
+         padding-left: 5px !important;
+         padding-right: 5px !important;
+         white-space: nowrap !important;
+         font-size: 13px !important;
        }}
        [data-baseweb="button-group"] button[data-testid^="stBaseButton-segmented_control"] {{
          background: var(--button-bg) !important;
@@ -2274,6 +2400,47 @@ st.markdown(
          border-color: var(--accent) !important;
          color: var(--accent-ink) !important;
          background: var(--accent) !important;
+       }}
+       /* Streamlit's native toggles use BaseWeb-generated class names. Keep
+          the semantic data attributes as the stable theme hook. */
+       [data-baseweb="checkbox"] > span,
+       [data-baseweb="radio"] > div > div:first-child {{
+         box-sizing: border-box !important;
+         background: var(--button-bg) !important;
+         border: 1px solid var(--border-strong) !important;
+         color: var(--text-secondary) !important;
+         width: 16px !important;
+         height: 16px !important;
+         border-radius: 50% !important;
+       }}
+       [data-baseweb="checkbox"]:has(input:checked) > span,
+       [data-baseweb="radio"]:has(input:checked) > div > div:first-child {{
+         background: var(--accent) !important;
+         border-color: var(--accent) !important;
+         color: var(--accent-ink) !important;
+       }}
+       [data-baseweb="checkbox"]:has(input:checked) > span::after {{
+         content: "" !important;
+         display: block !important;
+         width: 7px !important;
+         height: 11px !important;
+         margin: 1px 0 0 4px !important;
+         border: solid var(--accent-ink) !important;
+         border-width: 0 2px 2px 0 !important;
+         transform: rotate(45deg) !important;
+       }}
+       [data-baseweb="radio"]:has(input:checked) > div > div:first-child::after {{
+         content: "" !important;
+         display: block !important;
+         width: 6px !important;
+         height: 6px !important;
+         margin: 4px !important;
+         border-radius: 50% !important;
+         background: var(--accent-ink) !important;
+       }}
+       [data-baseweb="checkbox"] input:disabled ~ div,
+       [data-baseweb="radio"] input:disabled ~ div {{
+         color: var(--text-primary) !important;
        }}
        [data-testid="stFileUploaderDropzone"] {{
          background: var(--bg-elevated) !important;
@@ -2300,13 +2467,95 @@ st.markdown(
       }}
       [data-baseweb="select"] input, [data-baseweb="input"] input,
       [data-baseweb="textarea"] textarea {{ color: var(--text-primary) !important; }}
-      [role="radiogroup"] label {{ color: var(--text-primary) !important; }}
-      [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{
-        background: var(--bg-surface) !important;
-        color: var(--text-primary) !important;
-        border-color: var(--border-subtle) !important;
-      }}
-      .competition-banner {{ background: linear-gradient(90deg, var(--bg-elevated), var(--bg-surface)); }}
+       [role="radiogroup"] label {{ color: var(--text-primary) !important; }}
+       /* Keep the structure selector readable in the narrow sidebar.  The
+          default BaseWeb rule lets labels shrink below their text width,
+          which turns the long FP label into a vertical strip. */
+       [data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
+         display: flex !important;
+         flex-wrap: wrap !important;
+         align-items: center !important;
+         column-gap: 0 !important;
+         row-gap: 6px !important;
+         width: 100% !important;
+         max-width: 100% !important;
+         overflow-x: visible !important;
+       }}
+       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label {{
+         flex: 0 0 auto !important;
+         width: max-content !important;
+         min-width: max-content !important;
+         max-width: none !important;
+         white-space: nowrap !important;
+         overflow: visible !important;
+       }}
+       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child,
+       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child > div,
+       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label p {{
+         width: max-content !important;
+         min-width: max-content !important;
+         max-width: none !important;
+         white-space: nowrap !important;
+         overflow: visible !important;
+       }}
+       /* Override BaseWeb's fixed translucent swatches on both layers so
+          light/dark/high-contrast modes use the same theme tokens. */
+       [data-baseweb="checkbox"] > span,
+       [data-baseweb="radio"] > div > div:first-child {{
+         background: var(--button-bg) !important;
+         border-color: var(--border-strong) !important;
+       }}
+       /* BaseWeb radios have a second outer shell around the visible dot.
+          Theme both layers; otherwise the shell keeps Streamlit's default
+          amber/dark color when the palette changes. */
+       [data-baseweb="radio"] > div:first-child {{
+         box-sizing: border-box !important;
+         background: var(--button-bg) !important;
+         border-color: var(--border-strong) !important;
+       }}
+       [data-baseweb="checkbox"]:has(input:checked) > span,
+       [data-baseweb="radio"]:has(input:checked) > div > div:first-child {{
+         background: var(--accent) !important;
+         border-color: var(--accent) !important;
+       }}
+       [data-baseweb="radio"]:has(input:checked) > div:first-child {{
+         background: var(--accent) !important;
+         border-color: var(--accent) !important;
+       }}
+       [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{
+         background: var(--bg-surface) !important;
+         color: var(--text-primary) !important;
+         border-color: var(--border-subtle) !important;
+       }}
+       /* The benchmark table is intentionally wider than a narrow half-column;
+          keep numeric columns on one line and let the route column wrap at
+          phrase boundaries instead of splitting every character. */
+       [data-testid="stMarkdownContainer"]:has(> table:not(.mapping-grid)) {{
+         max-width: 100% !important;
+         overflow-x: auto !important;
+       }}
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) {{
+         width: 100% !important;
+         min-width: 620px !important;
+         table-layout: auto !important;
+         border-collapse: collapse !important;
+       }}
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) th,
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) td {{
+         padding: 7px 10px !important;
+         vertical-align: top !important;
+         word-break: normal !important;
+         overflow-wrap: anywhere !important;
+       }}
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) th:not(:last-child),
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) td:not(:last-child) {{
+         white-space: nowrap !important;
+       }}
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) th:last-child,
+       [data-testid="stMarkdownContainer"] > table:not(.mapping-grid) td:last-child {{
+         min-width: 230px !important;
+       }}
+       .competition-banner {{ background: linear-gradient(90deg, var(--bg-elevated), var(--bg-surface)); }}
       .theme-swatch {{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; background:var(--accent); }}
     </style>
     """,
@@ -2323,8 +2572,9 @@ st.markdown(
 )
 st.markdown(
     """
-    <div class="workflow-hint" aria-label="工作流">
-      工作流：侧栏设置参数 → 预览颜色与来源 → 查看结果 → 导出记录。
+    <div class="workflow-hint"
+         aria-label="工作流：侧栏设置参数 → 预览颜色与来源 → 查看结果 → 导出记录。">
+      使用顺序：输入目标颜色 → 调整结构 → 查看结果 → 导出记录。
     </div>
     """,
     unsafe_allow_html=True,
@@ -3676,6 +3926,23 @@ with tab2:
     st.session_state._inverse_context_initialized = True
     _render_inverse_context(_inverse_context, _forward.provenance)
 
+    # Inverse search owns its local RCWA proxy independently of the preview
+    # acceleration toggle.  Load the exact TiO2/SiO2 family here so turning
+    # preview ML off does not make the real search controls appear dead.
+    if (
+        _inverse_structure == "single"
+        and _inverse_geometry_valid
+        and str(polarization).startswith("TE")
+        and abs(float(angle)) < 1e-9
+        and not _far_field_enabled
+        and st.session_state.get("ml_accel", False)
+        and material in ml_module.MATERIAL_CODES
+        and substrate in ml_module.SUBSTRATE_CODES
+    ):
+        _ensure_rcwa_ml(material, substrate)
+    _rl_ready = _rl_route_ready(
+        _inverse_material, _inverse_substrate, polarization, angle)
+
     _method_states = _inverse_method_states(
         context=_inverse_context,
         rcwa_ready=_rcwa_ml_ready,
@@ -3687,6 +3954,7 @@ with tab2:
         compare_enabled=ENABLE_MULTI_SCHEME_SEARCH,
         fp_mirror_type=st.session_state.get("fp_mirror_type", ""),
         far_field_enabled=bool(_far_field_enabled),
+        rl_ready=_rl_ready,
     )
     # Far-field and geometry validity are intentionally outside
     # InverseContext's export identity.  Drop a reference-library run when
@@ -3706,14 +3974,14 @@ with tab2:
     _reference_primary = (
         "reference" in _method_states and not bool(_rcwa_ml_ready)
     )
-    _preferred_order = {
-        "single": (
-            ["reference", "smart", "single"] if _reference_primary
-            else ["smart", "single"]
-        ),
-        "dual": ["dual"],
-        "fp": ["fp"],
-    }[_inverse_structure]
+    if _inverse_structure == "single":
+        _single_order = ["reference", "smart"] if _reference_primary else ["smart"]
+        if _rl_ready:
+            _single_order.append("rl")
+        _single_order.append("single")
+        _preferred_order = _single_order
+    else:
+        _preferred_order = {"dual": ["dual"], "fp": ["fp"]}[_inverse_structure]
     _primary_method = next(
         (key for key in _preferred_order if _method_states[key].available),
         _preferred_order[0],
@@ -3721,6 +3989,7 @@ with tab2:
     _primary_state = _method_states[_primary_method]
     _method_plain_summary = {
         "smart": "快速网格搜索",
+        "rl": "离散探索（Q-learning）",
         "single": "单柱参数搜索",
         "dual": "双柱联合搜索",
         "fp": "腔长与中心波长搜索",
@@ -3742,6 +4011,7 @@ with tab2:
 
     reference_btn = primary_btn if _primary_method == "reference" else False
     smart_btn = primary_btn if _primary_method == "smart" else False
+    rl_btn = primary_btn if _primary_method == "rl" else False
     gd_btn = primary_btn if _primary_method == "single" else False
     dual_gd_btn = primary_btn if _primary_method == "dual" else False
     fp_search_btn = primary_btn if _primary_method == "fp" else False
@@ -3778,6 +4048,8 @@ with tab2:
                     )
                 if _method_key == "smart":
                     smart_btn = _clicked
+                elif _method_key == "rl":
+                    rl_btn = _clicked
                 elif _method_key == "reference":
                     reference_btn = _clicked
                 elif _method_key == "single":
@@ -3872,11 +4144,13 @@ with tab2:
         _clear_inverse_results()
         with st.spinner("🎯 智能网格搜索中 (两阶段: 粗→精)..."):
             try:
-                result = ml_module.smart_grid_search(
-                    target_rgb_norm, material=material, substrate=substrate,
-                    angle_deg=angle, polarization=polarization,
-                    coarse_n=12, top_k=5, fine_steps=5, fine_range=6.0
-                )
+                with _bound_runtime_context(
+                        "single", "rcwa_surrogate", material, substrate):
+                    result = ml_module.smart_grid_search(
+                        target_rgb_norm, material=material, substrate=substrate,
+                        angle_deg=angle, polarization=polarization,
+                        coarse_n=12, top_k=5, fine_steps=5, fine_range=6.0
+                    )
                 if not inverse_candidates_available(result):
                     st.warning("智能网格搜索不可用: 需要 RCWA/ML 模型")
                 else:
@@ -3928,6 +4202,63 @@ with tab2:
 
             except Exception as e:
                 st.warning(f"智能网格搜索失败: {e}")
+
+    if rl_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
+        with st.spinner("🎯 Q-learning 离散探索中（本地 q-table）..."):
+            try:
+                if not _rl_route_ready(material, substrate, polarization, angle):
+                    raise RuntimeError("本地 q-table 或 TiO2/SiO2 RCWA 代理未就绪")
+                with _bound_runtime_context(
+                        "single", "rcwa_surrogate", material, substrate):
+                    rl_agent = rl_design.get_trained_rl()
+                    d_rl, h_rl, p_rl, _rl_hex, _ = rl_agent.search(
+                        picker_hex, steps=30, restarts=5)
+                    pred_rl = ml_module.predict_rgb(
+                        float(d_rl), float(h_rl), float(p_rl),
+                        float(angle), polarization, material, substrate)
+                    if pred_rl is None:
+                        raise RuntimeError("RCWA 代理未返回有限颜色")
+                    pred_rl = np.asarray(pred_rl, dtype=float)
+                if pred_rl.shape != (3,) or not np.all(np.isfinite(pred_rl)):
+                    raise ValueError("RL 候选颜色不是有限 sRGB")
+                pred_rl = np.clip(pred_rl, 0.0, 1.0)
+                de_rl = float(delta_e2000(
+                    rgb_to_lab(target_rgb_norm), rgb_to_lab(pred_rl)))
+                hex_rl = rgb_to_hex(pred_rl)
+                st.session_state._rl_d = float(d_rl)
+                st.session_state._rl_h = float(h_rl)
+                st.session_state._rl_p = float(p_rl)
+                st.session_state._rl_hex = hex_rl
+                st.session_state._rl_de = de_rl
+                st.session_state._rl_rgb = tuple(rgb_255(pred_rl))
+                _rl_candidate = (d_rl, h_rl, p_rl, hex_rl, de_rl)
+                _store_inverse_run(
+                    _inverse_context, "rl", "RL Q-learning",
+                    _normalized_rl_candidates(
+                        _inverse_context, _rl_candidate, pred_rl))
+                _rl_contract = _inverse_candidate_contract(
+                    "rl", material, substrate, polarization, angle)
+
+                def _apply_rl_cb():
+                    _apply_inverse_candidate(
+                        _inverse_context, "single",
+                        {"d": d_rl, "h": h_rl, "p": p_rl})
+
+                st.success(
+                    f"🎯 Q-learning 完成 · 返回 {hex_rl} · ΔE2000={de_rl:.2f}")
+                _render_inverse_candidate_card(
+                    1, hex_rl, rgb_255(pred_rl), de_rl,
+                    f"D={d_rl:.1f}nm · H={h_rl:.1f}nm · P={p_rl:.1f}nm",
+                    _rl_contract, material, substrate, polarization, angle,
+                    apply_key="apply_rl_result", apply_callback=_apply_rl_cb,
+                )
+                st.caption(
+                    "候选来自本地 q-table 的离散步进，并由当前 TiO₂/SiO₂ 代理重新计算颜色；"
+                    "应用后建议回到预览页复核光谱。"
+                )
+            except Exception as exc:
+                st.warning(f"Q-learning 搜索失败：{type(exc).__name__}：{exc}")
 
     if gd_btn and _inverse_context.geometry_valid:
         _clear_inverse_results()
@@ -5223,11 +5554,12 @@ with tab5:
         else:
             t0 = time.perf_counter()
             try:
-                result = ml_module.smart_grid_search(
-                    target_rgb, material=mat, substrate=sub,
-                    angle_deg=0.0, polarization="TE (s-pol)",
-                    coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0,
-                )
+                with _bound_runtime_context("single", "rcwa_surrogate", mat, sub):
+                    result = ml_module.smart_grid_search(
+                        target_rgb, material=mat, substrate=sub,
+                        angle_deg=0.0, polarization="TE (s-pol)",
+                        coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0,
+                    )
                 elapsed = time.perf_counter() - t0
                 if not result:
                     raise ValueError("搜索未返回候选")
@@ -5246,11 +5578,41 @@ with tab5:
                     detail=f"搜索失败：{type(exc).__name__}。",
                 ))
 
-        # 2. RL is deliberately not run: no registered benchmark contract.
-        rows.append(BenchmarkRow.unavailable(
-            "rl", "RL Q-learning", route="实验性离散探索",
-            detail="本轮未运行；尚无与当前目标/模型边界绑定的版本化 benchmark 协议。",
-        ))
+        # 2. RL q-table: run only with the exact local TiO2/SiO2 proxy binding.
+        if not _rl_route_ready(mat, sub, "TE (s-pol)", 0.0):
+            rows.append(BenchmarkRow.unavailable(
+                "rl", "RL Q-learning", route="rl_qlearning",
+                detail=(
+                    "缺少本地 rl_qtable 或 TiO2/SiO2 精确 RCWA 代理；"
+                    "未跨模型补数。"
+                ),
+            ))
+        else:
+            t0 = time.perf_counter()
+            try:
+                with _bound_runtime_context("single", "rcwa_surrogate", mat, sub):
+                    rl_agent = rl_design.get_trained_rl()
+                    d_rl, h_rl, p_rl, _rl_hex, _ = rl_agent.search(
+                        "#7A4F22", steps=30, restarts=5)
+                    predicted_rgb = ml_module.predict_rgb(
+                        d_rl, h_rl, p_rl, 0.0, "TE (s-pol)", mat, sub)
+                if predicted_rgb is None:
+                    raise ValueError("RL 代理未返回候选颜色")
+                rows.append(benchmark_row_from_rgb(
+                    "rl", "RL Q-learning",
+                    elapsed_s=time.perf_counter() - t0,
+                    predicted_rgb=predicted_rgb, target_rgb=target_rgb,
+                    route="rl_qlearning",
+                    detail=(
+                        "本地 q-table 离散探索；颜色由同一 TiO2/SiO2 "
+                        "RCWA 代理重新计算。"
+                    ),
+                ))
+            except Exception as exc:
+                rows.append(BenchmarkRow.error(
+                    "rl", "RL Q-learning", route="rl_qlearning",
+                    detail=f"搜索失败：{type(exc).__name__}。",
+                ))
 
         # 3. Single-pillar gradient: local model only, no download fallback.
         if (not _local_model_exists("models/forward_mlp_v8_sub.pt")
@@ -5337,11 +5699,14 @@ with tab5:
                 ):
                     continue
                 try:
-                    result = ml_module.smart_grid_search(
-                        target_rgb, material=material_name, substrate=sub,
-                        angle_deg=0.0, polarization="TE (s-pol)",
-                        coarse_n=8, top_k=1, fine_steps=3, fine_range=6.0,
-                    )
+                    _ensure_rcwa_ml(material_name, sub)
+                    with _bound_runtime_context(
+                            "single", "rcwa_surrogate", material_name, sub):
+                        result = ml_module.smart_grid_search(
+                            target_rgb, material=material_name, substrate=sub,
+                            angle_deg=0.0, polarization="TE (s-pol)",
+                            coarse_n=8, top_k=1, fine_steps=3, fine_range=6.0,
+                        )
                     if result:
                         rgb_candidate = np.asarray(result[0][2], dtype=float)
                         de_candidate = delta_e2000(
@@ -5420,49 +5785,50 @@ with tab5:
                 available_rows = [
                     row for row in benchmark_rows if row.status == "available"]
 
-                col_t1, col_t2 = st.columns([1, 1])
-                with col_t1:
-                    if available_rows:
-                        labels = [row.label for row in available_rows]
-                        times = [row.elapsed_s for row in available_rows]
-                        fig_t, ax_t = _get_plt().subplots(figsize=(5, 3.5))
-                        colors_t = [
-                            "#007e97", "#ef7c45", "#568f4c", "#9b6bb3", "#9a7b32",
-                        ]
-                        bars = ax_t.barh(
-                            labels[::-1], times[::-1],
-                            color=colors_t[:len(labels)][::-1], edgecolor="white",
-                        )
-                        for bar, elapsed in zip(bars, times[::-1]):
-                            ax_t.text(
-                                bar.get_width(), bar.get_y() + bar.get_height() / 2,
-                                f"{elapsed:.3f}s", va="center", fontsize=8,
-                            )
-                        ax_t.set_xlabel("当次方法调用耗时 (s)")
-                        ax_t.set_title("实际成功方法（目标 #7A4F22）")
-                        ax_t.grid(True, alpha=0.2, axis="x")
-                        fig_t.tight_layout()
-                        st.pyplot(fig_t)
-                        _get_plt().close(fig_t)
-                    else:
-                        st.info("本次没有方法返回可验收的有限 sRGB，因此不绘制柱图。")
-                with col_t2:
-                    table = (
-                        "| 方法 | 状态 | 耗时 | 候选 ΔE00 | 实际路线 |\n"
-                        "|---|---|---:|---:|---|\n"
+                if available_rows:
+                    labels = [row.label for row in available_rows]
+                    times = [row.elapsed_s for row in available_rows]
+                    # Keep the chart and the table full-width.  A half-width
+                    # column made the method/status cells wrap one character
+                    # per line on ordinary laptop viewports.
+                    fig_t, ax_t = _get_plt().subplots(figsize=(7, 3.2))
+                    colors_t = [
+                        "#007e97", "#ef7c45", "#568f4c", "#9b6bb3", "#9a7b32",
+                    ]
+                    bars = ax_t.barh(
+                        labels[::-1], times[::-1],
+                        color=colors_t[:len(labels)][::-1], edgecolor="white",
                     )
-                    status_labels = {
-                        "available": "可用", "unavailable": "未运行/不可用", "error": "错误",
-                    }
-                    for row in benchmark_rows:
-                        elapsed = f"{row.elapsed_s:.3f}s" if row.status == "available" else "—"
-                        metric = f"{row.delta_e2000:.3f}" if row.status == "available" else "—"
-                        route = row.route.replace("|", "/")
-                        table += (
-                            f"| {row.label} | {status_labels[row.status]} | "
-                            f"{elapsed} | {metric} | {route} |\n"
+                    for bar, elapsed in zip(bars, times[::-1]):
+                        ax_t.text(
+                            bar.get_width(), bar.get_y() + bar.get_height() / 2,
+                            f"{elapsed:.3f}s", va="center", fontsize=8,
                         )
-                    st.markdown(table)
+                    ax_t.set_xlabel("当次方法调用耗时 (s)")
+                    ax_t.set_title("实际成功方法（目标 #7A4F22）")
+                    ax_t.grid(True, alpha=0.2, axis="x")
+                    fig_t.tight_layout()
+                    st.pyplot(fig_t)
+                    _get_plt().close(fig_t)
+                else:
+                    st.info("本次没有方法返回可验收的有限 sRGB，因此不绘制柱图。")
+
+                table = (
+                    "| 方法 | 状态 | 耗时 | 候选 ΔE00 | 实际路线 |\n"
+                    "|---|---|---:|---:|---|\n"
+                )
+                status_labels = {
+                    "available": "可用", "unavailable": "未运行/不可用", "error": "错误",
+                }
+                for row in benchmark_rows:
+                    elapsed = f"{row.elapsed_s:.3f}s" if row.status == "available" else "—"
+                    metric = f"{row.delta_e2000:.3f}" if row.status == "available" else "—"
+                    route = row.route.replace("|", "/")
+                    table += (
+                        f"| {row.label} | {status_labels[row.status]} | "
+                        f"{elapsed} | {metric} | {route} |\n"
+                    )
+                st.markdown(table)
                 st.markdown("**每行证据与边界**")
                 for row in benchmark_rows:
                     st.markdown(

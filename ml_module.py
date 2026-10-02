@@ -71,7 +71,13 @@ _RCWA_MODELS = {
 }
 # Substrate-specific overrides (tuple key: (material, substrate))
 _RCWA_SUBSTRATE_MODELS = {
+    # The TiO2 ensemble is a 7D substrate-conditioned model.  Bind the
+    # default SiO2 route explicitly so the inverse-design UI can verify and
+    # reuse the same session instead of treating it as an untrusted fallback.
     # a-Si now uses multi-substrate ensemble (80/20 retrained 2026-07-21)
+    ("TiO2 (anatase)", "SiO2 (fused silica)"): [
+        "forward_mlp_rcwa_TiO2_s?.onnx",
+    ],
 }
 _RCWA_SESSIONS = {}  # material -> list of ort sessions (ensemble)
 

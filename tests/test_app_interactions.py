@@ -1614,7 +1614,12 @@ def test_primary_inverse_search_renders_available_candidate(monkeypatch):
         ),
     )
     at = _run_app()
-    primary = next(button for button in at.button if button.label == "开始搜索 · 单柱梯度")
+    # Smart grid is the current primary route when its exact RCWA proxy is
+    # loaded; the legacy gradient route remains visible as a secondary button.
+    primary = next(
+        button for button in at.button
+        if button.label in {"开始搜索 · 单柱梯度", "单柱梯度"}
+    )
     primary.click()
     at = at.run(timeout=30)
     text = _markdown_text(at)
@@ -2675,6 +2680,10 @@ def _configure_fast_benchmark(monkeypatch, single_result):
         lambda name: object() if name == "torch" else real_find_spec(name),
     )
     monkeypatch.setattr(ml_module, "init_rcwa_ml", lambda: False)
+    # The exact RCWA registry is now loaded independently by the app route;
+    # make the missing-model fixture fail closed at that route boundary too.
+    monkeypatch.setattr(ml_module, "_RCWA_MODELS", {})
+    monkeypatch.setattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {})
     monkeypatch.setattr(ml_module, "_RCWA_SESSIONS", {})
     monkeypatch.setattr(ml_module, "_RCWA_WL_SESSIONS", {})
     if isinstance(single_result, BaseException):
@@ -2773,6 +2782,8 @@ def test_benchmark_click_missing_model_and_not_run_rows_have_no_numbers(monkeypa
         ),
     )
     monkeypatch.setattr(ml_module, "init_rcwa_ml", lambda: False)
+    monkeypatch.setattr(ml_module, "_RCWA_MODELS", {})
+    monkeypatch.setattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {})
     monkeypatch.setattr(ml_module, "_RCWA_SESSIONS", {})
     at = _click_benchmark(_run_app())
     text = _markdown_text(at)
