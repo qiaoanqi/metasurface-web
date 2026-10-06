@@ -386,7 +386,7 @@ def inverse_method_registry(
                 "不可用：当前几何无效。" if not context.geometry_valid else
                 "不可用：当前材料或衬底不在该代理模型的注册范围。" if not (supported_material and supported_substrate) else
                 "不可用：缺少 smart 代理对 TM 或非 0° 入射的版本化训练域证据。" if not (is_te and normal_incidence) else
-                "不可用：未加载匹配的 RCWA 代理，或缺少智能网格所需 .pt 权重。",
+                "不可用：未加载匹配的 RCWA 代理模型或批量推理权重。",
             ),
             "single": InverseMethodState(
                 "single", "单柱梯度", "本地 PyTorch 代理梯度优化", single_ok,

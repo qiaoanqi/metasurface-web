@@ -642,7 +642,11 @@ def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
         model = _load_rcwa_torch_model(device, material, substrate)
         inverse_design_rcwa._cache = (device, material, substrate, model)
     else:
-        model = _cache[2]
+        # The cache tuple is (device, material, substrate, model).  Reusing
+        # index 2 returns the substrate string and fails later with
+        # ``TypeError: 'str' object is not callable`` when the cached model is
+        # evaluated on a subsequent Streamlit rerun.
+        model = _cache[3]
     # Map material/substrate to training codes (must match train_rcwa.py encoding)
     _MAT_MAP = {"TiO2 (anatase)": 0, "a-Si (amorphous)": 1,
                 "Si3N4 (nitride)": 2, "Al2O3 (sapphire)": 3}

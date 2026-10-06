@@ -23,7 +23,6 @@ def _ensure_model_file(rel_path):
             repo_id=_MODEL_REPO, filename=rel_path,
             cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf_cache"),
             local_dir=os.path.dirname(os.path.abspath(__file__)),
-            local_dir_use_symlinks=False,
             timeout=5)
     except Exception:
         return local
