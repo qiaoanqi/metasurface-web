@@ -14,8 +14,17 @@ from pathlib import Path
 import shutil
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+if __package__:
+    from .verify_complete_offline_bundle import validate_analysis_runtime
+else:
+    from verify_complete_offline_bundle import validate_analysis_runtime
+
 
 PACKAGE_DIR_NAME = "AI超表面结构色智能设计系统_完整离线包_v1"
+RUNTIME_REFRESH_FILES = (
+    'app.py', 'ml_module.py', 'scripts/audit_forward_mlp_v8_sub_conversion.py',
+    'data/fano_vs_fdtd_smallD.png',
+)
 
 
 README = """# AI 超表面结构色智能设计系统：完整离线交付包
@@ -54,6 +63,7 @@ AUDIT_README = """# 证据材料索引
 - `tio2_air_day_color_audit_20260930.json`：颜色转换与数据一致性审计。
 - `RELEASE_MANIFEST_v3.json`：上一版已验证网站包的文件清单。
 - `ui-release-manifest.json`：当前 `runtime/` 中 UI 源码的哈希清单；科研控制面文件不随离线包分发。
+- 模型转换证据所绑定的审计脚本保留在 `runtime/scripts/`，交互分析会核对它的版本。
 - `11_本地离线演示说明.md`、`12_校赛本地交付清单.md`、`13_公开资源索引.md`：演示和交付说明，复制在 `docs/`。
 """
 
@@ -382,13 +392,14 @@ def write_launchers(project_root: Path, package_root: Path) -> None:
 
 
 def refresh_launchers(project_root: Path, output_zip: Path, staging: Path, *, refresh_runtime=False) -> dict[str, object]:
-    """Refresh launchers and optionally the ML fix, then atomically reseal."""
+    """Refresh approved runtime files, validate analysis dependencies, then reseal."""
     manifest_path = staging / 'RELEASE_MANIFEST.json'
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     write_launchers(project_root, staging)
     if refresh_runtime:
-        for name in ('ml_module.py', 'app.py'):
+        for name in RUNTIME_REFRESH_FILES:
             copy_file(project_root / name, staging / 'runtime' / name)
+    manifest['analysis_runtime'] = validate_analysis_runtime(staging / 'runtime')
     refresh_ui_manifest(staging)
     manifest['launcher_mode'] = 'desktop-window-close-stops-service'
     manifest['entrypoints'].pop('stop', None)
@@ -432,8 +443,8 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     runtime = staging / "runtime"
     for source in sorted(source_package.glob("*.py")):
         copy_file(source, runtime / source.name)
-    copy_file(project_root / 'ml_module.py', runtime / 'ml_module.py')
-    copy_file(project_root / 'app.py', runtime / 'app.py')
+    for name in RUNTIME_REFRESH_FILES:
+        copy_file(project_root / name, runtime / name)
     copy_file(source_package / "requirements-web.txt", runtime / "requirements-web.txt")
     copy_tree(source_package / ".streamlit", runtime / ".streamlit")
     copy_tree(source_package / "models", runtime / "models")
@@ -464,6 +475,7 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     write_text(audit / "README_证据索引.md", AUDIT_README)
 
     write_launchers(project_root, staging)
+    analysis_runtime = validate_analysis_runtime(runtime)
     refresh_ui_manifest(staging)
     write_text(staging / "logs" / "README.md", LOG_README)
 
@@ -481,6 +493,7 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     manifest = {
         "schema": "ai-metasurface-complete-offline-bundle-v1",
         "status": "pass",
+        "analysis_runtime": analysis_runtime,
         "entrypoints": {
             "showcase": "showcase/index.html",
             "interactive": "启动离线演示.bat",

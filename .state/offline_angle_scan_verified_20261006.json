@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "context_fingerprint": "8b470d4d0834c7a60970deb10be4887b0a3f42bcc152c59a88b02748e59d885f",
+  "context": {
+    "schema_version": 1,
+    "protocol_version": "ui-analysis-snapshot-v1",
+    "analysis_type": "angle",
+    "structure_type": "single",
+    "geometry": {
+      "D_nm": 180.0,
+      "H_nm": 300.0,
+      "P_nm": 400.0
+    },
+    "material": "TiO2 (anatase)",
+    "substrate": "SiO2 (fused silica)",
+    "polarization": "TE (s-pol)",
+    "angle_deg": 0.0,
+    "route_id": "ML surrogate (generic angle-conditioned)",
+    "model_version": "forward_mlp_v8_sub / 7-input / 81-output",
+    "artifact_version": "sha256:549ba642675159096f5a7d45a9509a18646b84704c7ba9792564280862df6124",
+    "registry_version": "angle-scan-route-registry-v1",
+    "far_field": {
+      "enabled": false,
+      "na": 0.1,
+      "theta_obs_deg": 0.0
+    },
+    "sampling": {
+      "angles_deg": [
+        0,
+        5,
+        10,
+        15,
+        20,
+        25,
+        30,
+        35,
+        40,
+        45,
+        50,
+        55,
+        60,
+        65,
+        70,
+        75,
+        80
+      ],
+      "frozen_route": "ML surrogate (generic angle-conditioned)",
+      "sample_count": 17,
+      "start_deg": 0,
+      "step_deg": 5,
+      "stop_deg": 80
+    }
+  },
+  "angle_scan": {
+    "status": "available",
+    "reason": "",
+    "angles_deg": [
+      0.0,
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0,
+      45.0,
+      50.0,
+      55.0,
+      60.0,
+      65.0,
+      70.0,
+      75.0,
+      80.0
+    ],
+    "rgb": [
+      [
+        0.5300511617569063,
+        0.3356902755329992,
+        0.0770985492203585
+      ],
+      [
+        0.5312486653696283,
+        0.33409056386255426,
+        0.08145527048524068
+      ],
+      [
+        0.5317111874184792,
+        0.3326282647809467,
+        0.08785822623533299
+      ],
+      [
+        0.5312366480301374,
+        0.33192800082474544,
+        0.09717661301846742
+      ],
+      [
+        0.5272550204248283,
+        0.33150254008807223,
+        0.11188783195169408
+      ],
+      [
+        0.5234538460577953,
+        0.33232896517982824,
+        0.12650295828270797
+      ],
+      [
+        0.5196322831506734,
+        0.3338649663067805,
+        0.13888853548684937
+      ],
+      [
+        0.5159554096932482,
+        0.336077420373206,
+        0.15292046270928633
+      ],
+      [
+        0.5136033295957827,
+        0.3368549057972976,
+        0.164745532566427
+      ],
+      [
+        0.5110044655017497,
+        0.3382276425136083,
+        0.17594819852963667
+      ],
+      [
+        0.5074625903247996,
+        0.3407213643817883,
+        0.1844605238902337
+      ],
+      [
+        0.5046706662718486,
+        0.3430511543540407,
+        0.1920202147776373
+      ],
+      [
+        0.5018094799139157,
+        0.3463076302025088,
+        0.1967287479342137
+      ],
+      [
+        0.4971937640451774,
+        0.34877988931732185,
+        0.20083543830073047
+      ],
+      [
+        0.4926251427164717,
+        0.35043829739695925,
+        0.20380648226074383
+      ],
+      [
+        0.4886956360387618,
+        0.3525213664657072,
+        0.20464040471128742
+      ],
+      [
+        0.4857439349787844,
+        0.35528896025878043,
+        0.20499253928840067
+      ]
+    ],
+    "available_mask": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "route_ids": [
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)",
+      "ML surrogate (generic angle-conditioned)"
+    ],
+    "analysis_artifact_version": "sha256:549ba642675159096f5a7d45a9509a18646b84704c7ba9792564280862df6124",
+    "model_artifact_version": "sha256:acfc24363c517d8be56ecf90687c734a898be52e9dc39ce6c1fd0375f31e1742"
+  }
+}

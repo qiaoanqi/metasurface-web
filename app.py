@@ -6270,7 +6270,8 @@ with tab5:
     if not _difference_unavailable_reason and not _difference_code_identity.available:
         _difference_unavailable_reason = "分析源码身份缺失或不可读"
     if not _difference_unavailable_reason and not _difference_bundle_identity.available:
-        _difference_unavailable_reason = "generic ONNX bundle 当前字节与冻结合同不一致"
+        _difference_unavailable_reason = (
+            _difference_bundle_identity.reason or "模型文件或版本证据未通过校验")
     if not _difference_unavailable_reason and not all(
         _local_model_exists(path) if path.startswith("models/")
         else os.path.isfile(os.path.join(os.path.dirname(__file__), path))
@@ -6571,7 +6572,14 @@ RCWA surrogate registry，也没有用 Fano 数值填补 generic ONNX 失败样�
         use_container_width=True, disabled=not _angle_execution_available,
     )
     if not _angle_artifact_available:
-        st.info("角扫源码身份不可用；旧结果和导出已隐藏，当前不会运行 evaluator。")
+        st.info("角扫所需文件或版本证据未通过校验，暂不能运行。")
+        with st.expander("查看角扫校验详情", expanded=False):
+            if scan_route_target == "ML surrogate (generic angle-conditioned)":
+                st.caption(_generic_bundle_artifact_identity(
+                    model_difference_contracts.GENERIC_ONNX_ROUTE).reason
+                    or "当前模型会话或分析源码身份不可用。")
+            else:
+                st.caption("当前计算路线的源码或模型身份不可用，请检查运行文件完整性。")
     elif not _angle_forward_available:
         st.info("当前正向结果或几何不可用；旧角扫结果和导出已隐藏，当前不会运行 evaluator。")
     elif _angle_runtime_issue:

@@ -2,10 +2,82 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 from pathlib import Path
 from zipfile import ZipFile
+
+
+def validate_analysis_runtime(runtime: Path) -> dict:
+    """Check shipped analysis dependencies without importing or running the app."""
+    runtime = runtime.resolve()
+    files = {}
+
+    def read(relative: str) -> bytes:
+        path = (runtime / relative).resolve()
+        path.relative_to(runtime)
+        if not path.is_file():
+            raise ValueError(f'Missing analysis dependency: {relative}')
+        content = path.read_bytes()
+        files[relative] = 'sha256:' + hashlib.sha256(content).hexdigest().upper()
+        return content
+
+    def assignment(relative: str, name: str):
+        tree = ast.parse(read(relative).decode('utf-8-sig'))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in node.targets
+            ):
+                return node.value
+        raise ValueError(f'Missing analysis contract: {relative}:{name}')
+
+    sources = ast.literal_eval(assignment('app.py', '_ANALYSIS_SOURCE_DEPENDENCIES'))
+    for relative in sorted(set((
+        'ui_analysis_snapshots.py', 'ui_model_resources.py',
+        *(relative for route in sources.values() for relative in route),
+    ))):
+        read(relative)
+
+    contract_node = assignment('ui_model_difference_contracts.py', 'GENERIC_ONNX_ROUTE')
+    if not isinstance(contract_node, ast.Call):
+        raise ValueError('Unsupported generic ONNX contract')
+    contract = {
+        item.arg: ast.literal_eval(item.value)
+        for item in contract_node.keywords
+        if item.arg and item.arg.endswith(('_relative_path', '_sha256'))
+    }
+    for path_key, hash_key in (
+        ('model_relative_path', 'model_sha256'),
+        ('external_data_relative_path', 'external_data_sha256'),
+        ('source_pt_relative_path', 'source_pt_sha256'),
+    ):
+        relative = contract[path_key]
+        if hashlib.sha256(read(relative)).hexdigest() != contract[hash_key]:
+            raise ValueError(f'Analysis artifact hash mismatch: {relative}')
+
+    evidence = {}
+    for key in ('conversion_protocol', 'conversion_result'):
+        relative = contract[key + '_relative_path']
+        value = json.loads(read(relative))
+        canonical = (json.dumps(value, ensure_ascii=True, sort_keys=True,
+                                separators=(',', ':')) + '\n').encode('utf-8')
+        if hashlib.sha256(canonical).hexdigest() != contract[key + '_sha256']:
+            raise ValueError(f'Analysis evidence hash mismatch: {relative}')
+        evidence[key] = value
+    result = evidence['conversion_result']
+    if (result.get('passed') is not True or
+            result.get('protocol_sha256') != contract['conversion_protocol_sha256']):
+        raise ValueError('Conversion evidence did not pass or bind the shipped protocol')
+    script = result['artifacts']['audit_script']
+    if hashlib.sha256(read(script['path'])).hexdigest() != script['sha256']:
+        raise ValueError(f'Analysis audit script hash mismatch: {script["path"]}')
+    figure_path = ast.literal_eval(assignment('ui_fdtd_asset.py', 'FDTD_ASSET_RELATIVE_PATH'))
+    figure_hash = ast.literal_eval(assignment('ui_fdtd_asset.py', 'FDTD_ASSET_SHA256'))
+    if hashlib.sha256(read(figure_path)).hexdigest().upper() != figure_hash.upper():
+        raise ValueError(f'Historical figure hash mismatch: {figure_path}')
+    return {'status': 'pass', 'files': dict(sorted(files.items()))}
 
 
 def verify(archive_path: Path, installed: Path) -> dict:
@@ -53,6 +125,10 @@ def verify(archive_path: Path, installed: Path) -> dict:
         for name in required:
             if name not in manifest['files']:
                 raise ValueError(f"Missing runtime asset: {name}")
+        analysis = validate_analysis_runtime(installed / 'runtime')
+        for relative, expected in analysis['files'].items():
+            if manifest['files'].get('runtime/' + relative) != expected:
+                raise ValueError(f'Unregistered analysis dependency: {relative}')
         ui_manifest = json.loads(archive.read(prefix + 'audit/ui-release-manifest.json'))
         if ui_manifest.get('root') != 'runtime':
             raise ValueError('UI manifest is not bound to the shipped runtime')
@@ -60,7 +136,8 @@ def verify(archive_path: Path, installed: Path) -> dict:
             content = archive.read(prefix + 'runtime/' + relative)
             if hashlib.sha256(content).hexdigest().upper() != expected.split(':', 1)[1].upper():
                 raise ValueError(f'UI runtime manifest hash mismatch: {relative}')
-        return {'status': 'pass', 'files_verified': len(manifest['files']),
+        return {'status': 'pass', 'analysis_dependencies_verified': len(analysis['files']),
+                'files_verified': len(manifest['files']),
                 'zip_entries': len(archive.namelist()), 'installed': str(installed),
                 'zip_sha256': hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()}
 

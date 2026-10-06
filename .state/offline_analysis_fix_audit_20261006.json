@@ -1,0 +1,50 @@
+{
+  "schema": "offline-analysis-repair-audit-v1",
+  "status": "pass",
+  "verified_at": "2026-10-06T22:03:48+08:00",
+  "scope": "local_only",
+  "baseline_git_commit": "4bc6e1f",
+  "root_cause": {
+    "model_files_match_frozen_hashes": true,
+    "analysis_route_source_dependencies_present": true,
+    "missing_conversion_auditor": "runtime/scripts/audit_forward_mlp_v8_sub_conversion.py",
+    "missing_historical_figure": "runtime/data/fano_vs_fdtd_smallD.png",
+    "incorrect_messages": ["generic ONNX bundle 当前字节与冻结合同不一致", "角扫源码身份不可用"]
+  },
+  "restored_assets": {
+    "runtime/scripts/audit_forward_mlp_v8_sub_conversion.py": "AC1302131EA10919175B3131A981DD544A957F14E4DA03890A9DE1C6494B1CFD",
+    "runtime/data/fano_vs_fdtd_smallD.png": "7926A398859FAFAC594CBAAFAF801BE2A778BAA88344BEF013B3757108DC54F6"
+  },
+  "package": {
+    "installed": "C:/Users/A/Desktop/AI超表面结构色智能设计系统_完整离线包_v1",
+    "archive": "dist/ai_metasurface_complete_offline_bundle_v1.zip",
+    "archive_sha256": "5A24FAB652787924BE0EC53C816F294C97FA990162D41FC17D2D52FC6A062A8B",
+    "archive_bytes": 168922095,
+    "manifest_file_count": 163,
+    "zip_entry_count": 164,
+    "analysis_dependency_count": 19,
+    "zip_and_installed_verification": "pass"
+  },
+  "real_browser_business_checks": {
+    "url": "http://127.0.0.1:8512/",
+    "context": {"structure": "single", "material": "TiO2 (anatase)", "substrate": "SiO2 (fused silica)", "polarization": "TE (s-pol)", "D_nm": 180, "H_nm": 300, "P_nm": 400},
+    "model_difference": {"status": "pass", "sample_count": 400, "mean_delta_e2000_displayed": 0.7, "median_delta_e2000_displayed": 0.6, "p95_delta_e2000_displayed": 1.4, "max_delta_e2000_displayed": 6.4, "meaning": "Fano-vs-generic-ONNX model output difference; not physical truth error"},
+    "angle_scan": {"status": "pass", "angles_deg": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80], "available_count": 17, "rgb_shape": [17, 3], "all_finite": true, "rgb_range": [0.0770985492203585, 0.5317111874184792], "single_route": "ML surrogate (generic angle-conditioned)", "download": ".state/offline_angle_scan_verified_20261006.json", "download_sha256": "537A1D8DF48EEB0E8B9ED9740C57C0276E0C7F7715D6DEEFC591448BC78CE790"},
+    "stale_results": {"status": "pass", "action": "D:180->181->180", "changed_context_hides_old_charts_and_angle_download": true, "restoring_original_context_reuses_verified_snapshots": true},
+    "historical_figure": {"status": "pass", "hash_verified_image_and_bound_manifest_rendered": true},
+    "screenshots": {
+      ".state/ui_previews/offline_model_difference_repaired_20261006.png": "12F7AEE079D18226F4302D003C35A57D5ECFF0E385447B02A1837206D9E85014",
+      ".state/ui_previews/offline_angle_scan_repaired_20261006.png": "9052910C996D16CCC97BF069E4A9E456776C370707D76470569E7ABC942AD93C"
+    }
+  },
+  "conversion_recomputation_from_installed_runtime": {"status": "pass", "sample_count": 2048, "max_abs": 3.129243850708008e-7, "tolerance": 1e-6, "original_evidence_unchanged": true},
+  "tests": {
+    "tests/test_complete_offline_analysis_assets.py": {"passed": 5, "failed": 0},
+    "tests/test_app_interactions.py_selected_difference_and_angle_regressions": {"passed": 17, "failed": 0, "deselected": 91}
+  },
+  "cloud_updated": false,
+  "github_updated": false,
+  "training_launched": false,
+  "research_artifacts_modified": false,
+  "frozen_contracts_changed": false
+}
