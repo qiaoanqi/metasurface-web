@@ -153,6 +153,43 @@ def _ensemble_predict(material, substrate, x):
         specs.append(spec)
     return np.mean(specs, axis=0)
 
+
+def _predict_onnx_batch(session, inputs, output_width):
+    """Preserve row order for both fixed-batch and dynamic-batch ONNX models.
+
+    Deployment RCWA exports accept exactly one row, while other exports have
+    a dynamic batch axis.  Adapt inputs without changing the selected model.
+    A partial fixed-size batch repeats its last row; padded outputs are dropped.
+    """
+    x = np.asarray(inputs, dtype=np.float32)
+    model_input = session.get_inputs()[0]
+    shape = model_input.shape
+    if x.ndim != 2 or len(shape) != 2:
+        raise ValueError("ONNX batch inputs must be a two-dimensional matrix")
+    if isinstance(shape[1], int) and shape[1] != x.shape[1]:
+        raise ValueError(f"ONNX feature count mismatch: {x.shape[1]} != {shape[1]}")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("ONNX batch inputs contain non-finite values")
+    if not len(x):
+        return np.empty((0, output_width), dtype=float)
+    fixed_batch = shape[0] if isinstance(shape[0], int) and shape[0] > 0 else None
+    batch_size = fixed_batch or 1024
+    outputs = []
+    for start in range(0, len(x), batch_size):
+        chunk = x[start:start + batch_size]
+        real_rows = len(chunk)
+        if fixed_batch and real_rows < fixed_batch:
+            chunk = np.concatenate((chunk, np.repeat(chunk[-1:], fixed_batch - real_rows, axis=0)))
+        output = np.asarray(session.run(None, {model_input.name: chunk})[0], dtype=float)
+        if output.ndim == 1 and (len(chunk) == 1 or output_width == 1):
+            output = output.reshape(len(chunk), -1)
+        if output.shape != (len(chunk), output_width):
+            raise ValueError(f"ONNX batch output shape mismatch: {output.shape} != {(len(chunk), output_width)}")
+        if not np.all(np.isfinite(output)):
+            raise ValueError("ONNX batch outputs contain non-finite values")
+        outputs.append(output[:real_rows])
+    return np.concatenate(outputs, axis=0)
+
 # Cauchy refractive index model for wavelength-conditioned models
 _CAUCHY_COEFFS = {
     'TiO2 (anatase)': (2.3, 0.035, 0.0),
@@ -187,8 +224,7 @@ def _predict_rcwa_wavelength_with_session(sess, material, substrate, d_nm, h_nm,
         n_norm = (n_val - 1.0) / 4.0
         wl_norm = (wl - 380) / 400
         batch[i] = [d_norm, h_norm, p_norm, n_norm, 0.0, sub_code, wl_norm]
-    input_name = sess.get_inputs()[0].name
-    result = sess.run(None, {input_name: batch})[0]
+    result = _predict_onnx_batch(sess, batch, output_width=1)
     return result.flatten().astype(np.float64)
 
 
@@ -636,7 +672,9 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
                       angle_deg=0.0, polarization="TE", coarse_n=12, top_k=5,
                       fine_steps=5, fine_range=6.0, max_results=3):
     """
-    Two-stage smart grid search using RCWA/ML ensemble with PyTorch batch inference.
+    Two-stage smart grid search using a registered RCWA/ML ensemble.
+    It prefers PyTorch batch inference when training-time weights are present
+    and falls back to the same-bound ONNX sessions in the web release.
     Stage 1: Coarse grid (coarse_n^3 points) -> top-K
     Stage 2: Fine grid around each candidate -> best result
     Returns: list of (None, MetaSurfaceParam, rgb, de76, de2000)
@@ -660,9 +698,18 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
 
     WL = np.linspace(380, 780, 81)
 
-    # ---- Load PyTorch models for batch inference ----
-    import torch
-    from torch_model import _RCWA_ResMLP
+    # ---- Load local models for batch inference ----
+    # Prefer the original PyTorch weights when they are shipped.  The web
+    # release intentionally carries the audited ONNX ensemble instead, so
+    # fall back to the already-bound ONNX sessions rather than presenting a
+    # dead smart-grid control just because the training-time .pt files were
+    # omitted from the deployment bundle.
+    try:
+        import torch
+        from torch_model import _RCWA_ResMLP
+    except Exception:
+        torch = None
+        _RCWA_ResMLP = None
     import os as _os
     base = _os.path.dirname(_os.path.abspath(__file__))
     models_dir = _os.path.join(base, "models")
@@ -681,37 +728,50 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
 
     pt_models = []
     import glob as _glob
-    for pat in pt_patterns:
-        full = _os.path.join(models_dir, pat)
-        matches = sorted(_glob.glob(full))
-        for m in matches:
-            state = torch.load(m, map_location='cpu', weights_only=False)
-            # Infer model dimensions from state_dict
-            head_weight = state.get('head.weight')
-            if head_weight is not None:
-                hidden = head_weight.shape[1]
-            else:
-                hidden = 256
-            # Count ResBlocks
-            n_blocks = 0
-            while f'blocks.{n_blocks}.net.0.weight' in state:
-                n_blocks += 1
-            if n_blocks == 0:
-                n_blocks = 4
-            model = _RCWA_ResMLP(in_dim=7, hidden=hidden, out_dim=81, n_blocks=n_blocks)
-            model.load_state_dict(state)
-            model.eval()
-            pt_models.append(model)
+    if torch is not None and _RCWA_ResMLP is not None:
+        for pat in pt_patterns:
+            full = _os.path.join(models_dir, pat)
+            matches = sorted(_glob.glob(full))
+            for m in matches:
+                state = torch.load(m, map_location='cpu', weights_only=False)
+                # Infer model dimensions from state_dict
+                head_weight = state.get('head.weight')
+                if head_weight is not None:
+                    hidden = head_weight.shape[1]
+                else:
+                    hidden = 256
+                # Count ResBlocks
+                n_blocks = 0
+                while f'blocks.{n_blocks}.net.0.weight' in state:
+                    n_blocks += 1
+                if n_blocks == 0:
+                    n_blocks = 4
+                model = _RCWA_ResMLP(in_dim=7, hidden=hidden, out_dim=81, n_blocks=n_blocks)
+                model.load_state_dict(state)
+                model.eval()
+                pt_models.append(model)
 
-    if not pt_models:
-        return None
+    if pt_models:
+        def _batch_predict(x_batch):
+            """x_batch: (N, 7) numpy -> averaged spectrum (N, 81)"""
+            x_t = torch.from_numpy(x_batch).float()
+            with torch.no_grad():
+                specs = [m(x_t).numpy() for m in pt_models]
+            return np.mean(specs, axis=0)
+    else:
+        # Use the exact substrate-bound ONNX sessions already registered by
+        # init_rcwa_ml/_ensure_rcwa_ml.  This keeps the route fail-closed: no
+        # generic fallback or unregistered model is introduced.
+        onnx_sessions = tuple(_get_rcwa_sessions(material, substrate))
+        if not onnx_sessions:
+            return None
 
-    def _batch_predict(x_batch):
-        """x_batch: (N, 7) numpy -> averaged spectrum (N, 81)"""
-        x_t = torch.from_numpy(x_batch).float()
-        with torch.no_grad():
-            specs = [m(x_t).numpy() for m in pt_models]
-        return np.mean(specs, axis=0)
+        def _batch_predict(x_batch):
+            """Batch ONNX inference with the same (N, 7) contract."""
+            x_batch = np.asarray(x_batch, dtype=np.float32)
+            specs = [_predict_onnx_batch(session, x_batch, output_width=81)
+                     for session in onnx_sessions]
+            return np.mean(specs, axis=0)
 
     # === Stage 1: Coarse grid ===
     D_vals = np.linspace(D_range[0], D_range[1], coarse_n)
@@ -795,7 +855,7 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
         accepted_params.append((D, H, P))
         bp = MetaSurfaceParam(diameter_nm=round(D, 1), height_nm=round(H, 1), period_nm=round(P, 1),
                               material=material, substrate=substrate)
-        de76 = float(np.sqrt(np.sum((np.array(rgb) - target)**2)) * 30)
+        de76 = float(np.linalg.norm(rgb_to_lab(rgb) - target_lab))
         result.append((None, bp, list(rgb), de76, de))
         if len(result) >= max_results:
             break

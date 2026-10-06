@@ -23,8 +23,10 @@ README = """# AI 超表面结构色智能设计系统：完整离线交付包
 ## 运行
 
 1. 双击 `启动离线演示.bat`。
-2. 脚本会启动展示页，并在浏览器打开本地交互页 `http://127.0.0.1:8512/`；如果 8512 已被占用，会自动选择后续可用端口并在窗口中提示实际地址。
-3. 使用结束后双击 `停止离线演示.bat`。
+2. 交互页在独立应用窗口中打开；如果 8512 已被占用，会自动选择后续可用端口。
+3. 点击应用窗口右上角 × 即可退出，后台服务和日志文件会一起释放。
+
+展示页保留在 `showcase/index.html`，可单独打开。应用窗口使用已安装的 Microsoft Edge 或 Google Chrome，不与日常浏览器共享运行进程。
 
 需要先安装可用的 Python 3.10+。首次运行会创建本地 `.venv`，缺少网页依赖时安装 `runtime/requirements-web.txt`，安装阶段可能需要网络。依赖安装完成后，交互页本身在本地运行。当前电脑已初始化的环境会保留，后续启动可以复用。
 
@@ -42,7 +44,7 @@ README = """# AI 超表面结构色智能设计系统：完整离线交付包
 
 本包用于网站展示和交互演示，不包含 Paper1/Paper2 控制面、训练集、holdout、active pool 或长时间 RCWA 任务。参考库按已审核的精确记录工作，不把候选结果表述为全局最优或实验真值。
 
-如果启动失败，窗口会保留错误提示；详细记录在 `logs/launcher.log`、`logs/streamlit.err.log` 和 `logs/streamlit.out.log`。`logs/runtime-state.json` 记录实际端口；重复启动会打开这个地址。内部英文名 `.ps1` 是启动器配套文件，请保留。
+如果启动失败，窗口会保留错误提示；详细记录在 `logs/launcher.log`、`logs/desktop-host.log`、`logs/streamlit.err.log` 和 `logs/streamlit.out.log`。`logs/runtime-state.json` 记录实际端口；重复启动会复用正在运行的实例。内部英文名 `.ps1` 和 `desktop_host.py` 是启动器配套文件，请保留。
 """
 
 
@@ -51,13 +53,75 @@ AUDIT_README = """# 证据材料索引
 - `tio2_air_day_audit_20260930.json`：参考数据完整性审计。
 - `tio2_air_day_color_audit_20260930.json`：颜色转换与数据一致性审计。
 - `RELEASE_MANIFEST_v3.json`：上一版已验证网站包的文件清单。
-- `ui-release-manifest.json`：UI 发布门禁清单（若随项目发布）。
+- `ui-release-manifest.json`：当前 `runtime/` 中 UI 源码的哈希清单；科研控制面文件不随离线包分发。
 - `11_本地离线演示说明.md`、`12_校赛本地交付清单.md`、`13_公开资源索引.md`：演示和交付说明，复制在 `docs/`。
 """
 
 
 LOG_README = """此目录由启动脚本写入运行日志。首次解压时可以为空。
 """
+
+
+OFFLINE_GUIDE = """# 本地离线演示说明
+
+## Windows 一键运行
+
+1. 完整解压压缩包，双击包根目录的 `启动离线演示.bat`。
+2. 交互页会在独立应用窗口中打开。关闭这个窗口即可退出，后台服务和日志文件自动释放。
+3. 展示页在 `showcase/index.html`，可单独打开；其中的本地交互链接会使用启动时选定的端口。
+
+需要可用的 Python 3.10+ 和已安装的 Edge 或 Chrome。首次安装缺少的依赖时需要网络，已初始化的 `.venv` 会复用。请在解压后的目录运行，不要在压缩软件预览窗口中运行。
+
+## 推荐体验路线
+
+- 侧栏“加载已审核示例” → 预览 → 高保真参考对照。
+- 逆设计：选择目标色 → 智能网格 → 应用候选 → 导出 JSON/CSV。
+- 光谱、映射、图案：查看分析或生成图案，再导出结果。
+
+参考库只匹配已审核的精确几何。搜索返回模型候选，不等同于实验验证；双柱模型缺失时使用明确标注的解析基线。
+
+## Linux/macOS 手动运行
+
+在包根目录执行：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r runtime/requirements-web.txt
+cd runtime
+python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8512
+```
+
+浏览器打开 `http://127.0.0.1:8512/`，终端按 Ctrl+C 结束。Windows 的关窗退出功能由 Windows 启动器提供。
+
+## 文件与排错
+
+`runtime/` 保留交互源码、模型和参考库，`deployment/` 是服务器部署脚本，`audit/` 是审计与证据，`protocols/` 是协议。文件完整性以包根 `RELEASE_MANIFEST.json` 为准，它不登记自身和运行时生成的环境、日志。
+
+启动失败时保留窗口里的错误提示，并查看 `logs/launcher.log` 或 `logs/desktop-host.log`。应用重复启动会复用现有实例，端口冲突会自动避让。
+"""
+
+
+def refresh_ui_manifest(package_root: Path) -> None:
+    """Bind the shipped UI manifest to runtime bytes, not the working tree."""
+    path = package_root / 'audit' / 'ui-release-manifest.json'
+    if not path.is_file():
+        return
+    previous = json.loads(path.read_text(encoding='utf-8'))
+    files = {}
+    excluded = []
+    for relative in previous['files']:
+        source = package_root / 'runtime' / relative
+        if source.is_file():
+            files[relative] = 'sha256:' + sha256(source)
+        else:
+            excluded.append(relative)
+    write_text(path, json.dumps({
+        'schema': 'ui-release-manifest-v1', 'status': 'pass', 'errors': [],
+        'root': 'runtime', 'scope': 'shipped_ui_sources_only',
+        'excluded_from_offline_bundle': sorted(set(excluded + previous.get('excluded_from_offline_bundle', []))),
+        'files': files,
+    }, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
 
 
 COMMON_PS1 = r'''$Root = (Resolve-Path $PSScriptRoot).Path
@@ -73,8 +137,22 @@ function Get-OwnedProcess($State) {
         $State.executable -ne $VenvPython -or [int]$State.port -lt 1024 -or
         [int]$State.port -gt 65535) { return $null }
     $owned = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$State.process_id)" -ErrorAction SilentlyContinue
+    try {
+        # PowerShell 7 may parse JSON timestamps as DateTime; 5.1 keeps strings.
+        # Compare UTC instants instead of differently formatted timestamp text.
+        $recordedCreation = if ($State.created_at_utc -is [datetime]) {
+            $State.created_at_utc.ToUniversalTime()
+        } else {
+            [DateTimeOffset]::Parse($State.created_at_utc, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+        }
+    } catch { return $null }
+    if (-not $owned -or $owned.CreationDate.ToUniversalTime() -ne $recordedCreation) { return $null }
+    if ($State.mode -eq 'desktop_window') {
+        if (-not $owned -or $owned.ExecutablePath -ne $State.host_executable -or
+            $owned.CommandLine.IndexOf((Join-Path $Root 'desktop_host.py'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $null }
+        return $owned
+    }
     if (-not $owned -or $owned.ExecutablePath -ne $VenvPython -or
-        $owned.CreationDate.ToUniversalTime().ToString('o') -ne $State.created_at_utc -or
         $owned.CommandLine -notmatch '\s-m\s+streamlit\s+run\s+app\.py\s' -or
         $owned.CommandLine -notmatch "--server.port\s+$($State.port)(\s|$)") { return $null }
     return $owned
@@ -98,13 +176,6 @@ function Clear-RuntimeState {
     Remove-Item -LiteralPath $StatePath, $PidPath -Force -ErrorAction SilentlyContinue
 }
 
-function Open-OfflinePages([int]$ActivePort) {
-    # This generated config is intentionally mutable and excluded from release hashes.
-    $url = "http://127.0.0.1:$ActivePort/"
-    Set-Content -LiteralPath (Join-Path $Root 'showcase\local-demo-config.js') -Encoding ASCII -Value "window.OFFLINE_APP_URL = '$url';"
-    Start-Process (Join-Path $Root "showcase\index.html")
-    Start-Process $url
-}
 '''
 
 
@@ -116,6 +187,7 @@ $ErrLog = Join-Path $LogDir "streamlit.err.log"
 $lock = $null
 $transcribing = $false
 $newState = $null
+$hostProcess = $null
 try {
     $lock = [IO.File]::Open((Join-Path $LogDir 'launcher.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     Start-Transcript -LiteralPath (Join-Path $LogDir 'launcher.log') -Append | Out-Null
@@ -126,10 +198,14 @@ if (-not (Test-Path (Join-Path $Runtime "app.py"))) {
 
     $oldState = Read-RuntimeState
     if (Get-OwnedProcess $oldState) {
-        if (-not (Test-RuntimeReady $oldState.port)) { throw "已记录的交互进程没有响应。请先运行停止脚本，再启动；日志在 $ErrLog。" }
-        if (-not $NoBrowser) { Open-OfflinePages $oldState.port }
-        Write-Host "交互页已在运行：http://127.0.0.1:$($oldState.port)/"
-        exit 0
+        if (-not (Test-RuntimeReady $oldState.port)) { throw "应用没有响应。请关闭应用窗口后重新启动；日志在 $ErrLog。" }
+        if ($oldState.mode -eq 'desktop_window') {
+            Write-Host "应用窗口已在运行：http://127.0.0.1:$($oldState.port)/"
+            exit 0
+        }
+        # Migrate a legacy detached service into the window-owned lifecycle.
+        & taskkill.exe /PID $oldState.process_id /T /F | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw '旧实例停止失败。' }
     }
     Clear-RuntimeState
 
@@ -212,40 +288,32 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "运行文件检查失败，请查看 logs\launcher.log。" }
 } finally { Pop-Location }
 
-Write-Host "正在启动交互页..."
-$arguments = @(
-    "-m", "streamlit", "run", "app.py",
-    "--server.address", "127.0.0.1",
-    "--server.port", ([string]$Port),
-    "--server.headless", "true"
-)
-$process = Start-Process -FilePath $VenvPython -ArgumentList $arguments -WorkingDirectory $Runtime -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog -WindowStyle Hidden -PassThru
-$identity = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)"
-if (-not $identity) { throw "服务进程提前退出，请查看 $ErrLog。" }
-$newState = [ordered]@{
-    root = $Root; runtime = $Runtime; executable = $VenvPython
-    process_id = $process.Id; port = $Port
-    created_at_utc = $identity.CreationDate.ToUniversalTime().ToString('o')
-}
-$tempState = "$StatePath.tmp"
-$newState | ConvertTo-Json | Set-Content -LiteralPath $tempState -Encoding UTF8
-Move-Item -LiteralPath $tempState -Destination $StatePath -Force
-Set-Content -LiteralPath $PidPath -Value ([string]$process.Id) -Encoding ascii
+Write-Host "正在打开应用窗口..."
+$hostArguments = @(('"' + (Join-Path $Root 'desktop_host.py') + '"'), '--port', ([string]$Port))
+if ($NoBrowser) { $hostArguments += '--no-browser' }
+$windowlessPython = Join-Path $Root '.venv\Scripts\pythonw.exe'
+$hostProcess = Start-Process -FilePath $windowlessPython -ArgumentList $hostArguments -WorkingDirectory $Root -WindowStyle Hidden -PassThru
 $ready = $false
-$deadline = (Get-Date).AddSeconds(90)
+$deadline = (Get-Date).AddSeconds(100)
 while ((Get-Date) -lt $deadline) {
-    if (-not (Get-OwnedProcess ([pscustomobject]$newState))) { throw "服务进程提前退出，请查看 $ErrLog。" }
-    if (Test-RuntimeReady $Port) { $ready = $true; break }
+    $newState = Read-RuntimeState
+    if ($newState -and $newState.status -eq 'ready' -and (Get-OwnedProcess $newState) -and (Test-RuntimeReady $newState.port)) {
+        $ready = $true
+        break
+    }
+    if ($hostProcess.HasExited) { throw "应用启动失败，请查看 logs\desktop-host.log。" }
     Start-Sleep -Milliseconds 500
 }
-if (-not $ready) { throw "服务未在 90 秒内就绪，请查看 $ErrLog。" }
-if (-not $NoBrowser) { Open-OfflinePages $Port }
-Write-Host "本地服务已就绪：http://127.0.0.1:$Port/；停止时双击 停止离线演示.bat。"
+if (-not $ready) { throw "应用未在 100 秒内就绪，请查看 logs\desktop-host.log。" }
+Set-Content -LiteralPath $PidPath -Value ([string]$newState.process_id) -Encoding ascii
+Write-Host "应用已打开：http://127.0.0.1:$($newState.port)/；关闭应用窗口即可退出。"
 exit 0
 } catch {
-    if ($newState -and (Get-OwnedProcess ([pscustomobject]$newState))) {
+    if ($newState -and (Get-OwnedProcess $newState)) {
         & taskkill.exe /PID $newState.process_id /T /F | Out-Null
         Clear-RuntimeState
+    } elseif ($hostProcess -and -not $hostProcess.HasExited) {
+        & taskkill.exe /PID $hostProcess.Id /T /F | Out-Null
     }
     Write-Host "启动失败：$($_.Exception.Message)" -ForegroundColor Red
     Write-Host "请保留此窗口。日志目录：$LogDir"
@@ -257,27 +325,6 @@ exit 0
 '''
 
 
-STOP_PS1 = r'''$ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot 'common_offline.ps1')
-$lock = $null
-try {
-    $lock = [IO.File]::Open((Join-Path $LogDir 'launcher.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-    $state = Read-RuntimeState
-    $owned = Get-OwnedProcess $state
-    if ($owned) {
-        & taskkill.exe /PID $owned.ProcessId /T /F | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw '停止进程失败。' }
-        Write-Host "本地交互页已停止。"
-    } else { Write-Host "没有发现本包正在运行的交互进程。" }
-    Clear-RuntimeState
-    exit 0
-} catch {
-    Write-Host "停止失败：$($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-} finally { if ($lock) { $lock.Dispose() } }
-'''
-
-
 START_BAT = r'''@echo off
 setlocal
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_offline.ps1" %*
@@ -286,15 +333,6 @@ if not "%launcher_exit%"=="0" (
     echo Startup failed. See logs\launcher.log in this folder.
     pause
 )
-endlocal & exit /b %launcher_exit%
-'''
-
-
-STOP_BAT = r'''@echo off
-setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop_offline.ps1" %*
-set "launcher_exit=%errorlevel%"
-if not "%launcher_exit%"=="0" pause
 endlocal & exit /b %launcher_exit%
 '''
 
@@ -330,6 +368,54 @@ def write_batch(path: Path, text: str) -> None:
     path.write_bytes(text.replace("\r\n", "\n").replace("\n", "\r\n").encode("ascii"))
 
 
+def write_launchers(project_root: Path, package_root: Path) -> None:
+    # These exact legacy entry points were removed at the user's request.
+    for name in ("停止离线演示.bat", "stop_offline.ps1"):
+        (package_root / name).unlink(missing_ok=True)
+    write_text(package_root / "README_先看这里.md", README)
+    write_text(package_root / 'docs' / '11_本地离线演示说明.md', OFFLINE_GUIDE)
+    write_text(package_root / 'audit' / 'README_证据索引.md', AUDIT_README)
+    write_text(package_root / "common_offline.ps1", COMMON_PS1, bom=True)
+    write_text(package_root / "start_offline.ps1", START_PS1, bom=True)
+    copy_file(project_root / 'scripts' / 'offline_desktop_host.py', package_root / 'desktop_host.py')
+    write_batch(package_root / "启动离线演示.bat", START_BAT)
+
+
+def refresh_launchers(project_root: Path, output_zip: Path, staging: Path, *, refresh_runtime=False) -> dict[str, object]:
+    """Refresh launchers and optionally the ML fix, then atomically reseal."""
+    manifest_path = staging / 'RELEASE_MANIFEST.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    write_launchers(project_root, staging)
+    if refresh_runtime:
+        for name in ('ml_module.py', 'app.py'):
+            copy_file(project_root / name, staging / 'runtime' / name)
+    refresh_ui_manifest(staging)
+    manifest['launcher_mode'] = 'desktop-window-close-stops-service'
+    manifest['entrypoints'].pop('stop', None)
+    files = {
+        path.relative_to(staging).as_posix(): 'sha256:' + sha256(path)
+        for path in sorted(staging.rglob('*'))
+        if path.is_file() and path != manifest_path
+        and '.venv' not in path.relative_to(staging).parts
+        and '__pycache__' not in path.relative_to(staging).parts
+        and path.relative_to(staging).as_posix() != 'showcase/local-demo-config.js'
+        and (path.parent != staging / 'logs' or path.name == 'README.md')
+    }
+    manifest['files'] = files
+    manifest['file_count'] = len(files)
+    write_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
+    temporary_zip = output_zip.with_suffix('.tmp.zip')
+    with ZipFile(temporary_zip, 'w', compression=ZIP_DEFLATED, compresslevel=6) as archive:
+        for relative in sorted([*files, 'RELEASE_MANIFEST.json']):
+            info = ZipInfo(f'{PACKAGE_DIR_NAME}/{relative}', date_time=(2020,1,1,0,0,0))
+            info.compress_type = ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, (staging / relative).read_bytes(), compress_type=ZIP_DEFLATED)
+    temporary_zip.replace(output_zip)
+    return manifest
+
+
 def build(project_root: Path, source_package: Path, output_zip: Path, staging: Path) -> dict[str, object]:
     project_root = project_root.resolve()
     source_package = source_package.resolve()
@@ -346,6 +432,8 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     runtime = staging / "runtime"
     for source in sorted(source_package.glob("*.py")):
         copy_file(source, runtime / source.name)
+    copy_file(project_root / 'ml_module.py', runtime / 'ml_module.py')
+    copy_file(project_root / 'app.py', runtime / 'app.py')
     copy_file(source_package / "requirements-web.txt", runtime / "requirements-web.txt")
     copy_tree(source_package / ".streamlit", runtime / ".streamlit")
     copy_tree(source_package / "models", runtime / "models")
@@ -375,12 +463,8 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
         copy_file(ui_manifest, audit / "ui-release-manifest.json")
     write_text(audit / "README_证据索引.md", AUDIT_README)
 
-    write_text(staging / "README_先看这里.md", README)
-    write_text(staging / "common_offline.ps1", COMMON_PS1, bom=True)
-    write_text(staging / "start_offline.ps1", START_PS1, bom=True)
-    write_text(staging / "stop_offline.ps1", STOP_PS1, bom=True)
-    write_batch(staging / "启动离线演示.bat", START_BAT)
-    write_batch(staging / "停止离线演示.bat", STOP_BAT)
+    write_launchers(project_root, staging)
+    refresh_ui_manifest(staging)
     write_text(staging / "logs" / "README.md", LOG_README)
 
     files = {
@@ -400,7 +484,6 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
         "entrypoints": {
             "showcase": "showcase/index.html",
             "interactive": "启动离线演示.bat",
-            "stop": "停止离线演示.bat",
         },
         "source_web_bundle": {
             "path": str(source_package),
@@ -428,9 +511,35 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     return manifest
 
 
+def sync_installed_package(staging: Path, installed: Path, manifest: dict) -> None:
+    """Update release files while preserving the installed environment/logs."""
+    installed = installed.resolve()
+    if installed == staging.resolve() or installed.name != PACKAGE_DIR_NAME:
+        raise ValueError('Expected a separate installed complete-offline package directory')
+    prior = json.loads((installed / 'RELEASE_MANIFEST.json').read_text(encoding='utf-8'))
+    # Validate all overlaps first so local user edits cannot be overwritten.
+    for relative, expected in manifest['files'].items():
+        target = installed / relative
+        target.resolve().relative_to(installed)
+        if target.is_file():
+            actual = 'sha256:' + sha256(target)
+            if actual not in {expected, prior['files'].get(relative)}:
+                raise ValueError(f'Installed file has user changes: {relative}')
+    for relative, expected in manifest['files'].items():
+        target = installed / relative
+        if not target.is_file() or 'sha256:' + sha256(target) != expected:
+            copy_file(staging / relative, target)
+    for name in ('停止离线演示.bat', 'stop_offline.ps1'):
+        (installed / name).unlink(missing_ok=True)
+    copy_file(staging / 'RELEASE_MANIFEST.json', installed / 'RELEASE_MANIFEST.json')
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--refresh-launchers', action='store_true', help='Update the existing staging launchers and atomically reseal its ZIP')
+    parser.add_argument('--refresh-runtime', action='store_true', help='Also sync the current ML and candidate-display fixes when refreshing an existing bundle')
+    parser.add_argument('--installed', type=Path, help='Sync an existing installed package; preserve .venv and logs')
     parser.add_argument(
         "--source-package",
         type=Path,
@@ -450,7 +559,12 @@ def main() -> int:
         default=Path(__file__).resolve().parents[1] / "dist" / PACKAGE_DIR_NAME,
     )
     args = parser.parse_args()
-    manifest = build(args.project_root, args.source_package, args.output, args.staging)
+    if args.refresh_runtime and not args.refresh_launchers:
+        parser.error('--refresh-runtime requires --refresh-launchers')
+    manifest = (refresh_launchers(args.project_root.resolve(), args.output.resolve(), args.staging.resolve(), refresh_runtime=args.refresh_runtime)
+                if args.refresh_launchers else build(args.project_root, args.source_package, args.output, args.staging))
+    if args.installed:
+        sync_installed_package(args.staging.resolve(), args.installed, manifest)
     print(json.dumps({
         "output": str(args.output.resolve()),
         "staging": str(args.staging.resolve()),

@@ -82,7 +82,7 @@ from color_utils import (
     WL as _WL, CIE_NORM as _CIE_NORM, D65, SRGB_M as _SRGB_M_NP,
     spectrum_to_xyz, xyz_to_srgb, spectrum_to_srgb, clamp01,
     srgb_to_linear, rgb_to_xyz, xyz_to_xy, rgb_to_xy,
-    xyz_to_lab, rgb_to_lab, rgb_to_hex, rgb_255,
+    xyz_to_lab, rgb_to_lab, rgb_to_lab_scalar, rgb_to_hex, rgb_255,
     delta_e76, delta_e2000, delta_e2000_scalar,
 )
 from competition.reference_library import (
@@ -328,6 +328,8 @@ _UI_THEME_BASE = {
         "scrim": "rgba(12, 8, 18, .78)", "preview_start": "#1A1A2E", "preview_end": "#16213E",
         "substrate_start": "#3A3A5C", "substrate_end": "#252540", "highlight_surface": "#2A1C12",
         "button_bg": "#251F2B", "button_text": "#F3F5F5", "accent_ink": "#160D05", "code_bg": "#100C16",
+        "tooltip_bg": "#251F2B", "tooltip_text": "#F3F5F5", "tooltip_border": "#51495C",
+        "icon_color": "#AFB1B2", "status_good": "#5BD48A", "status_warn": "#F3C969", "status_bad": "#FF8B82",
     },
     "light": {
         "bg_deep": "#F4F7FB", "bg_surface": "#FFFFFF", "bg_elevated": "#EEF2F7",
@@ -336,6 +338,8 @@ _UI_THEME_BASE = {
         "scrim": "rgba(15, 23, 42, .72)", "preview_start": "#E8EEF8", "preview_end": "#DCE6F5",
         "substrate_start": "#A8B6CB", "substrate_end": "#7E8DA6", "highlight_surface": "#FFF4E8",
         "button_bg": "#FFFFFF", "button_text": "#182230", "accent_ink": "#FFFFFF", "code_bg": "#F8FAFC",
+        "tooltip_bg": "#FFFFFF", "tooltip_text": "#182230", "tooltip_border": "#B7C4D5",
+        "icon_color": "#475569", "status_good": "#15803D", "status_warn": "#B45309", "status_bad": "#B91C1C",
     },
     "contrast": {
         "bg_deep": "#000000", "bg_surface": "#0B0B0B", "bg_elevated": "#171717",
@@ -344,6 +348,8 @@ _UI_THEME_BASE = {
         "scrim": "rgba(0, 0, 0, .84)", "preview_start": "#111111", "preview_end": "#252525",
         "substrate_start": "#666666", "substrate_end": "#333333", "highlight_surface": "#3A2B00",
         "button_bg": "#111111", "button_text": "#FFFFFF", "accent_ink": "#000000", "code_bg": "#050505",
+        "tooltip_bg": "#0B0B0B", "tooltip_text": "#FFFFFF", "tooltip_border": "#D4D4D4",
+        "icon_color": "#FFFFFF", "status_good": "#00FF85", "status_warn": "#FFD000", "status_bad": "#FF6B6B",
     },
 }
 _UI_ACCENT_PALETTE = {
@@ -1347,9 +1353,9 @@ def _render_result_provenance(provenance):
              style="border-left-color:{color}">
            <div class="source-summary__head">
              <strong>当前结果</strong>
-             <span title="技术路线：{esc(technical_route_label)}"
-                   style="background:{color};color:#0C0812;border-radius:999px;padding:3px 9px;
-                          font-size:12px;font-weight:600">{esc(route_label)}</span>
+              <span class="route-badge" title="技术路线：{esc(technical_route_label)}"
+                    style="border-radius:999px;padding:3px 9px;font-size:12px;font-weight:600">
+                {esc(route_label)}</span>
              <span class="source-summary__status">{esc(result_status)}</span>
            </div>
            <div class="source-summary__context">
@@ -1624,6 +1630,13 @@ def _inverse_candidate_contract(method, material, substrate, polarization, angle
             "route_id": "lorentz_fano_fallback",
             "boundary": "解析/半解析候选，不是直接 RCWA；需用已注册全波求解或实验独立复核。",
         }
+    if method_key in {"dual_physical", "dual analytical", "dual baseline"}:
+        return {
+            "method": "双柱解析/半解析基线",
+            "model": "torch_model.py::inverse_design_dual_v2",
+            "route_id": "dual physical fallback",
+            "boundary": "解析/半解析双柱候选，用于交互参考；不代表双柱 ONNX/RCWA 精度。",
+        }
     if method_key in {"dual", "dual ml", "dual surrogate"}:
         return {
             "method": "Dual-pillar ML surrogate",
@@ -1647,16 +1660,24 @@ def _inverse_candidate_contract(method, material, substrate, polarization, angle
 
 
 def _smart_grid_has_local_weights(material, substrate):
-    """Return whether smart-grid's required RCWA PyTorch weights exist locally."""
+    """Return whether smart-grid has a local RCWA model family to use.
+
+    The fast path uses the original PyTorch ``.pt`` weights when they are
+    present.  Release bundles only need the audited ONNX ensemble, though:
+    ``ml_module`` already binds those sessions for the forward predictor and
+    the smart-grid route can batch through the same registered sessions.
+    """
     key = (material, substrate)
     patterns = getattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {}).get(key)
     if patterns is None:
         patterns = getattr(ml_module, "_RCWA_MODELS", {}).get(material, [])
     model_dir = os.path.join(os.path.dirname(__file__), "models")
-    return any(
-        glob.glob(os.path.join(model_dir, pattern.replace(".onnx", ".pt")))
-        for pattern in patterns
-    )
+    for pattern in patterns:
+        if glob.glob(os.path.join(model_dir, pattern.replace(".onnx", ".pt"))):
+            return True
+        if glob.glob(os.path.join(model_dir, pattern)):
+            return True
+    return False
 
 
 def _smart_grid_has_matching_rcwa_session(material, substrate):
@@ -2189,6 +2210,51 @@ def _render_inverse_candidate_card(rank, hex_value, rgb_value, de2000, params_te
         st.button("应用此候选", key=apply_key, on_click=apply_callback, use_container_width=True)
 
 
+def _render_saved_inverse_candidates(context):
+    """Keep usable candidate cards across downloads and ordinary reruns."""
+    run = st.session_state.get("_inverse_run")
+    if not inverse_run_matches(run, context) or run.method_id not in {
+            "smart", "single", "rl", "dual", "dual_physical", "fp"}:
+        return
+    # Render the same validated records used by JSON/CSV exports. Never infer
+    # candidates from leftover widget values or invoke a search during rerender.
+    candidates = serialize_inverse_run(run, context).payload['candidates']
+    if not candidates:
+        return
+    best = candidates[0]
+    if run.method_id == 'smart':
+        st.success(f"智能网格完成 · 本次搜索排名第一 {best['predicted_hex']} · ΔE2000={best['delta_e2000']:.1f}")
+    else:
+        st.success(f"{run.method_label} · 已保存 {len(candidates)} 个候选")
+    st.caption(f"目标色：{context.target_hex} · 先比较颜色，再应用候选。")
+    first_keys = {
+        'smart': 'apply_sg_result', 'single': 'apply_gd_result',
+        'rl': 'apply_rl_result', 'dual': 'apply_dual_gd_result',
+        'dual_physical': 'apply_dual_physical_result', 'fp': 'fp_apply_0',
+    }
+    labels = {'d': 'D', 'h': 'H', 'p': 'P', 'd1': 'D1', 'h1': 'H1',
+              'd2': 'D2', 'h2': 'H2', 't': 'T', 'center_wavelength': 'λ₀'}
+    for index, candidate in enumerate(candidates):
+        parameters = candidate['parameters']
+        params_text = ' · '.join(
+            f"{labels.get(key, key)}={value:.1f}nm" for key, value in parameters.items())
+        contract = {'method': candidate['route_label'], 'model': candidate['model_version'],
+                    'boundary': candidate['boundary']}
+
+        def apply_saved(_parameters=dict(parameters), _structure=candidate['structure_type']):
+            _apply_inverse_candidate(context, _structure, _parameters)
+
+        _render_inverse_candidate_card(
+            candidate['rank'], candidate['predicted_hex'], candidate['predicted_rgb255'],
+            candidate['delta_e2000'], params_text, contract,
+            context.material, context.substrate, context.polarization, context.angle_deg,
+            apply_key=first_keys[run.method_id] if index == 0 else f"apply_saved_{run.method_id}_{index}",
+            apply_callback=apply_saved,
+        )
+    if best['delta_e2000'] > 20:
+        st.warning("目标色与候选仍有较大差异，可换目标色、材料或结构继续搜索。")
+
+
 st.title("超表面结构色设计")
 st.caption("输入目标颜色，搜索结构，查看光谱并导出结果。")
 st.markdown(
@@ -2224,6 +2290,11 @@ st.markdown(
       [data-baseweb="tab-list"] { gap: 2px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -ms-overflow-style:none; }
       [data-baseweb="tab-list"]::-webkit-scrollbar { display:none; }
       [data-baseweb="tab"] { flex:0 0 auto; min-width:max-content; padding:7px 12px; white-space:nowrap; }
+      [data-baseweb="tab"], [data-baseweb="tab"] p, [role="tab"] { color: var(--text-primary) !important; }
+      [data-baseweb="tab"][aria-selected="true"],
+      [data-baseweb="tab"][aria-selected="true"] p,
+      [role="tab"][aria-selected="true"] { color: var(--accent) !important; }
+      [data-baseweb="tab-highlight"] { background: var(--accent) !important; }
       .workflow-hint { min-width:0; margin:8px 0 14px; color:var(--text-muted); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
       .source-summary { width:100%; max-width:100%; min-width:0; box-sizing:border-box; overflow-wrap:anywhere; word-break:break-word; border:1px solid var(--border-subtle); border-left:4px solid var(--border-strong); border-radius:10px; padding:12px 14px; margin:0 0 10px; background:var(--bg-surface); color:var(--text-primary); }
       .source-summary__head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -2265,7 +2336,11 @@ st.markdown(
       .mapping-grid th[scope="row"] { width:64px; }
       .mapping-cell { position:relative; box-sizing:border-box; width:100%; min-height:64px; border:1px solid rgba(255,255,255,.16); border-radius:6px; display:flex; align-items:flex-end; justify-content:center; padding:5px; overflow:hidden; outline:none; }
       .mapping-cell:focus-visible { outline:3px solid var(--focus-ring); outline-offset:2px; }
-      .mapping-cell__value { width:100%; border-radius:4px; padding:3px 4px; background:var(--scrim); color:var(--text-primary); font-size:10px; line-height:1.25; text-align:center; text-shadow:0 1px 2px #000; }
+      /* Mapping labels sit on a deliberately dark translucent scrim.  They
+         therefore need an overlay-specific foreground instead of the page
+         text token; the latter is dark in light mode and becomes unreadable
+         on the saturated mapping colors. */
+      .mapping-cell__value { width:100%; border-radius:4px; padding:3px 4px; background:var(--scrim); color:#fff !important; font-size:10px; line-height:1.25; text-align:center; text-shadow:0 1px 2px rgba(0,0,0,.48); }
       .mapping-cell--unavailable { align-items:center; border:1px dashed var(--border-strong); background:var(--bg-elevated); }
       .mapping-cell--unavailable .mapping-cell__value { background:transparent; color:var(--text-secondary); text-shadow:none; }
       .mapping-cell--current { border:3px solid var(--accent-soft); box-shadow:0 0 0 1px var(--scrim); }
@@ -2328,6 +2403,13 @@ st.markdown(
         --button-text: {_UI_STYLE['button_text']};
         --accent-ink: {_UI_STYLE['accent_ink']};
         --code-bg: {_UI_STYLE['code_bg']};
+        --tooltip-bg: {_UI_STYLE['tooltip_bg']};
+        --tooltip-text: {_UI_STYLE['tooltip_text']};
+        --tooltip-border: {_UI_STYLE['tooltip_border']};
+        --icon-color: {_UI_STYLE['icon_color']};
+        --status-good: {_UI_STYLE['status_good']};
+        --status-warn: {_UI_STYLE['status_warn']};
+        --status-bad: {_UI_STYLE['status_bad']};
         /* Kept as compatibility tokens for the audited light-mode palette
            (#e5e7eb, #4f9f9a); components still consume theme-aware variables. */
       }}
@@ -2369,6 +2451,20 @@ st.markdown(
          white-space: nowrap !important;
          font-size: inherit !important;
        }}
+       /* The sidebar has four compact theme/accent choices.  Keep the labels
+          readable at narrow widths instead of letting BaseWeb clip them. */
+       [data-testid="stSidebar"] [data-baseweb="button-group"] > button {{
+         padding-left: 3px !important;
+         padding-right: 3px !important;
+         font-size: 12px !important;
+       }}
+       [data-testid="stSidebar"] [data-baseweb="button-group"] > button,
+       [data-testid="stSidebar"] [data-baseweb="button-group"] > button > div,
+       [data-testid="stSidebar"] [data-baseweb="button-group"] > button span,
+       [data-testid="stSidebar"] [data-baseweb="button-group"] > button p {{
+         overflow: visible !important;
+         text-overflow: clip !important;
+       }}
        /* Streamlit 1.4x exposes segmented controls as button-group; keep a
           semantic fallback for versions that omit data-baseweb on the group. */
        [data-testid="stSidebar"] [role="radiogroup"]:has(> button) {{
@@ -2385,6 +2481,13 @@ st.markdown(
          padding-right: 5px !important;
          white-space: nowrap !important;
          font-size: 13px !important;
+       }}
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) > button,
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) > button > div,
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) > button span,
+       [data-testid="stSidebar"] [role="radiogroup"]:has(> button) > button p {{
+         overflow: visible !important;
+         text-overflow: clip !important;
        }}
        [data-baseweb="button-group"] button[data-testid^="stBaseButton-segmented_control"] {{
          background: var(--button-bg) !important;
@@ -2465,39 +2568,86 @@ st.markdown(
         border-color: var(--border-subtle) !important;
         color: var(--text-primary) !important;
       }}
-      [data-baseweb="select"] input, [data-baseweb="input"] input,
-      [data-baseweb="textarea"] textarea {{ color: var(--text-primary) !important; }}
+       [data-baseweb="select"] input, [data-baseweb="input"] input,
+       [data-baseweb="textarea"] textarea {{ color: var(--text-primary) !important; }}
+       [data-baseweb="select"] svg, [data-baseweb="select"] [role="img"] {{
+         color: var(--icon-color) !important; stroke: currentColor !important; fill: currentColor !important;
+       }}
+       [data-baseweb="tooltip"], [data-baseweb="tooltip"] > div,
+       [data-testid="stTooltipContent"], [data-testid="stTooltipContent"] * {{
+         background: var(--tooltip-bg) !important; color: var(--tooltip-text) !important;
+         border-color: var(--tooltip-border) !important;
+       }}
+       [data-baseweb="tooltip"] {{ box-shadow: 0 8px 24px rgba(0,0,0,.24) !important; z-index: 1000 !important; }}
        [role="radiogroup"] label {{ color: var(--text-primary) !important; }}
        /* Keep the structure selector readable in the narrow sidebar.  The
           default BaseWeb rule lets labels shrink below their text width,
           which turns the long FP label into a vertical strip. */
-       [data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
-         display: flex !important;
-         flex-wrap: wrap !important;
-         align-items: center !important;
-         column-gap: 0 !important;
-         row-gap: 6px !important;
-         width: 100% !important;
-         max-width: 100% !important;
-         overflow-x: visible !important;
-       }}
-       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label {{
-         flex: 0 0 auto !important;
-         width: max-content !important;
-         min-width: max-content !important;
-         max-width: none !important;
-         white-space: nowrap !important;
-         overflow: visible !important;
-       }}
-       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child,
-       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child > div,
-       [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label p {{
-         width: max-content !important;
-         min-width: max-content !important;
-         max-width: none !important;
-         white-space: nowrap !important;
-         overflow: visible !important;
-       }}
+       /* The structure selector is a narrow-sidebar control.  Keep it as a
+          clean vertical list so the long FP label never wraps onto a second
+          row or inherits BaseWeb's selected text chip. */
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
+          display: grid !important;
+          grid-template-columns: minmax(0, 1fr) !important;
+          gap: 6px !important;
+          align-items: stretch !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          overflow: visible !important;
+        }}
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label {{
+          display: flex !important;
+          flex: 0 0 auto !important;
+          align-items: center !important;
+          gap: 8px !important;
+          box-sizing: border-box !important;
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: 100% !important;
+          min-height: 30px !important;
+          margin: 0 !important;
+          padding: 6px 8px !important;
+          border: 1px solid transparent !important;
+          border-radius: 8px !important;
+          background: transparent !important;
+          white-space: nowrap !important;
+          overflow: visible !important;
+        }}
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label:has(input:checked) {{
+          background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)) !important;
+          border-color: color-mix(in srgb, var(--accent) 62%, var(--border-subtle)) !important;
+        }}
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:first-child {{
+          flex: 0 0 16px !important;
+          width: 16px !important;
+          height: 16px !important;
+          margin: 0 !important;
+        }}
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child {{
+          flex: 1 1 auto !important;
+          width: auto !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          padding: 0 !important;
+          background: transparent !important;
+          border: 0 !important;
+          color: var(--text-primary) !important;
+          white-space: nowrap !important;
+          overflow: visible !important;
+        }}
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child > [data-testid="stMarkdownContainer"],
+        [data-testid="stSidebar"] .stRadio [role="radiogroup"] > label > div:last-child p {{
+          width: auto !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: transparent !important;
+          border: 0 !important;
+          color: var(--text-primary) !important;
+          white-space: nowrap !important;
+          overflow: visible !important;
+        }}
        /* Override BaseWeb's fixed translucent swatches on both layers so
           light/dark/high-contrast modes use the same theme tokens. */
        [data-baseweb="checkbox"] > span,
@@ -2522,11 +2672,30 @@ st.markdown(
          background: var(--accent) !important;
          border-color: var(--accent) !important;
        }}
-       [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{
-         background: var(--bg-surface) !important;
-         color: var(--text-primary) !important;
-         border-color: var(--border-subtle) !important;
-       }}
+        [data-testid="stExpander"] details {{
+          background: var(--bg-surface) !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border-subtle) !important;
+          box-shadow: none !important;
+        }}
+        [data-testid="stExpander"] details > summary {{
+          background: var(--bg-surface) !important;
+          color: var(--text-primary) !important;
+          border: 0 !important;
+          box-shadow: none !important;
+        }}
+        [data-testid="stExpander"] details:has(> summary:focus),
+        [data-testid="stExpander"] details:has(> summary:focus-visible) {{
+          border-color: var(--focus-ring) !important;
+          box-shadow: 0 0 0 2px var(--focus-halo) !important;
+        }}
+        [data-testid="stExpander"] details > summary:focus,
+        [data-testid="stExpander"] details > summary:focus-visible {{
+          outline: 2px solid var(--focus-ring) !important;
+          outline-offset: -2px !important;
+          border-color: transparent !important;
+          box-shadow: none !important;
+        }}
        /* The benchmark table is intentionally wider than a narrow half-column;
           keep numeric columns on one line and let the route column wrap at
           phrase boundaries instead of splitting every character. */
@@ -2556,17 +2725,44 @@ st.markdown(
          min-width: 230px !important;
        }}
        .competition-banner {{ background: linear-gradient(90deg, var(--bg-elevated), var(--bg-surface)); }}
-      .theme-swatch {{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; background:var(--accent); }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-st.markdown(
-    """
-    <div class="competition-banner" aria-label="设计工作流">
-      <strong>设计工作流</strong>
-      <span>目标颜色 → 候选搜索 → 光谱 / 色度 → 结果导出</span>
-    </div>
+       .theme-swatch {{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; background:var(--accent); }}
+       /* Streamlit alerts keep a generated blue/yellow surface unless both
+          the container and its semantic kind are themed explicitly. */
+       [data-testid="stAlertContainer"] {{
+         background:var(--bg-elevated) !important;
+         color:var(--text-primary) !important;
+         border:1px solid var(--border-subtle) !important;
+         border-left:3px solid var(--accent-cool) !important;
+         border-radius:8px !important;
+       }}
+       [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
+       [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"] p {{
+         color:var(--text-primary) !important;
+       }}
+       [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {{
+         background:color-mix(in srgb, var(--status-warn) 12%, var(--bg-surface)) !important;
+         border-left-color:var(--status-warn) !important;
+       }}
+       [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {{
+         background:color-mix(in srgb, var(--status-bad) 12%, var(--bg-surface)) !important;
+         border-left-color:var(--status-bad) !important;
+       }}
+       [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {{
+         background:color-mix(in srgb, var(--status-good) 12%, var(--bg-surface)) !important;
+         border-left-color:var(--status-good) !important;
+       }}
+       [data-baseweb="select"] svg, [data-baseweb="select"] [role="img"] {{ color:var(--icon-color) !important; stroke:currentColor !important; fill:currentColor !important; }}
+       [data-baseweb="tooltip"], [data-baseweb="tooltip"] > div,
+       [data-testid="stTooltipContent"], [data-testid="stTooltipContent"] * {{
+         background:var(--tooltip-bg) !important; color:var(--tooltip-text) !important;
+         border-color:var(--tooltip-border) !important;
+       }}
+       [data-baseweb="tooltip"] {{ box-shadow:0 8px 24px rgba(0,0,0,.24) !important; z-index:1000 !important; }}
+       .status-good {{ color:var(--status-good) !important; }}
+       .status-warn {{ color:var(--status-warn) !important; }}
+       .status-bad {{ color:var(--status-bad) !important; }}
+       .route-badge {{ background:var(--accent) !important; color:var(--accent-ink) !important; }}
+     </style>
     """,
     unsafe_allow_html=True,
 )
@@ -2574,7 +2770,7 @@ st.markdown(
     """
     <div class="workflow-hint"
          aria-label="工作流：侧栏设置参数 → 预览颜色与来源 → 查看结果 → 导出记录。">
-      使用顺序：输入目标颜色 → 调整结构 → 查看结果 → 导出记录。
+      <strong>使用顺序：</strong>输入目标颜色 → 调整结构 → 查看结果 → 导出记录。
     </div>
     """,
     unsafe_allow_html=True,
@@ -2596,7 +2792,6 @@ with st.sidebar:
             "并立即可在预览、光谱和参考复核中查看；不会插值、训练或修改数据。"
         ),
     )
-    st.caption("点一次即可载入可复核参数：TiO2 / SiO2 / air · TM · 0°")
     _structure_options = ['单柱', '双柱', 'FP 腔（Fabry-Pérot）']
     st.radio(
         '📏 结构类型',
@@ -2604,7 +2799,7 @@ with st.sidebar:
         key="structure_type_control",
         on_change=sync_enum_from_widget,
         args=(st.session_state, _ENUM_CONTROLS["structure"]),
-        horizontal=True,
+        horizontal=False,
         help='单柱/双柱纳米柱或法布里-珀罗腔'
     )
     is_fp = st.session_state.structure_type == 'fp'
@@ -2641,13 +2836,13 @@ with st.sidebar:
         n_sub = MaterialLibrary.n_at_wavelength(substrate, 550)
         delta_n = n_pillar - n_sub
         if delta_n > 0.6:
-            dn_color, dn_label = "#27ae60", f"折射率差 Δn = {delta_n:.2f}｜预计色域较宽"
+            dn_class, dn_label = "status-good", f"折射率差 Δn = {delta_n:.2f}｜预计色域较宽"
         elif delta_n > 0.4:
-            dn_color, dn_label = "#f39c12", f"折射率差 Δn = {delta_n:.2f}｜接近截止，色域受限"
+            dn_class, dn_label = "status-warn", f"折射率差 Δn = {delta_n:.2f}｜接近截止，色域受限"
         else:
-            dn_color, dn_label = "#e74c3c", f"折射率差 Δn = {delta_n:.2f}｜低于截止，难以形成结构色"
+            dn_class, dn_label = "status-bad", f"折射率差 Δn = {delta_n:.2f}｜低于截止，难以形成结构色"
         st.markdown(
-            f"""<div style="background:{dn_color}18; border-left:3px solid {dn_color};
+            f"""<div class="{dn_class}" style="background:color-mix(in srgb, currentColor 10%, var(--bg-surface)); border-left:3px solid currentColor;
             padding:6px 10px; border-radius:4px; margin:4px 0; font-size:0.82rem;">
             {dn_label}</div>""",
             unsafe_allow_html=True
@@ -2767,13 +2962,11 @@ with st.sidebar:
             help='使用当前结构路线注册的神经网络代理模型',
         )
         if is_dual:
-            st.caption(
-                f"当前可用模型：{_DUAL_MODEL_RELATIVE_PATH}；"
-                "仅支持已注册训练域内的 SiO2 衬底。")
+            st.caption("双柱快速预测已就绪；仅支持已注册的 SiO₂ 衬底。")
         elif _ml_is_v8:
-            st.caption("当前可用模型：v8 衬底条件模型（Substrate）· 7维输入 · 4种材料 + 3种衬底。")
+            st.caption("快速预测已就绪。")
         else:
-            st.caption("当前可用模型：v7 Multi · 6维输入 · 4种材料。")
+            st.caption("快速预测已就绪。")
     else:
         if is_fp:
             _ml_inactive_reason = "FP-TMM 直接计算薄膜腔光谱"
@@ -2794,7 +2987,6 @@ with st.sidebar:
     st.divider()
     st.header('📏 纳米柱尺寸')
     _single_geometry_invalid = False
-    st.caption('单柱/双柱纳米柱或FP腔 | 双柱模式搜索空间大')
 
     if st.session_state.dual_pillar:
         # 预验证: 在渲染滑块前先修正参数, 确保滑块显示修正后的值
@@ -3004,7 +3196,7 @@ with st.sidebar:
     }
     # Quick presets removed: dual-Lorentzian model limits prevent accurate preset colors.
     # Use the inverse design tab for precise color matching.
-    st.caption('精准颜色请用「逆设计」标签页搜索匹配')
+    st.caption('颜色匹配请进入「逆设计」。')
     # cols = st.columns(4)
     # for i, (name, (d_val, h_val)) in enumerate(presets.items()):
     #     with cols[i % 4]:
@@ -3956,6 +4148,23 @@ with tab2:
         far_field_enabled=bool(_far_field_enabled),
         rl_ready=_rl_ready,
     )
+    # The dual ONNX route remains fail-closed when its manifest is absent, but
+    # the project already ships a runnable analytical dual baseline.  Expose
+    # that baseline as a real action so the structure selector never leads to
+    # a page whose only visible control is a dead disabled button.
+    if _inverse_structure == "dual" and "dual_physical" not in _method_states:
+        _dual_physical_ready = bool(
+            _inverse_context.geometry_valid
+            and importlib.util.find_spec("torch") is not None
+        )
+        _method_states["dual_physical"] = InverseMethodState(
+            "dual_physical", "双柱解析", "双柱五参数解析/半解析基线搜索",
+            _dual_physical_ready,
+            "可用：使用本地解析/半解析双柱基线；结果用于交互参考，不代表双柱 ONNX/RCWA 精度。"
+            if _dual_physical_ready else
+            "不可用：当前 Python 环境未安装 PyTorch。",
+            scope="analytical_baseline",
+        )
     # Far-field and geometry validity are intentionally outside
     # InverseContext's export identity.  Drop a reference-library run when
     # its current display conditions no longer support that exact route.
@@ -3981,7 +4190,9 @@ with tab2:
         _single_order.append("single")
         _preferred_order = _single_order
     else:
-        _preferred_order = {"dual": ["dual"], "fp": ["fp"]}[_inverse_structure]
+        _preferred_order = {
+            "dual": ["dual", "dual_physical"], "fp": ["fp"]
+        }[_inverse_structure]
     _primary_method = next(
         (key for key in _preferred_order if _method_states[key].available),
         _preferred_order[0],
@@ -3992,11 +4203,10 @@ with tab2:
         "rl": "离散探索（Q-learning）",
         "single": "单柱参数搜索",
         "dual": "双柱联合搜索",
+        "dual_physical": "双柱解析搜索",
         "fp": "腔长与中心波长搜索",
         "compare": "比较不同结构路线",
     }
-    if _inverse_structure == "single":
-        st.caption("单柱路线已保留；双柱和 FP 腔功能可在左侧“结构类型”切换。")
     primary_btn = st.button(
         f"开始搜索 · {_primary_state.label}",
         type="primary",
@@ -4004,28 +4214,34 @@ with tab2:
         disabled=not _primary_state.available,
         help=_primary_state.summary,
     )
-    st.caption(
-        f"当前主路线：{_method_plain_summary.get(_primary_method, _primary_state.label)}。"
-        f"{_primary_state.reason}"
-    )
+    _primary_summary = _method_plain_summary.get(_primary_method, _primary_state.label)
+    if _primary_state.available:
+        st.caption(f"主路线：{_primary_summary} · 可用")
+    else:
+        st.caption(f"主路线：{_primary_summary} · 暂不可用。{_primary_state.reason}")
 
     reference_btn = primary_btn if _primary_method == "reference" else False
     smart_btn = primary_btn if _primary_method == "smart" else False
     rl_btn = primary_btn if _primary_method == "rl" else False
     gd_btn = primary_btn if _primary_method == "single" else False
     dual_gd_btn = primary_btn if _primary_method == "dual" else False
+    dual_physical_btn = primary_btn if _primary_method == "dual_physical" else False
     fp_search_btn = primary_btn if _primary_method == "fp" else False
     ai_btn = primary_btn if _primary_method == "compare" else False
     _other_method_keys = [
         key for key in _preferred_order if key != _primary_method
     ]
     if _other_method_keys:
-        st.caption("下面列出当前结构下仍保留的其他路线；灰色按钮代表当前条件暂不满足。")
-        with st.expander("其他搜索方法与可用性", expanded=True):
+        st.caption("其他路线")
+        with st.expander("其他搜索方法与可用性", expanded=False):
             for _method_key in _other_method_keys:
                 _method = _method_states[_method_key]
                 _method_status = "可用" if _method.available else "暂不可用"
-                _method_text, _method_action = st.columns([3, 1])
+                if _method.available:
+                    _method_text, _method_action = st.columns([3, 1])
+                else:
+                    _method_text = st.container()
+                    _method_action = None
                 with _method_text:
                     st.markdown(
                         f"""
@@ -4038,14 +4254,16 @@ with tab2:
                         """,
                         unsafe_allow_html=True,
                     )
-                with _method_action:
-                    _clicked = st.button(
-                        _method.label,
-                        key=f"inverse_secondary_{_method_key}",
-                        use_container_width=True,
-                        disabled=not _method.available,
-                        help=_method.reason,
-                    )
+                if _method.available:
+                    with _method_action:
+                        _clicked = st.button(
+                            _method.label,
+                            key=f"inverse_secondary_{_method_key}",
+                            use_container_width=True,
+                            help=_method.reason,
+                        )
+                else:
+                    _clicked = False
                 if _method_key == "smart":
                     smart_btn = _clicked
                 elif _method_key == "rl":
@@ -4056,6 +4274,8 @@ with tab2:
                     gd_btn = _clicked
                 elif _method_key == "dual":
                     dual_gd_btn = _clicked
+                elif _method_key == "dual_physical":
+                    dual_physical_btn = _clicked
                 elif _method_key == "fp":
                     fp_search_btn = _clicked
 
@@ -4063,12 +4283,14 @@ with tab2:
         _compare_method = _method_states["compare"]
         with st.expander("跨结构比较（不作为推荐主方法）", expanded=False):
             st.caption(f"{_compare_method.summary}。{_compare_method.reason}")
-            ai_btn = st.button(
-                _compare_method.label, key="inverse_cross_structure_compare",
-                use_container_width=True,
-                disabled=not _compare_method.available,
-                help=_compare_method.reason,
-            )
+            if _compare_method.available:
+                ai_btn = st.button(
+                    _compare_method.label, key="inverse_cross_structure_compare",
+                    use_container_width=True, help=_compare_method.reason,
+                )
+            else:
+                ai_btn = False
+                st.caption("当前条件下不可运行，已隐藏操作按钮。")
 
     if _inverse_structure == "single" and "TiO2" in material and target_b > 150 and target_b > target_r + 20 and target_b > target_g + 20:
         st.caption("TiO₂ 难以覆盖高饱和蓝/青色；可切换到 **a-Si**，或在侧栏顶部选择 **FP 腔**。")
@@ -4175,30 +4397,6 @@ with tab2:
                     _store_inverse_run(
                         _inverse_context, "smart", "智能网格",
                         _normalized_smart_candidates(_inverse_context, result))
-                    st.success(f"🎯 智能网格完成 · 本次搜索排名第一 {hex_sg} · ΔE2000={de_sg:.1f}")
-                    _sg_contract = _inverse_candidate_contract(
-                        "smart_grid", material, substrate, polarization, angle
-                    )
-                    def _apply_sg_cb():
-                        _apply_inverse_candidate(
-                            _inverse_context, "single",
-                            {"d": d_sg, "h": h_sg, "p": p_sg})
-                    st.caption(f"目标色：{picker_hex} · RGB({target_r}, {target_g}, {target_b})")
-                    st.caption("候选比较（同一材料 / 衬底 / 偏振 / 入射角）")
-                    for idx, cand in enumerate(result[:3]):
-                        cb = cand[1]
-                        c_hex = f"#{max(0,min(255,int(cand[2][0]*255))):02x}{max(0,min(255,int(cand[2][1]*255))):02x}{max(0,min(255,int(cand[2][2]*255))):02x}"
-                        _render_inverse_candidate_card(
-                            idx + 1, c_hex, [int(cand[2][0] * 255), int(cand[2][1] * 255), int(cand[2][2] * 255)],
-                            cand[4], f"D={cb.diameter_nm:.1f}nm · H={cb.height_nm:.1f}nm · P={cb.period_nm:.1f}nm",
-                            _sg_contract, material, substrate, polarization, angle,
-                            apply_key="apply_sg_result" if idx == 0 else None,
-                            apply_callback=_apply_sg_cb if idx == 0 else None,
-                        )
-
-                    de2k_val = de_sg
-                    if de2k_val > 20:
-                        st.warning(f"⚠️ ΔE={de2k_val:.0f} 色差很大，该目标颜色可能超出当前材料色域。尝试：1) 换材料 (a-Si 色域更宽)  2) 换 FP 腔模式  3) 选色域内的目标色。")
 
             except Exception as e:
                 st.warning(f"智能网格搜索失败: {e}")
@@ -4396,6 +4594,84 @@ with tab2:
             except Exception as e:
                 logging.warning(f"app fallback: {e}")
                 st.warning(f"双柱梯度优化失败: {e}")
+
+    if _inverse_structure == "dual" and dual_physical_btn and _inverse_context.geometry_valid:
+        _clear_inverse_results()
+        with st.spinner("📊 双柱解析候选搜索中..."):
+            try:
+                from torch_model import inverse_design_dual_v2, batch_dual_pillar_rgb
+                result = inverse_design_dual_v2(
+                    target_rgb_norm, n_restarts=8, steps=80, lr=0.05,
+                    material=material, substrate=substrate, theta=float(angle),
+                    pol_TE=polarization.startswith("TE"), p_fixed=None,
+                    loss_type="de2000",
+                )
+                d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, _loss = result
+                # The analytical optimizer is intentionally permissive about P;
+                # enforce the UI's non-overlap contract and recompute the shown
+                # color whenever the repair changes the period.
+                p_valid = max(float(p_gd), float(d1_gd), float(d2_gd))
+                if p_valid != float(p_gd):
+                    p_gd = p_valid
+                    import torch
+                    with torch.no_grad():
+                        pred_rgb = batch_dual_pillar_rgb(
+                            torch.tensor([d1_gd]), torch.tensor([h1_gd]),
+                            torch.tensor([d2_gd]), torch.tensor([h2_gd]),
+                            torch.tensor([p_gd]), float(angle),
+                            polarization.startswith("TE"), material, substrate,
+                        )[0].cpu().numpy()
+                pred_rgb = np.asarray(pred_rgb, dtype=float)
+                rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
+                de_gd = delta_e2000_scalar(
+                    rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
+                st.session_state._dual_gd_d1 = float(d1_gd)
+                st.session_state._dual_gd_h1 = float(h1_gd)
+                st.session_state._dual_gd_d2 = float(d2_gd)
+                st.session_state._dual_gd_h2 = float(h2_gd)
+                st.session_state._dual_gd_p = float(p_gd)
+                st.session_state._dual_gd_hex = hex_gd
+                st.session_state._dual_gd_de = float(de_gd)
+                st.session_state._dual_gd_rgb = tuple(rc)
+                _dual_contract = _inverse_candidate_contract(
+                    "dual_physical", material, substrate, polarization, angle)
+                _store_inverse_run(
+                    _inverse_context, "dual_physical", "双柱解析",
+                    (build_inverse_candidate(
+                        _inverse_context,
+                        method_id="dual_physical", method_label="双柱解析", rank=1,
+                        structure_type="dual",
+                        candidate_context=_candidate_context(
+                            "dual", material, substrate, polarization, angle),
+                        route_id=_dual_contract["route_id"],
+                        route_label=_dual_contract["method"],
+                        model_version=_dual_contract["model"],
+                        boundary=_dual_contract["boundary"],
+                        parameters={
+                            "d1": d1_gd, "h1": h1_gd, "d2": d2_gd,
+                            "h2": h2_gd, "p": p_gd,
+                        },
+                        predicted_rgb=pred_rgb, delta_e2000=de_gd,
+                    ),))
+                st.success(f"🎉 双柱解析候选搜索完成 · {hex_gd} · ΔE2000={de_gd:.1f}")
+                _render_inverse_candidate_card(
+                    1, hex_gd, rc, de_gd,
+                    f"D1={d1_gd:.1f}nm · H1={h1_gd:.1f}nm · D2={d2_gd:.1f}nm · H2={h2_gd:.1f}nm · P={p_gd:.1f}nm",
+                    _dual_contract, material, substrate, polarization, angle,
+                )
+                def _apply_dual_physical_cb():
+                    _apply_inverse_candidate(
+                        _inverse_context, "dual", {
+                            "d1": d1_gd, "h1": h1_gd, "d2": d2_gd,
+                            "h2": h2_gd, "p": p_gd})
+                st.button(
+                    "应用此候选", on_click=_apply_dual_physical_cb,
+                    key="apply_dual_physical_result", use_container_width=True)
+                st.caption("这是解析/半解析基线候选；应用后请回到预览页复核当前正向结果。")
+            except Exception as e:
+                logging.warning(f"dual analytical inverse failed: {e}")
+                st.warning(f"双柱解析搜索失败：{type(e).__name__}：{e}")
     if ai_btn and _inverse_structure == "single" and _inverse_context.geometry_valid:
         _clear_inverse_results()
         with st.spinner("🤖 三方案并行搜索中 (TiO2 / a-Si / FP腔)..."):
@@ -4611,6 +4887,10 @@ with tab2:
                             ),
                         )
 
+    if smart_btn or not any((reference_btn, rl_btn, gd_btn, dual_gd_btn,
+                             dual_physical_btn, ai_btn, fp_search_btn)):
+        _render_saved_inverse_candidates(_inverse_context)
+
     # The sole export renderer runs after every search branch, including FP.
     _render_inverse_exports(_inverse_context)
 
@@ -4618,6 +4898,7 @@ with tab2:
 # Tab 3: Pattern Generation
 with tab3:
     st.subheader("独立单柱解析近似图案工具")
+    st.caption("上传图片，生成结构色映射与 D/H/P 参数图。")
     _pattern_contract = make_pattern_contract(
         structure_type=_structure_type,
         structure_identity=_structure_label,
@@ -4626,38 +4907,39 @@ with tab3:
         angle_deg=float(angle),
         far_field_enabled=bool(_far_field_enabled),
     )
-    st.markdown(
-        f"""
-        <div class="pattern-boundary" role="status" aria-label="图案映射来源边界">
-          <strong>固定合同：single · TE · 0° · no-far-field · scalar analytical</strong><br>
-          <span>精确材料键：{html.escape(material)} / {html.escape(substrate)}。
-          本工具不继承预览 ML、偏振或角度，不支持双柱或 FP，也不是逐像素直接 RCWA。</span><br>
-          <span>模型：{html.escape(_pattern_contract.model_version)} ·
-          registry：{html.escape(_pattern_contract.registry_version[:24])}…</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "图像只在当前本机 Python 进程中处理；不会调用 DeepSeek 或上传到外部服务。"
-        "可用结果包含缩放原图、映射图和 D/H/P 三张参数图。"
-    )
-    st.markdown(
-        """
-        <div class="pattern-empty">
-          <strong>输入与计算边界</strong>
-          <ol>
-            <li>上传 PNG / JPEG / WebP：单文件不超过 8 MB，源图不超过 1200 万像素且单边不超过 5000 px。</li>
-            <li>选择输出最长边 20-64 像素；建议 32-48。映射按目标像素 64 个、颜色库 4096 条分块穷举，单块理论临时工作区不超过 16 MiB，不构造“全部像素 × 全颜色库”矩阵。</li>
-            <li>最近邻排序使用 Lab 三维平方欧氏距离，与 ΔE76 的排序等价；这不是 ΔE00。重复或等距颜色保持颜色库中最早索引优先。</li>
-            <li>点击“生成图案”后才构建 operation-local 颜色库并逐像素匹配；不会修改主会话 engine。</li>
-            <li>只有 CCM 精确注册键可用；禁止 fuzzy、材料单项、默认系数或衬底替代。</li>
-            <li>输出是解析近似候选，仍需另行全波或实验复核。</li>
-          </ol>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.expander("图案设置说明", expanded=False):
+        st.markdown(
+            f"""
+            <div class="pattern-boundary" role="status" aria-label="图案映射来源边界">
+              <strong>固定合同：single · TE · 0° · no-far-field · scalar analytical</strong><br>
+              <span>精确材料键：{html.escape(material)} / {html.escape(substrate)}。
+              本工具不继承预览 ML、偏振或角度，不支持双柱或 FP，也不是逐像素直接 RCWA。</span><br>
+              <span>模型：{html.escape(_pattern_contract.model_version)} ·
+              registry：{html.escape(_pattern_contract.registry_version[:24])}…</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "图像只在当前本机 Python 进程中处理；不会调用 DeepSeek 或上传到外部服务。"
+            "可用结果包含缩放原图、映射图和 D/H/P 三张参数图。"
+        )
+        st.markdown(
+            """
+            <div class="pattern-empty">
+              <strong>输入与计算边界</strong>
+              <ol>
+                <li>上传 PNG / JPEG / WebP：单文件不超过 8 MB，源图不超过 1200 万像素且单边不超过 5000 px。</li>
+                <li>选择输出最长边 20-64 像素；建议 32-48。映射按目标像素 64 个、颜色库 4096 条分块穷举，单块理论临时工作区不超过 16 MiB，不构造“全部像素 × 全颜色库”矩阵。</li>
+                <li>最近邻排序使用 Lab 三维平方欧氏距离，与 ΔE76 的排序等价；这不是 ΔE00。重复或等距颜色保持颜色库中最早索引优先。</li>
+                <li>点击“生成图案”后才构建 operation-local 颜色库并逐像素匹配；不会修改主会话 engine。</li>
+                <li>只有 CCM 精确注册键可用；禁止 fuzzy、材料单项、默认系数或衬底替代。</li>
+                <li>输出是解析近似候选，仍需另行全波或实验复核。</li>
+              </ol>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     if not _pattern_contract.available:
         st.warning(f"图案工具不可用：{_pattern_contract.reason}")
         if PATTERN_SESSION_KEY in st.session_state:
@@ -4826,14 +5108,32 @@ with tab4:
     h_sample = np.linspace(200, 600, 6)
 
     _mapping_route_id = str(_forward.provenance.get("route_id", ""))
+    _mapping_analytical_fallback = False
     if is_dual:
         _mapping_route_id = "dual_pillar_mapping_not_registered"
     elif is_fp:
         _mapping_route_id = "fp_cavity_mapping_not_registered"
+    elif (
+        material == "TiO2 (anatase)"
+        and substrate == "SiO2 (fused silica)"
+        and _mapping_route_id in {"rcwa_surrogate", "ml_surrogate"}
+        and not mapping_domain_contract(material, substrate, _mapping_route_id).available
+    ):
+        # The ML/RCWA registries do not publish a D-H training-domain manifest.
+        # Use the exact registered analytical pair instead of leaving the map
+        # dead; the label below makes the route change explicit to the user.
+        _mapping_route_id = "lorentz_fano_fallback"
+        _mapping_analytical_fallback = True
     _mapping_contract = mapping_domain_contract(
         material, substrate, _mapping_route_id)
-    _mapping_route_label = str(_forward.provenance.get("route_label", _mapping_route_id))
-    _mapping_model_version = str(_forward.provenance.get("model_version", "不可用"))
+    _mapping_route_label = (
+        "解析映射（当前预览为 ML）" if _mapping_analytical_fallback
+        else str(_forward.provenance.get("route_label", _mapping_route_id))
+    )
+    _mapping_model_version = (
+        "engine.py / CCM analytical response" if _mapping_analytical_fallback
+        else str(_forward.provenance.get("model_version", "不可用"))
+    )
     _mapping_current = {
         "d": float(diameter), "h": float(height), "p": float(period),
     }
@@ -4869,6 +5169,8 @@ with tab4:
         use_container_width=True,
         disabled=not _mapping_execution_available,
     )
+    if _mapping_analytical_fallback:
+        st.info("当前预览使用 ML；D-H 映射使用已注册的 TiO₂/SiO₂ 解析路线。该映射用于结构趋势查看，不代表 ML/RCWA 代理输出。")
     if not _mapping_contract.available:
         st.info(f"当前映射不可用：{_mapping_contract.reason}")
         if (
@@ -5631,7 +5933,16 @@ with tab5:
                 elapsed = time.perf_counter() - t0
                 if result is None:
                     raise ValueError("优化未返回候选")
-                if len(result) == 6 and isinstance(result[0], str):
+                if isinstance(result, dict):
+                    # The registered RCWA route returns a named mapping while
+                    # the legacy local route returns a tuple.  Normalize both
+                    # forms here so a valid single-pillar run is not reported
+                    # as an unsupported result by the benchmark UI.
+                    method_name = str(result.get("method") or "RCWA")
+                    predicted_rgb = result.get("pred_rgb")
+                    if predicted_rgb is None:
+                        raise ValueError("单柱优化结果缺少 pred_rgb")
+                elif len(result) == 6 and isinstance(result[0], str):
                     method_name, predicted_rgb = result[0], result[4]
                 elif len(result) == 5:
                     method_name, predicted_rgb = "legacy local route", result[3]
@@ -5646,10 +5957,13 @@ with tab5:
             except Exception as exc:
                 rows.append(BenchmarkRow.error(
                     "single", "单柱梯度", route="本地 PyTorch 代理/解析路线",
-                    detail=f"优化失败：{type(exc).__name__}。",
+                    detail=f"优化失败：{type(exc).__name__}: {exc}",
                 ))
 
-        # 4. Dual remains unavailable until model + domain evidence are registered.
+        # 4. Prefer the registered dual ML route.  When its ONNX/domain
+        # evidence is absent, keep that route fail-closed but expose the
+        # already-supported analytical dual baseline so the UI still gives
+        # users a runnable two-pillar reference instead of a dead row.
         dual_context = InverseContext(
             structure_type="dual", material=mat, substrate=sub,
             polarization="TE (s-pol)", angle_deg=0.0,
@@ -5660,8 +5974,39 @@ with tab5:
         if not (_dual_ml_ready and _dual_domain_manifest_verified(dual_context)):
             rows.append(BenchmarkRow.unavailable(
                 "dual", "双柱梯度", route="Dual-pillar ML surrogate",
-                detail="实际 ONNX 模型或与其哈希绑定的当前训练域 manifest 不可用。",
+                    detail=(
+                        "未运行：缺少已验证的双柱 ONNX 模型或其哈希绑定训练域 manifest；"
+                        "当前保留双柱正向解析/半解析路线，不把未注册模型当作逆设计候选。"
+                    ),
             ))
+            if importlib.util.find_spec("torch") is not None:
+                t0 = time.perf_counter()
+                try:
+                    from torch_model import inverse_design_dual_v2
+                    result = inverse_design_dual_v2(
+                        target_rgb, n_restarts=8, steps=80, lr=0.05,
+                        material=mat, substrate=sub, theta=0.0,
+                        pol_TE=True, p_fixed=None, loss_type="de2000",
+                    )
+                    elapsed = time.perf_counter() - t0
+                    if result is None or len(result) != 7:
+                        raise ValueError("双柱解析基线未返回完整候选")
+                    predicted_rgb = result[5]
+                    rows.append(benchmark_row_from_rgb(
+                        "dual_physical", "双柱解析基线", elapsed_s=elapsed,
+                        predicted_rgb=predicted_rgb, target_rgb=target_rgb,
+                        route="Lorentz/Fano analytical dual",
+                        detail=(
+                            "双柱解析近似基线；可用于交互演示与路线对照，"
+                            "不代表双柱 ONNX/RCWA 精度。"
+                        ),
+                    ))
+                except Exception as exc:
+                    rows.append(BenchmarkRow.error(
+                        "dual_physical", "双柱解析基线",
+                        route="Lorentz/Fano analytical dual",
+                        detail=f"解析基线失败：{type(exc).__name__}: {exc}",
+                    ))
         else:
             t0 = time.perf_counter()
             try:
@@ -6488,9 +6833,3 @@ try:
 except Exception as e:
     logging.warning(f"swatch export: {e}")
     pass
-
-st.sidebar.markdown("---")
-st.sidebar.caption("AI超表面结构色设计 · 科研工作台")
-st.sidebar.caption("结果路线: 代理模型 / Lorentz-Fano / FP-TMM + CIE 1931")
-st.sidebar.markdown("---")
-st.sidebar.caption("项目与团队信息请在项目文档中补充")

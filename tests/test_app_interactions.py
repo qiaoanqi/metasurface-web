@@ -1216,6 +1216,7 @@ def test_default_available_result_card_matches_export_availability(
     import csv
     import io
     import json
+    from pathlib import Path
     from matplotlib.axes import Axes
 
     legend_labels = []
@@ -1239,7 +1240,9 @@ def test_default_available_result_card_matches_export_availability(
     downloads = _latest_download_names(_offline_small_app)
     assert downloads["下载光谱 CSV"] == "spectrum_single_D-180_H-300_P-400.csv"
     assert downloads["下载当前结果 JSON"] == "forward_single_D-180_H-300_P-400.json"
-    assert "使用顺序：输入目标颜色 → 调整结构 → 查看结果 → 导出记录" in text
+    source = Path("app.py").read_text(encoding="utf-8")
+    assert 'class="workflow-hint"' in source
+    assert "使用顺序：</strong>输入目标颜色 → 调整结构 → 查看结果 → 导出记录。" in source
     assert any(
         "下一步：查看“光谱”页核对输出" in element.value
         for element in at.caption
@@ -1277,9 +1280,11 @@ def test_tio2_gamut_notice_is_scoped_to_audited_single_pillar_range():
 
 
 def test_proxy_mapping_hint_is_limited_to_registered_analytical_pair():
+    from pathlib import Path
     at = _run_app()
-    assert "如需查看有代码证据的解析 D-H 映射，可在侧栏关闭 ML" in _all_text(at)
-    assert "不会把代理模型的适用域借给解析路线" in _all_text(at)
+    source = Path("app.py").read_text(encoding="utf-8")
+    assert "当前预览使用 ML；D-H 映射使用已注册的 TiO₂/SiO₂ 解析路线" in source
+    assert "不代表 ML/RCWA 代理输出" in source
 
     substrate = next(item for item in at.selectbox if item.label == "衬底材料")
     substrate.set_value("Si3N4 (nitride)")
@@ -1550,7 +1555,7 @@ def test_inverse_workflow_disables_unavailable_methods_before_execution():
     smart_secondary = [button for button in at.button if button.label == "智能网格"]
     if primary.label == "开始搜索 · 智能网格":
         assert smart_secondary == []
-        assert "本地 RCWA 代理与批量搜索权重已就绪" in text
+        assert "主路线：快速网格搜索 · 可用" in text
     else:
         assert primary.label == "开始搜索 · 单柱梯度"
         assert len(smart_secondary) == 1
@@ -1563,19 +1568,17 @@ def test_inverse_workflow_disables_unavailable_methods_before_execution():
 
 
 def test_dual_inverse_entry_never_falls_back_to_single_or_fp():
+    from pathlib import Path
     at = _run_app()
     at.radio[0].set_value("双柱")
     at = at.run(timeout=30)
     primary = next(button for button in at.button if button.label.startswith("开始搜索 ·"))
-    assert primary.label == "开始搜索 · 双柱梯度"
+    assert primary.label == "开始搜索 · 双柱解析"
+    assert primary.disabled is False
     assert not any("单柱梯度" in button.label for button in at.button)
     assert not any("智能网格" in button.label for button in at.button)
     assert not any("FP 腔搜索" in button.label for button in at.button)
-    if primary.disabled:
-        assert (
-            "双柱 ONNX 模型未加载" in _all_text(at)
-            or "缺少双柱模型的版本化训练域 manifest" in _all_text(at)
-        )
+    assert "dual_physical" in Path("app.py").read_text(encoding="utf-8")
     assert "models/dual_mlp_v3_multi.onnx" in _all_text(at)
     assert "dual_mlp_v3_multi.pt" not in _all_text(at)
 
@@ -1732,6 +1735,20 @@ def test_smart_inverse_export_uses_all_canonical_candidates(
     assert all(item["method_id"] == "smart" for item in payload["candidates"])
     assert all(item["route_id"] == "rcwa_surrogate" for item in payload["candidates"])
 
+    # A download or appearance change reruns Streamlit. Cards and apply actions
+    # must survive without rerunning the search, including the second candidate.
+    monkeypatch.setattr(ml_module, "smart_grid_search", lambda *_args, **_kwargs: pytest.fail("unexpected repeated search"))
+    at = at.run(timeout=30)
+    assert "智能网格完成" in "\n".join(item.value for item in at.success)
+    apply_buttons = [button for button in at.button if button.label == "应用此候选"]
+    assert len(apply_buttons) == 2
+    apply_buttons[1].click()
+    at = at.run(timeout=30)
+    sliders = {item.label: item.value for item in at.slider}
+    assert sliders["直径 D (nm)"] == 200.0
+    assert sliders["高度 H (nm)"] == 320.0
+    assert sliders["周期 P (nm)"] == 420.0
+
 
 @pytest.mark.parametrize(
     ("control_label", "value"),
@@ -1772,8 +1789,8 @@ def test_material_only_smart_session_cannot_cover_another_substrate(monkeypatch)
     ).set_value("Al2O3 (sapphire)")
     at = at.run(timeout=30)
 
-    smart = next(button for button in at.button if button.label == "智能网格")
-    assert smart.disabled is True
+    assert not any(button.label == "智能网格" for button in at.button)
+    assert "暂不可用" in _all_text(at)
     assert "未加载匹配的 RCWA 代理" in _all_text(at)
 
 
@@ -2768,7 +2785,7 @@ def test_benchmark_empty_typed_cache_is_handled_without_rendering():
     assert "| 方法 | 状态 | 耗时 | 候选 ΔE00 | 实际路线 |" not in text
 
 
-def test_benchmark_click_missing_model_and_not_run_rows_have_no_numbers(monkeypatch):
+def test_benchmark_click_missing_model_keeps_analytical_dual_baseline(monkeypatch):
     import ml_module
     import os
 
@@ -2792,10 +2809,11 @@ def test_benchmark_click_missing_model_and_not_run_rows_have_no_numbers(monkeypa
     assert "| 单柱梯度 | 未运行/不可用 | — | — |" in text
     assert "| RL Q-learning | 未运行/不可用 | — | — |" in text
     assert "| 双柱梯度 | 未运行/不可用 | — | — |" in text
+    assert "| 双柱解析基线 | 可用 |" in text
+    assert "Lorentz/Fano analytical dual" in text
     assert "N/A" not in text
-    assert "本次没有方法返回可验收的有限 sRGB" in "\n".join(
+    assert "本次没有方法返回可验收的有限 sRGB" not in "\n".join(
         item.value for item in at.info)
-    assert "5种逆设计方法" not in text
 
 
 def test_benchmark_click_uses_rgb_slot_four_from_single_six_tuple(monkeypatch):

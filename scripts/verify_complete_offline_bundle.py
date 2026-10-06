@@ -32,7 +32,12 @@ def verify(archive_path: Path, installed: Path) -> dict:
         for relative in manifest['entrypoints'].values():
             if relative not in manifest['files']:
                 raise ValueError(f"Unregistered entry point: {relative}")
-        for name in ('启动离线演示.bat', '停止离线演示.bat'):
+        if 'stop' in manifest['entrypoints']:
+            raise ValueError('Obsolete stop entry point is still registered')
+        for name in ('停止离线演示.bat', 'stop_offline.ps1'):
+            if prefix + name in archive.namelist() or (installed / name).exists():
+                raise ValueError(f'Obsolete stop file still exists: {name}')
+        for name in ('启动离线演示.bat',):
             content = archive.read(prefix + name)
             content.decode('ascii')
             if not content.startswith(b'@echo off\r\n'):
@@ -42,11 +47,19 @@ def verify(archive_path: Path, installed: Path) -> dict:
             'runtime/competition/tio2_air_reference_records_v1.jsonl',
             'runtime/competition/tio2_air_day_audit_20260930.json',
             'runtime/competition/tio2_air_day_color_audit_20260930.json',
-            'common_offline.ps1', 'start_offline.ps1', 'stop_offline.ps1',
+            'common_offline.ps1', 'start_offline.ps1',
+            'desktop_host.py',
         )
         for name in required:
             if name not in manifest['files']:
                 raise ValueError(f"Missing runtime asset: {name}")
+        ui_manifest = json.loads(archive.read(prefix + 'audit/ui-release-manifest.json'))
+        if ui_manifest.get('root') != 'runtime':
+            raise ValueError('UI manifest is not bound to the shipped runtime')
+        for relative, expected in ui_manifest['files'].items():
+            content = archive.read(prefix + 'runtime/' + relative)
+            if hashlib.sha256(content).hexdigest().upper() != expected.split(':', 1)[1].upper():
+                raise ValueError(f'UI runtime manifest hash mismatch: {relative}')
         return {'status': 'pass', 'files_verified': len(manifest['files']),
                 'zip_entries': len(archive.namelist()), 'installed': str(installed),
                 'zip_sha256': hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()}
