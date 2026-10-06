@@ -172,7 +172,8 @@ def build_inverse_candidate(
     rgb = tuple(_finite_float(value, "predicted_rgb") for value in predicted_rgb)
     if len(rgb) != 3 or any(value < 0.0 or value > 1.0 for value in rgb):
         raise ValueError("predicted_rgb must contain three values in [0, 1]")
-    rgb255 = tuple(max(0, min(255, int(value * 255))) for value in rgb)
+    # Match preview and PNG quantization, including half-to-even rounding.
+    rgb255 = tuple(max(0, min(255, round(value * 255))) for value in rgb)
     record: dict[str, Any] = {
         "rank": rank_value,
         "structure_type": structure,

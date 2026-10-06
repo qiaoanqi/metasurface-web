@@ -242,6 +242,8 @@ def test_ml_checkbox_callback_and_forward_exports_follow_canonical_route(
     import csv
     import io
     import json
+    from PIL import Image
+    from color_utils import rgb_255
     from ui_session_migration import ML_ACCEL_PREFERENCE_INITIALIZED_KEY
 
     at = _run_app()
@@ -259,6 +261,9 @@ def test_ml_checkbox_callback_and_forward_exports_follow_canonical_route(
         _offline_small_app, "下载光谱 CSV"))))
     assert payload["provenance"]["route_id"] == "lorentz_fano_fallback"
     assert json.loads(csv_rows[0]["provenance_json"]) == payload["provenance"]
+    swatch = Image.open(io.BytesIO(_latest_download_data(
+        _offline_small_app, "下载色板 PNG")))
+    assert swatch.getpixel((0, 0)) == rgb_255(payload["rgb"])
 
     at = at.run(timeout=30)
     assert at.session_state["ml_accel"] is False
@@ -280,6 +285,9 @@ def test_ml_checkbox_callback_and_forward_exports_follow_canonical_route(
     }
     assert payload["provenance"]["model_artifact_version"].startswith("sha256:")
     assert json.loads(csv_rows[0]["provenance_json"]) == payload["provenance"]
+    swatch = Image.open(io.BytesIO(_latest_download_data(
+        _offline_small_app, "下载色板 PNG")))
+    assert swatch.getpixel((0, 0)) == rgb_255(payload["rgb"])
 
 
 def test_ml_preview_and_sensitivity_snapshot_share_model_artifact(
@@ -1705,6 +1713,7 @@ def test_smart_inverse_export_uses_all_canonical_candidates(
     import json
     import ml_module
     import streamlit as st
+    from color_utils import rgb_255, rgb_to_hex
     from engine import MetaSurfaceParam
 
     _force_current_smart_registry(monkeypatch)
@@ -1734,12 +1743,18 @@ def test_smart_inverse_export_uses_all_canonical_candidates(
     assert len(payload["candidates"]) == len(candidates)
     assert all(item["method_id"] == "smart" for item in payload["candidates"])
     assert all(item["route_id"] == "rcwa_surrogate" for item in payload["candidates"])
+    for record in payload["candidates"]:
+        assert tuple(record["predicted_rgb255"]) == rgb_255(record["predicted_rgb"])
+        assert record["predicted_hex"].lower() == rgb_to_hex(record["predicted_rgb"])
 
     # A download or appearance change reruns Streamlit. Cards and apply actions
     # must survive without rerunning the search, including the second candidate.
     monkeypatch.setattr(ml_module, "smart_grid_search", lambda *_args, **_kwargs: pytest.fail("unexpected repeated search"))
     at = at.run(timeout=30)
     assert "智能网格完成" in "\n".join(item.value for item in at.success)
+    saved_payload = json.loads(_latest_download_data(
+        _offline_small_app, "💾 导出逆设计 JSON"))
+    assert saved_payload["candidates"] == payload["candidates"]
     apply_buttons = [button for button in at.button if button.label == "应用此候选"]
     assert len(apply_buttons) == 2
     apply_buttons[1].click()

@@ -19,6 +19,8 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    args.output = args.output.resolve()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     runtime = args.runtime.resolve()
     os.chdir(runtime)
     sys.path.insert(0, str(runtime))

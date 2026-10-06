@@ -6827,7 +6827,7 @@ try:
     if _forward.spectrum_available:
         swatch_size = 100
         swatch = np.ones((swatch_size, swatch_size, 3), dtype=np.uint8)
-        r255, g255, b255 = int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
+        r255, g255, b255 = rgb_255(rgb)
         swatch[:,:,0] = r255; swatch[:,:,1] = g255; swatch[:,:,2] = b255
         img = Image.fromarray(swatch)
         buf = io.BytesIO()

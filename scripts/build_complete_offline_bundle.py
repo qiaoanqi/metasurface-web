@@ -23,6 +23,7 @@ else:
 PACKAGE_DIR_NAME = "AI超表面结构色智能设计系统_完整离线包_v1"
 RUNTIME_REFRESH_FILES = (
     'app.py', 'ml_module.py', 'torch_model.py', 'rl_design.py',
+    'ui_inverse_contracts.py',
     'scripts/audit_forward_mlp_v8_sub_conversion.py',
     'scripts/audit_offline_feature_runtime.py',
     'scripts/audit_offline_app_flows.py',
@@ -162,7 +163,7 @@ function Get-OwnedProcess($State) {
     if (-not $owned -or $owned.CreationDate.ToUniversalTime() -ne $recordedCreation) { return $null }
     if ($State.mode -eq 'desktop_window') {
         if (-not $owned -or $owned.ExecutablePath -ne $State.host_executable -or
-            $owned.CommandLine.IndexOf((Join-Path $Root 'desktop_host.py'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $null }
+            $owned.CommandLine.Replace('/', '\').IndexOf((Join-Path $Root 'desktop_host.py'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $null }
         return $owned
     }
     if (-not $owned -or $owned.ExecutablePath -ne $VenvPython -or
@@ -194,6 +195,11 @@ function Clear-RuntimeState {
 
 START_PS1 = r'''param([ValidateRange(1024,65515)][int]$Port = 8512, [switch]$NoBrowser)
 $ErrorActionPreference = "Stop"
+# Bound numerical-library threads before the import probe and app subprocesses.
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+$env:MKL_NUM_THREADS = '1'
+$env:NUMEXPR_NUM_THREADS = '1'
 . (Join-Path $PSScriptRoot 'common_offline.ps1')
 $OutLog = Join-Path $LogDir "streamlit.out.log"
 $ErrLog = Join-Path $LogDir "streamlit.err.log"

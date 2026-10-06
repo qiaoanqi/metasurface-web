@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    args.output = args.output.resolve()
     runtime = args.runtime.resolve()
     os.chdir(runtime)
     sys.path.insert(0, str(runtime))
@@ -22,10 +23,13 @@ def main():
     os.environ['OMP_NUM_THREADS'] = '1'
     os.environ['OPENBLAS_NUM_THREADS'] = '1'
     os.environ['MPLBACKEND'] = 'Agg'
+    # This reproducible offline check exercises the supported CPU path.
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
     logging.getLogger('streamlit.runtime.scriptrunner_utils.script_run_context').setLevel(logging.ERROR)
     import numpy as np
     import torch
     from streamlit.testing.v1 import AppTest
+    from color_utils import rgb_255, rgb_to_hex
     from ui_inverse_contracts import serialize_inverse_run
     from ui_analysis_snapshots import ANALYSIS_SESSION_KEYS, validate_snapshot_record
     torch.set_num_threads(1)
@@ -69,11 +73,15 @@ def main():
         candidates = exports.payload['candidates']
         assert candidates
         assert all(np.isfinite(c['delta_e2000']) for c in candidates)
+        for candidate in candidates:
+            assert tuple(candidate['predicted_rgb255']) == rgb_255(candidate['predicted_rgb'])
+            assert candidate['predicted_hex'].lower() == rgb_to_hex(candidate['predicted_rgb'])
         for suffix, text in (('json', exports.json_text), ('csv', exports.csv_text)):
             (args.output.parent / f'offline_flow_{method}_20261006.{suffix}').write_text(text, encoding='utf-8')
         if apply_key:
             button(key=apply_key)
         return dict(candidates=len(candidates), applied=bool(apply_key),
+                    color_quantization_consistent=True,
                     best_color=candidates[0]['predicted_hex'])
 
     def analysis(kind, key):
@@ -177,7 +185,8 @@ def main():
     record('analysis/gamut_comparison',gamut)
     result = dict(schema='offline-real-app-flows-v1',runtime=str(runtime),
                   status='pass' if all(c['status']=='pass' for c in checks) else 'fail',
-                  mocked_models=False, checks=checks, software_sha256=software)
+                  mocked_models=False, inference_device='cpu',
+                  checks=checks, software_sha256=software)
     assert all(hashlib.sha256((runtime/name).read_bytes()).hexdigest() == digest
                for name,digest in software.items()), 'Runtime changed during audit'
     temporary = args.output.with_suffix('.tmp')
