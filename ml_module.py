@@ -44,13 +44,23 @@ def _spectrum_to_rgb(spec: np.ndarray) -> np.ndarray:
     return spectrum_to_srgb(WL, np.clip(spec, 0, None))
 
 # ---- ONNX init ----
+def _cpu_onnx_session(path):
+    import onnxruntime as ort
+    options = ort.SessionOptions()
+    # Many small ensembles run in one desktop process. Per-model default
+    # thread pools otherwise compete with each other and the UI searches.
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    return ort.InferenceSession(path, sess_options=options, providers=['CPUExecutionProvider'])
+
+
 def init_ml():
     global _ORT_AVAILABLE, _ORT_SESSION, _ORT_IS_V8
     try:
         import onnxruntime as ort
         path_v8 = _ensure_model_file("models/forward_mlp_v8_sub.onnx")
         if os.path.exists(path_v8):
-            _ORT_SESSION = ort.InferenceSession(path_v8, providers=["CPUExecutionProvider"])
+            _ORT_SESSION = _cpu_onnx_session(path_v8)
             _ORT_IS_V8 = True
         else:
             return False
@@ -104,7 +114,7 @@ def init_rcwa_ml():
                     files = [fpath] if os.path.exists(fpath) else []
                 for fpath in files:
                     try:
-                        sessions.append(ort.InferenceSession(fpath, providers=["CPUExecutionProvider"]))
+                        sessions.append(_cpu_onnx_session(fpath))
                     except Exception:
                         pass
             return sessions
@@ -124,7 +134,7 @@ def init_rcwa_ml():
             fpath = os.path.join(models_dir, fname)
             if os.path.exists(fpath):
                 try:
-                    _RCWA_WL_SESSIONS[mat] = ort.InferenceSession(fpath, providers=['CPUExecutionProvider'])
+                    _RCWA_WL_SESSIONS[mat] = _cpu_onnx_session(fpath)
                 except Exception:
                     pass
         _RCWA_AVAILABLE = len(_RCWA_SESSIONS) > 0 or len(_RCWA_WL_SESSIONS) > 0
@@ -140,6 +150,41 @@ def _get_rcwa_sessions(material, substrate=None):
         if key in _RCWA_SESSIONS:
             return _RCWA_SESSIONS[key]
     return _RCWA_SESSIONS.get(material, [])
+
+def rcwa_torch_artifact_paths(material, substrate):
+    """Resolve PT counterparts of the exact registered ONNX family, locally."""
+    patterns = _RCWA_SUBSTRATE_MODELS.get((material, substrate), _RCWA_MODELS.get(material))
+    if not patterns or substrate not in SUBSTRATE_CODES:
+        raise ValueError('No registered RCWA gradient model for this material/substrate')
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+    onnx_paths = sorted({path for pattern in patterns for path in glob.glob(os.path.join(base, pattern))})
+    if not onnx_paths:
+        raise FileNotFoundError('Registered RCWA ONNX model family is missing')
+    pt_paths = tuple(os.path.splitext(path)[0] + '.pt' for path in onnx_paths)
+    missing = [os.path.basename(path) for path in pt_paths if not os.path.isfile(path)]
+    if missing:
+        raise FileNotFoundError('RCWA gradient weights missing: ' + ', '.join(missing))
+    return pt_paths
+
+
+def single_inverse_model_status(material, substrate):
+    """Check the model the single-gradient executor will actually use."""
+    import importlib.util
+    if importlib.util.find_spec('torch') is None:
+        return False, '缺少 PyTorch 运行环境。'
+    if _should_use_rcwa(material, substrate, 0.0):
+        try:
+            rcwa_torch_artifact_paths(material, substrate)
+        except (ValueError, OSError) as exc:
+            return False, str(exc)
+        return True, '使用当前注册的 RCWA 代理模型权重。'
+    from ui_model_difference_contracts import GENERIC_ONNX_ROUTE
+    issue = GENERIC_ONNX_ROUTE.context_issue(material, substrate, 'TE', 0.0)
+    if issue:
+        return False, issue
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), GENERIC_ONNX_ROUTE.source_pt_relative_path)
+    return (True, '使用本地通用代理模型权重。') if os.path.isfile(path) else (False, '缺少通用代理模型权重。')
+
 
 def _ensemble_predict(material, substrate, x):
     """Run ensemble prediction across all sessions for a material, return averaged spectrum."""
@@ -280,7 +325,7 @@ def init_dual_ml():
         path_v3 = _ensure_model_file("models/dual_mlp_v3_multi.onnx")
         if not os.path.exists(path_v3):
             return False
-        _DUAL_ORT_SESSION = ort.InferenceSession(path_v3, providers=["CPUExecutionProvider"])
+        _DUAL_ORT_SESSION = _cpu_onnx_session(path_v3)
         _DUAL_IS_V3 = True
         _DUAL_ORT_AVAILABLE = True
         return True
@@ -486,10 +531,13 @@ def predict_dual_rgb(d1_nm, h1_nm, d2_nm, h2_nm, p_nm, angle_deg=0.0, polarizati
 
 # ---- inverse design (PyTorch gradient-based, requires torch) ----
 def _inverse_design_ml_serial(target_rgb, n_steps=300, n_restarts=40, material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
+    ready, reason = single_inverse_model_status(material, substrate)
+    if not ready:
+        raise RuntimeError(reason)
     # RCWA route: use differentiable ResMLP for TiO2/SiO2
     if _should_use_rcwa(material, substrate, 0.0):
         from torch_model import inverse_design_rcwa
-        result = inverse_design_rcwa(target_rgb, n_restarts=min(n_restarts, 24), steps=100, p_fixed=None, material=material, substrate=substrate)
+        result = inverse_design_rcwa(target_rgb, n_restarts=min(n_restarts, 24), steps=n_steps, p_fixed=None, material=material, substrate=substrate)
         if result is not None:
             return ("RCWA", result["D"], result["H"], result["P"],
                     result["pred_rgb"], result["de2000"])
@@ -639,7 +687,7 @@ def ml_grid_search_refined(target_rgb, material="TiO2 (anatase)", substrate="SiO
         try:
             result = inverse_design_rcwa(
                 target_rgb, n_restarts=1, steps=200, lr=0.02,
-                p_fixed=None, device=None, material=material,
+                p_fixed=None, device=None, material=material, substrate=substrate,
                 init_D=float(D0), init_H=float(H0), init_P=float(P0)
             )
             if result and result["de2000"] < best_de:
@@ -672,9 +720,8 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
                       angle_deg=0.0, polarization="TE", coarse_n=12, top_k=5,
                       fine_steps=5, fine_range=6.0, max_results=3):
     """
-    Two-stage smart grid search using a registered RCWA/ML ensemble.
-    It prefers PyTorch batch inference when training-time weights are present
-    and falls back to the same-bound ONNX sessions in the web release.
+    Two-stage smart grid search using the registered RCWA ONNX ensemble.
+    Gradient search separately uses the corresponding PyTorch weights.
     Stage 1: Coarse grid (coarse_n^3 points) -> top-K
     Stage 2: Fine grid around each candidate -> best result
     Returns: list of (None, MetaSurfaceParam, rgb, de76, de2000)
@@ -698,80 +745,17 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
 
     WL = np.linspace(380, 780, 81)
 
-    # ---- Load local models for batch inference ----
-    # Prefer the original PyTorch weights when they are shipped.  The web
-    # release intentionally carries the audited ONNX ensemble instead, so
-    # fall back to the already-bound ONNX sessions rather than presenting a
-    # dead smart-grid control just because the training-time .pt files were
-    # omitted from the deployment bundle.
-    try:
-        import torch
-        from torch_model import _RCWA_ResMLP
-    except Exception:
-        torch = None
-        _RCWA_ResMLP = None
-    import os as _os
-    base = _os.path.dirname(_os.path.abspath(__file__))
-    models_dir = _os.path.join(base, "models")
-
-    # Find .pt files for this material+substrate
-    key = (material, substrate)
-    if key in _RCWA_SUBSTRATE_MODELS:
-        onnx_patterns = _RCWA_SUBSTRATE_MODELS[key]
-    elif material in _RCWA_MODELS:
-        onnx_patterns = _RCWA_MODELS[material]
-    else:
+    # Reuse the same frozen ONNX sessions as preview. Shipping autograd
+    # weights must not silently switch the grid onto a slower CPU backend.
+    onnx_sessions = tuple(_get_rcwa_sessions(material, substrate))
+    if not onnx_sessions:
         return None
 
-    # Convert .onnx glob patterns to .pt
-    pt_patterns = [p.replace('.onnx', '.pt') for p in onnx_patterns]
-
-    pt_models = []
-    import glob as _glob
-    if torch is not None and _RCWA_ResMLP is not None:
-        for pat in pt_patterns:
-            full = _os.path.join(models_dir, pat)
-            matches = sorted(_glob.glob(full))
-            for m in matches:
-                state = torch.load(m, map_location='cpu', weights_only=False)
-                # Infer model dimensions from state_dict
-                head_weight = state.get('head.weight')
-                if head_weight is not None:
-                    hidden = head_weight.shape[1]
-                else:
-                    hidden = 256
-                # Count ResBlocks
-                n_blocks = 0
-                while f'blocks.{n_blocks}.net.0.weight' in state:
-                    n_blocks += 1
-                if n_blocks == 0:
-                    n_blocks = 4
-                model = _RCWA_ResMLP(in_dim=7, hidden=hidden, out_dim=81, n_blocks=n_blocks)
-                model.load_state_dict(state)
-                model.eval()
-                pt_models.append(model)
-
-    if pt_models:
-        def _batch_predict(x_batch):
-            """x_batch: (N, 7) numpy -> averaged spectrum (N, 81)"""
-            x_t = torch.from_numpy(x_batch).float()
-            with torch.no_grad():
-                specs = [m(x_t).numpy() for m in pt_models]
-            return np.mean(specs, axis=0)
-    else:
-        # Use the exact substrate-bound ONNX sessions already registered by
-        # init_rcwa_ml/_ensure_rcwa_ml.  This keeps the route fail-closed: no
-        # generic fallback or unregistered model is introduced.
-        onnx_sessions = tuple(_get_rcwa_sessions(material, substrate))
-        if not onnx_sessions:
-            return None
-
-        def _batch_predict(x_batch):
-            """Batch ONNX inference with the same (N, 7) contract."""
-            x_batch = np.asarray(x_batch, dtype=np.float32)
-            specs = [_predict_onnx_batch(session, x_batch, output_width=81)
-                     for session in onnx_sessions]
-            return np.mean(specs, axis=0)
+    def _batch_predict(x_batch):
+        x_batch = np.asarray(x_batch, dtype=np.float32)
+        specs = [_predict_onnx_batch(session, x_batch, output_width=81)
+                 for session in onnx_sessions]
+        return np.mean(specs, axis=0)
 
     # === Stage 1: Coarse grid ===
     D_vals = np.linspace(D_range[0], D_range[1], coarse_n)
@@ -853,13 +837,33 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
         if too_close:
             continue
         accepted_params.append((D, H, P))
-        bp = MetaSurfaceParam(diameter_nm=round(D, 1), height_nm=round(H, 1), period_nm=round(P, 1),
+        rounded_p = round(P, 1)
+        rounded_d = min(round(D, 1), float(np.floor(rounded_p / 1.2 * 10) / 10))
+        bp = MetaSurfaceParam(diameter_nm=rounded_d, height_nm=round(H, 1), period_nm=rounded_p,
                               material=material, substrate=substrate)
         de76 = float(np.linalg.norm(rgb_to_lab(rgb) - target_lab))
         result.append((None, bp, list(rgb), de76, de))
         if len(result) >= max_results:
             break
 
+    # The UI applies/export the rounded dimensions, so recompute colors and
+    # metrics at those exact dimensions instead of retaining the grid sample.
+    if result:
+        final_inputs = []
+        for _, param, _, _, _ in result:
+            final_inputs.append([
+                (param.diameter_nm - 50) / 300,
+                (param.height_nm - 80) / 520,
+                (param.period_nm - 200) / 400,
+                angle_deg / 80, pol_code, mat_code, sub_code])
+        final_specs = _batch_predict(np.asarray(final_inputs, dtype=np.float32))
+        result = [
+            (None, row[1], list(rgb), float(np.linalg.norm(rgb_to_lab(rgb) - target_lab)),
+             float(delta_e2000(rgb_to_lab(rgb), target_lab)))
+            for row, spec in zip(result, final_specs)
+            for rgb in [spectrum_to_srgb(WL, np.clip(spec, 0, None))]
+        ]
+        result.sort(key=lambda row: row[4])
     return result if result else None
 
 def _inverse_design_numpy(target_rgb, n_steps=300, n_restarts=20, material="TiO2 (anatase)", substrate="SiO2 (fused silica)", theta=0.0):

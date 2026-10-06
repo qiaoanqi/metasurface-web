@@ -5,6 +5,7 @@ import io, os, json, hashlib, glob, importlib.util
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
 import html
+from dataclasses import replace
 # NumPy 1.x/2.x compatibility
 if not hasattr(np, 'trapz'):
     np.trapz = np.trapezoid
@@ -1662,10 +1663,8 @@ def _inverse_candidate_contract(method, material, substrate, polarization, angle
 def _smart_grid_has_local_weights(material, substrate):
     """Return whether smart-grid has a local RCWA model family to use.
 
-    The fast path uses the original PyTorch ``.pt`` weights when they are
-    present.  Release bundles only need the audited ONNX ensemble, though:
-    ``ml_module`` already binds those sessions for the forward predictor and
-    the smart-grid route can batch through the same registered sessions.
+    Smart-grid uses the same registered ONNX ensemble as preview. PyTorch
+    weights are retained separately for the differentiable gradient route.
     """
     key = (material, substrate)
     patterns = getattr(ml_module, "_RCWA_SUBSTRATE_MODELS", {}).get(key)
@@ -4127,7 +4126,6 @@ with tab2:
         and str(polarization).startswith("TE")
         and abs(float(angle)) < 1e-9
         and not _far_field_enabled
-        and st.session_state.get("ml_accel", False)
         and material in ml_module.MATERIAL_CODES
         and substrate in ml_module.SUBSTRATE_CODES
     ):
@@ -4135,19 +4133,22 @@ with tab2:
     _rl_ready = _rl_route_ready(
         _inverse_material, _inverse_substrate, polarization, angle)
 
+    _single_gradient_ready, _single_gradient_reason = (
+        ml_module.single_inverse_model_status(_inverse_material, _inverse_substrate)
+        if _inverse_structure == 'single' else (False, '当前不是单柱结构。'))
     _method_states = _inverse_method_states(
         context=_inverse_context,
         rcwa_ready=_rcwa_ml_ready,
-        primary_torch_ready=(
-            _local_model_exists("models/forward_mlp_v8_sub.pt")
-            and importlib.util.find_spec("torch") is not None
-        ),
+        primary_torch_ready=_single_gradient_ready,
         dual_ready=_dual_ml_ready,
         compare_enabled=ENABLE_MULTI_SCHEME_SEARCH,
         fp_mirror_type=st.session_state.get("fp_mirror_type", ""),
         far_field_enabled=bool(_far_field_enabled),
         rl_ready=_rl_ready,
     )
+    if 'single' in _method_states and not _single_gradient_ready:
+        _method_states['single'] = replace(
+            _method_states['single'], reason=_single_gradient_reason)
     # The dual ONNX route remains fail-closed when its manifest is absent, but
     # the project already ships a runnable analytical dual baseline.  Expose
     # that baseline as a real action so the structure selector never leads to
@@ -4385,7 +4386,7 @@ with tab2:
                     h_sg = bp.height_nm
                     p_sg = bp.period_nm
 
-                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    rc = list(rgb_255(pred_rgb))
                     hex_sg = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
                     st.session_state._sg_d = float(d_sg)
                     st.session_state._sg_h = float(h_sg)
@@ -4460,7 +4461,7 @@ with tab2:
 
     if gd_btn and _inverse_context.geometry_valid:
         _clear_inverse_results()
-        with st.spinner("🎯 单柱梯度候选搜索中（numpy Adam）..."):
+        with st.spinner("单柱梯度搜索中..."):
             try:
                 # torch autograd (fast with optimized torch on server)
                 result = ml_module._inverse_design_ml_serial(
@@ -4475,7 +4476,7 @@ with tab2:
                     else:
                         _gd_method = "fano"
                         d_gd, h_gd, p_gd, pred_rgb, loss = result
-                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    rc = list(rgb_255(pred_rgb))
                     hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
                     from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
                     de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
@@ -4539,7 +4540,7 @@ with tab2:
                     st.warning("双柱梯度不可用: 需要ONNX双柱模型")
                 else:
                     d1_gd, h1_gd, d2_gd, h2_gd, p_gd, pred_rgb, loss = result
-                    rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                    rc = list(rgb_255(pred_rgb))
                     hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
                     from color_utils import rgb_to_lab_scalar, delta_e2000_scalar
                     de_gd = delta_e2000_scalar(rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
@@ -4622,7 +4623,7 @@ with tab2:
                             polarization.startswith("TE"), material, substrate,
                         )[0].cpu().numpy()
                 pred_rgb = np.asarray(pred_rgb, dtype=float)
-                rc = [max(0, min(255, int(c * 255))) for c in pred_rgb]
+                rc = list(rgb_255(pred_rgb))
                 hex_gd = f"#{rc[0]:02x}{rc[1]:02x}{rc[2]:02x}"
                 de_gd = delta_e2000_scalar(
                     rgb_to_lab_scalar(pred_rgb), rgb_to_lab_scalar(target_rgb_norm))
@@ -5851,7 +5852,7 @@ with tab5:
         elif not _smart_grid_has_local_weights(mat, sub):
             rows.append(BenchmarkRow.unavailable(
                 "smart", "智能网格", route="RCWA-trained ML surrogate",
-                detail="缺少当前 TiO2/SiO2 配对的本地 PyTorch 批量搜索权重。",
+                detail="缺少当前 TiO2/SiO2 配对的本地模型文件。",
             ))
         else:
             t0 = time.perf_counter()
@@ -5917,11 +5918,11 @@ with tab5:
                 ))
 
         # 3. Single-pillar gradient: local model only, no download fallback.
-        if (not _local_model_exists("models/forward_mlp_v8_sub.pt")
-                or importlib.util.find_spec("torch") is None):
+        _single_benchmark_ready, _single_benchmark_reason = ml_module.single_inverse_model_status(mat, sub)
+        if not _single_benchmark_ready:
             rows.append(BenchmarkRow.unavailable(
                 "single", "单柱梯度", route="本地 PyTorch 代理/解析路线",
-                detail="缺少可加载的本地单柱 PyTorch 模型或 PyTorch 运行时。",
+                detail=_single_benchmark_reason,
             ))
         else:
             t0 = time.perf_counter()

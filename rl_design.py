@@ -107,7 +107,7 @@ class RLDesigner:
             rc_init = [max(0, min(255, round(c * 255))) for c in init_rgb]
             best = (d, h, p, f"#{rc_init[0]:02x}{rc_init[1]:02x}{rc_init[2]:02x}", init_de)
             for _ in range(steps // restarts):
-                a = np.argmax(self.q[s]) if (self.trained and np.max(self.q[s]) > 0) else np.random.randint(N_ACTIONS)
+                a = np.argmax(self.q[s]) if self.trained else np.random.randint(N_ACTIONS)
                 d = np.clip(d + ACTIONS[a][1], *D_RANGE)
                 h = np.clip(h + ACTIONS[a][2], *H_RANGE)
                 p = np.clip(p + ACTIONS[a][3], *P_RANGE)
@@ -144,8 +144,7 @@ class RLDesigner:
 
 def get_trained_rl():
     rl = RLDesigner()
-    if rl.load():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), _QTABLE_PATH)
+    if rl.load(path=path):
         return rl
-    rl.train(5000)
-    rl.save()
-    return rl
+    raise FileNotFoundError('Local RL q-table is missing; interactive inference never trains automatically')

@@ -1,6 +1,7 @@
 ﻿# torch_model.py - PyTorch batch Lorentzian/Fano model (v2 - full Cauchy + coherent)
 import torch
 import numpy as np
+import os
 from ccm import get_ccm
 from color_utils import CIE_X as _CIE_X_NP, CIE_Y as _CIE_Y_NP, CIE_Z as _CIE_Z_NP
 from color_utils import SRGB_M as _SRGB_M_NP
@@ -595,33 +596,31 @@ class _RCWA_ResMLP(torch.nn.Module):
 
 
 def _load_rcwa_torch_model(device="cpu", material="TiO2 (anatase)", substrate="SiO2 (fused silica)"):
-    """Load RCWA-trained ResMLP weights."""
-    import os as _os
-    _RCWA_MODEL_FILES = {
-        "TiO2 (anatase)": "forward_mlp_rcwa_TiO2_s1.pt",
-        "a-Si (amorphous)": "forward_mlp_rcwa_aSi_s1.pt",
-        "Si3N4 (nitride)": "forward_mlp_rcwa_Si3N4_s1.pt",
-        "Al2O3 (sapphire)": "forward_mlp_rcwa_Al2O3_s1.pt",
-    }
-    # Substrate-specific routing for a-Si
-    if material == "a-Si (amorphous)":
-        _SUB_FILES = {
-            "SiO2 (fused silica)": "forward_mlp_rcwa_aSi_s1.pt",
-            "Si3N4 (nitride)": "forward_mlp_rcwa_aSi_Si3N4_s1.pt",
-            "Al2O3 (sapphire)": "forward_mlp_rcwa_aSi_Al2O3_s1.pt",
-        }
-        _fname = _SUB_FILES.get(substrate, "forward_mlp_rcwa_aSi_s1.pt")
-    else:
-        _fname = _RCWA_MODEL_FILES.get(material, "forward_mlp_rcwa_TiO2_s1.pt")
-    _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "models", _fname)
-    if not _os.path.exists(_path):
-        raise FileNotFoundError(f"RCWA model not found: {_path}")
-    model = _RCWA_ResMLP(in_dim=7, hidden=256, out_dim=81, n_blocks=4)
-    state = torch.load(_path, map_location=device, weights_only=True)
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-    return model
+    """Load the same registered ensemble used by ONNX prediction."""
+    from ml_module import rcwa_torch_artifact_paths
+    members = []
+    for path in rcwa_torch_artifact_paths(material, substrate):
+        state = torch.load(path, map_location=device, weights_only=True)
+        hidden, in_dim = state['input_proj.0.weight'].shape
+        out_dim = state['head.weight'].shape[0]
+        blocks = sum(key.endswith('.net.0.weight') for key in state if key.startswith('blocks.'))
+        if in_dim != 7 or out_dim != 81 or blocks < 1:
+            raise ValueError(f'Unsupported RCWA gradient checkpoint: {path}')
+        member = _RCWA_ResMLP(in_dim=in_dim, hidden=hidden, out_dim=out_dim, n_blocks=blocks)
+        member.load_state_dict(state)
+        member.to(device).eval()
+        member.requires_grad_(False)
+        members.append(member)
+
+    class Ensemble(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.members = torch.nn.ModuleList(members)
+
+        def forward(self, values):
+            return torch.stack([member(values) for member in self.members]).mean(dim=0)
+
+    return Ensemble().eval()
 
 
 def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
@@ -637,10 +636,15 @@ def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Load model (cached)
+    from ml_module import rcwa_torch_artifact_paths
+    artifact_identity = tuple(
+        (path, os.stat(path).st_size, os.stat(path).st_mtime_ns)
+        for path in rcwa_torch_artifact_paths(material, substrate))
     _cache = getattr(inverse_design_rcwa, "_cache", None)
-    if _cache is None or _cache[0] != device or _cache[1] != material or _cache[2] != substrate:
+    if (_cache is None or _cache[:3] != (device, material, substrate)
+            or len(_cache) != 5 or _cache[4] != artifact_identity):
         model = _load_rcwa_torch_model(device, material, substrate)
-        inverse_design_rcwa._cache = (device, material, substrate, model)
+        inverse_design_rcwa._cache = (device, material, substrate, model, artifact_identity)
     else:
         # The cache tuple is (device, material, substrate, model).  Reusing
         # index 2 returns the substrate string and fails later with
@@ -648,12 +652,9 @@ def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
         # evaluated on a subsequent Streamlit rerun.
         model = _cache[3]
     # Map material/substrate to training codes (must match train_rcwa.py encoding)
-    _MAT_MAP = {"TiO2 (anatase)": 0, "a-Si (amorphous)": 1,
-                "Si3N4 (nitride)": 2, "Al2O3 (sapphire)": 3}
-    _SUB_MAP = {"SiO2 (fused silica)": 0, "Si3N4 (nitride)": 1,
-                "Al2O3 (sapphire)": 2}
-    mc = _MAT_MAP.get(material, 0)
-    sc = _SUB_MAP.get(substrate, 0)
+    from ml_module import MATERIAL_CODES, SUBSTRATE_CODES
+    mc = MATERIAL_CODES[material]
+    sc = SUBSTRATE_CODES[substrate]
     # Pre-compute target LAB
     if not isinstance(target_rgb, torch.Tensor):
         target = torch.tensor(target_rgb, dtype=torch.float32, device=device).unsqueeze(0)
@@ -697,6 +698,7 @@ def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
             H.clamp_(150, 550)
             if p_fixed is None:
                 P_batch.clamp_(220, 500)
+            D.copy_(torch.minimum(D, P_batch / 1.2))
     # Select best restart
     with torch.no_grad():
         x = _rcwa_input_batch(D, H, P_batch if p_fixed is None else P_batch, mc, sc)
@@ -714,10 +716,22 @@ def inverse_design_rcwa(target_rgb, n_restarts=24, steps=100, lr=0.05,
     D_best = max(100, min(320, D_best))
     H_best = max(150, min(550, H_best))
     P_best = max(220, min(500, P_best))
+    # Evaluate the exact rounded geometry that the UI will apply and export.
+    D_best = min(D_best, int(P_best / 1.2))
+    with torch.no_grad():
+        final_input = _rcwa_input_batch(
+            torch.tensor([float(D_best)], device=device),
+            torch.tensor([float(H_best)], device=device),
+            torch.tensor([float(P_best)], device=device), mc, sc)
+        spec_best = model(final_input)[0].cpu().numpy()
     # Convert to RGB
     from color_utils import spectrum_to_xyz, xyz_to_srgb
     xyz_np = spectrum_to_xyz(WL.numpy(), spec_best)
     rgb_best = xyz_to_srgb(xyz_np).tolist()
+    from color_utils import rgb_to_lab, delta_e2000
+    lab_best = rgb_to_lab(np.asarray(rgb_best))
+    target_np = target_rgb.detach().cpu().numpy() if isinstance(target_rgb, torch.Tensor) else np.asarray(target_rgb)
+    de_best = float(delta_e2000(lab_best, rgb_to_lab(target_np)))
     return {
         "D": D_best, "H": H_best, "P": P_best,
         "pred_rgb": rgb_best,

@@ -15,14 +15,17 @@ import shutil
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 if __package__:
-    from .verify_complete_offline_bundle import validate_analysis_runtime
+    from .verify_complete_offline_bundle import registered_rcwa_weight_pairs, validate_analysis_runtime
 else:
-    from verify_complete_offline_bundle import validate_analysis_runtime
+    from verify_complete_offline_bundle import registered_rcwa_weight_pairs, validate_analysis_runtime
 
 
 PACKAGE_DIR_NAME = "AI超表面结构色智能设计系统_完整离线包_v1"
 RUNTIME_REFRESH_FILES = (
-    'app.py', 'ml_module.py', 'scripts/audit_forward_mlp_v8_sub_conversion.py',
+    'app.py', 'ml_module.py', 'torch_model.py', 'rl_design.py',
+    'scripts/audit_forward_mlp_v8_sub_conversion.py',
+    'scripts/audit_offline_feature_runtime.py',
+    'scripts/audit_offline_app_flows.py',
     'data/fano_vs_fdtd_smallD.png',
 )
 
@@ -37,7 +40,7 @@ README = """# AI 超表面结构色智能设计系统：完整离线交付包
 
 展示页保留在 `showcase/index.html`，可单独打开。应用窗口使用已安装的 Microsoft Edge 或 Google Chrome，不与日常浏览器共享运行进程。
 
-需要先安装可用的 Python 3.10+。首次运行会创建本地 `.venv`，缺少网页依赖时安装 `runtime/requirements-web.txt`，安装阶段可能需要网络。依赖安装完成后，交互页本身在本地运行。当前电脑已初始化的环境会保留，后续启动可以复用。
+需要先安装可用的 Python 3.10+。首次运行会创建本地 `.venv`，缺少依赖时安装 `runtime/requirements-offline.txt`（含梯度搜索所需 PyTorch），安装阶段可能需要网络。依赖安装完成后，交互页本身在本地运行。当前电脑已初始化的环境会保留，后续启动可以复用。
 
 ## 目录
 
@@ -97,7 +100,7 @@ OFFLINE_GUIDE = """# 本地离线演示说明
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r runtime/requirements-web.txt
+python -m pip install -r runtime/requirements-offline.txt
 cd runtime
 python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8512
 ```
@@ -284,10 +287,10 @@ if (-not (Test-PythonExecutable $VenvPython)) {
     if ($LASTEXITCODE -ne 0) { throw "创建 .venv 失败。" }
 }
 
-$dependencyProbe = & $VenvPython -c "import streamlit, numpy, onnxruntime, PIL, matplotlib, scipy"
+$dependencyProbe = & $VenvPython -c "import streamlit, numpy, onnxruntime, PIL, matplotlib, scipy, torch"
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "正在安装网页运行依赖；若电脑离线，请先准备 requirements-web.txt 对应的本地依赖。"
-    & $VenvPython -m pip install -r (Join-Path $Runtime "requirements-web.txt")
+    Write-Host "正在安装完整离线版依赖；若电脑离线，请先准备 requirements-offline.txt 对应的本地依赖。"
+    & $VenvPython -m pip install -r (Join-Path $Runtime "requirements-offline.txt")
     if ($LASTEXITCODE -ne 0) { throw "依赖安装失败。详情见终端输出。" }
 }
 
@@ -384,11 +387,19 @@ def write_launchers(project_root: Path, package_root: Path) -> None:
         (package_root / name).unlink(missing_ok=True)
     write_text(package_root / "README_先看这里.md", README)
     write_text(package_root / 'docs' / '11_本地离线演示说明.md', OFFLINE_GUIDE)
+    copy_file(project_root / 'competition' / '14_离线功能核对.md', package_root / 'docs' / '14_离线功能核对.md')
     write_text(package_root / 'audit' / 'README_证据索引.md', AUDIT_README)
     write_text(package_root / "common_offline.ps1", COMMON_PS1, bom=True)
     write_text(package_root / "start_offline.ps1", START_PS1, bom=True)
     copy_file(project_root / 'scripts' / 'offline_desktop_host.py', package_root / 'desktop_host.py')
     write_batch(package_root / "启动离线演示.bat", START_BAT)
+    write_text(package_root / 'runtime' / 'requirements-offline.txt',
+               '-r requirements-web.txt\n# Full offline features require autograd and analytical Torch routes.\ntorch>=2.2,<3\n')
+
+
+def copy_gradient_weights(project_root: Path, runtime: Path) -> None:
+    for _, pt_relative in registered_rcwa_weight_pairs(runtime):
+        copy_file(project_root / pt_relative, runtime / pt_relative)
 
 
 def refresh_launchers(project_root: Path, output_zip: Path, staging: Path, *, refresh_runtime=False) -> dict[str, object]:
@@ -399,6 +410,7 @@ def refresh_launchers(project_root: Path, output_zip: Path, staging: Path, *, re
     if refresh_runtime:
         for name in RUNTIME_REFRESH_FILES:
             copy_file(project_root / name, staging / 'runtime' / name)
+        copy_gradient_weights(project_root, staging / 'runtime')
     manifest['analysis_runtime'] = validate_analysis_runtime(staging / 'runtime')
     refresh_ui_manifest(staging)
     manifest['launcher_mode'] = 'desktop-window-close-stops-service'
@@ -448,6 +460,7 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     copy_file(source_package / "requirements-web.txt", runtime / "requirements-web.txt")
     copy_tree(source_package / ".streamlit", runtime / ".streamlit")
     copy_tree(source_package / "models", runtime / "models")
+    copy_gradient_weights(project_root, runtime)
     copy_file(source_package / "competition" / "reference_library.py", runtime / "competition" / "reference_library.py")
     copy_file(source_package / "competition" / "tio2_air_reference_records_v1.jsonl", runtime / "competition" / "tio2_air_reference_records_v1.jsonl")
 

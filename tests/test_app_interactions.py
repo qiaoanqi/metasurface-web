@@ -1658,7 +1658,7 @@ def _force_current_smart_registry(monkeypatch, *, exact_pair=True):
         name = "input"
 
     class FakeSession:
-        def __init__(self, model_path, providers=None):
+        def __init__(self, model_path, providers=None, sess_options=None):
             del providers
             self._model_path = str(model_path)
 

@@ -28,7 +28,7 @@ def test_analysis_dependency_inventory_includes_bound_auditor(runtime):
     assert 'models/forward_mlp_v8_sub.onnx.data' in report['files']
 
 
-@pytest.mark.parametrize('relative', [AUDITOR, 'ui_model_resources.py', 'data/fano_vs_fdtd_smallD.png'])
+@pytest.mark.parametrize('relative', [AUDITOR, 'ui_model_resources.py', 'data/fano_vs_fdtd_smallD.png', 'models/forward_mlp_rcwa_TiO2_s1.pt', 'models/rl_qtable.npy'])
 def test_release_rejects_missing_analysis_dependency(runtime, relative):
     (runtime / relative).unlink()
     with pytest.raises(ValueError, match='Missing analysis dependency'):

@@ -9,6 +9,31 @@ from pathlib import Path
 from zipfile import ZipFile
 
 
+def registered_rcwa_weight_pairs(runtime: Path) -> tuple[tuple[str, str], ...]:
+    """Derive inference/gradient asset pairs from the shipped registry."""
+    tree = ast.parse((runtime / 'ml_module.py').read_text(encoding='utf-8-sig'))
+    registries = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in ('_RCWA_MODELS', '_RCWA_SUBSTRATE_MODELS'):
+                    registries[target.id] = ast.literal_eval(node.value)
+    if set(registries) != {'_RCWA_MODELS', '_RCWA_SUBSTRATE_MODELS'}:
+        raise ValueError('Missing registered RCWA model families')
+    pairs = set()
+    model_root = (runtime / 'models').resolve()
+    for registry in registries.values():
+        for patterns in registry.values():
+            matches = sorted({path for pattern in patterns for path in model_root.glob(pattern)})
+            if not matches:
+                raise ValueError(f'Missing registered RCWA ONNX family: {patterns}')
+            for path in matches:
+                path.resolve().relative_to(model_root)
+                relative = path.relative_to(runtime.resolve()).as_posix()
+                pairs.add((relative, path.with_suffix('.pt').relative_to(runtime.resolve()).as_posix()))
+    return tuple(sorted(pairs))
+
+
 def validate_analysis_runtime(runtime: Path) -> dict:
     """Check shipped analysis dependencies without importing or running the app."""
     runtime = runtime.resolve()
@@ -77,6 +102,11 @@ def validate_analysis_runtime(runtime: Path) -> dict:
     figure_hash = ast.literal_eval(assignment('ui_fdtd_asset.py', 'FDTD_ASSET_SHA256'))
     if hashlib.sha256(read(figure_path)).hexdigest().upper() != figure_hash.upper():
         raise ValueError(f'Historical figure hash mismatch: {figure_path}')
+    for onnx_relative, pt_relative in registered_rcwa_weight_pairs(runtime):
+        read(onnx_relative)
+        read(pt_relative)
+    for relative in ('rl_design.py', 'models/rl_qtable.npy', 'models/rl_qtable_meta.npy'):
+        read(relative)
     return {'status': 'pass', 'files': dict(sorted(files.items()))}
 
 
