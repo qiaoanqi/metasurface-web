@@ -3,8 +3,10 @@ import path from 'node:path';
 
 const root = process.cwd();
 const out = path.join(root, 'competition', '答辩材料_20261009');
+const version = process.argv[2] || 'v21';
+const handbook = version === 'v18' ? '答辩准备手册_v1.md' : '答辩准备手册_v2.md';
 const prep = JSON.parse(await fs.readFile(path.join(out, '答辩准备内容.json'), 'utf8'));
-const slides = JSON.parse(await fs.readFile(path.join(root, '.defense-build-20261009', 'slide_content.json'), 'utf8'));
+const slides = JSON.parse(await fs.readFile(path.join(root, '.defense-build-20261009', version === 'v18' ? 'slide_content.json' : `slide_content_${version}.json`), 'utf8'));
 if (slides.length !== 15 || slides.reduce((sum, s) => sum + s.seconds, 0) !== 560) {
   throw new Error('Unexpected slide count or timing');
 }
@@ -14,7 +16,7 @@ const lines = [
   '',
   '主讲人：乔安琪。团队：404 Not Found队。成员：乔安琪、陈雍杰、郭千弘。',
   '',
-  '本手册供团队内部排练与提交准备使用，不作为匿名作品附件直接上传。逐页讲稿对应答辩修订版 v18；PPT 已包含同版演讲者备注。',
+  `本手册供团队内部排练与提交准备使用，不作为匿名作品附件直接上传。逐页讲稿对应答辩修订版 ${version}；PPT 已包含同版演讲者备注。`,
   '',
   '## 一、比赛安排与成员分工',
   '',
@@ -65,5 +67,5 @@ lines.push('', '## 十、证据口径速查', '',
   '| 双柱解析基线可运行 | 独立解析功能保留 | 双柱 ONNX 已发布 |',
   '', '## 十一、内部证据来源', '', paragraphs(prep.references), '');
 
-await fs.writeFile(path.join(out, '答辩准备手册_v1.md'), lines.join('\n'), 'utf8');
-console.log(JSON.stringify({ output: path.join(out, '答辩准备手册_v1.md'), slides: slides.length, seconds: elapsed, qa: prep.qa.length }));
+await fs.writeFile(path.join(out, handbook), lines.join('\n'), 'utf8');
+console.log(JSON.stringify({ output: path.join(out, handbook), slides: slides.length, seconds: elapsed, qa: prep.qa.length }));
