@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import io
 import json
 import posixpath
 import re
@@ -22,10 +23,11 @@ def sha256(path: Path) -> str:
 
 
 def verify(version: str) -> dict:
+    anonymous = version == "v22"
     stem = f"AI超表面结构色智能设计系统_答辩修订版_{version}"
     pptx = OUTPUT / f"{stem}.pptx"
     pdf = OUTPUT / f"{stem}.pdf"
-    handbook = OUTPUT / ("答辩准备手册_v1.md" if version == "v18" else "答辩准备手册_v2.md")
+    handbook = OUTPUT / ("答辩准备手册_v3_内部使用.md" if anonymous else "答辩准备手册_v1.md" if version == "v18" else "答辩准备手册_v2.md")
     validation = json.loads((BUILD / f"validation_{version}.json").read_text(encoding="utf-8"))
     assert validation["finalSha256"].upper() == sha256(pptx)
     assert validation["packageIntegrity"]["findingCount"] == 0
@@ -46,16 +48,44 @@ def verify(version: str) -> dict:
         for item in slide_meta:
             notes_text = " ".join(ElementTree.fromstring(package.read(f"ppt/notesSlides/notesSlide{item['slide']}.xml")).itertext())
             assert item["script"] in notes_text, item["slide"]
-        forbidden = [s for s in ["长沙理工大学", "人工智能学院", "指导教师", "指导老师"] if s in combined]
+        identity_terms = ["长沙理工大学", "人工智能学院", "指导教师", "指导老师"]
+        if anonymous:
+            identity_terms += ["乔安琪", "陈雍杰", "郭千弘", "404 Not Found", "长沙理工", "学院"]
+            for part in parts:
+                if part.endswith((".xml", ".rels", ".json", ".txt")):
+                    combined += "\n" + package.read(part).decode("utf-8", "ignore")
+                elif part.endswith(".xlsx"):
+                    with zipfile.ZipFile(io.BytesIO(package.read(part))) as workbook:
+                        for nested in workbook.namelist():
+                            if nested.endswith((".xml", ".rels")):
+                                combined += "\n" + workbook.read(nested).decode("utf-8", "ignore")
+            assert not any("comment" in p.lower() or "persons/" in p for p in parts)
+            core = ElementTree.fromstring(package.read("docProps/core.xml"))
+            for item in core:
+                if item.tag.rsplit("}", 1)[-1] in {"creator", "lastModifiedBy"}:
+                    assert not item.text
+        forbidden = [s for s in identity_terms if s in combined]
         assert not forbidden, forbidden
         for member in ["乔安琪", "陈雍杰", "郭千弘"]:
-            assert member in combined
+            assert (member not in combined) if anonymous else (member in combined)
         team_slide = ElementTree.fromstring(package.read("ppt/slides/slide2.xml"))
         namespace = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
         team_tables = team_slide.findall(".//a:tbl", namespace)
         assert len(team_tables) == 1
         team_rows = [["".join(cell.itertext()) for cell in row.findall("a:tc", namespace)] for row in team_tables[0].findall("a:tr", namespace)]
-        if version == "v18":
+        if anonymous:
+            assert team_rows == [["职责", "负责内容"], ["项目研发", "核心算法、系统开发与项目统筹"], ["交互设计", "离线与云端系统 UI 设计"], ["答辩材料", "大纲整理与 PPT 制作"]], team_rows
+            expected_changed_parts = {
+                "ppt/slides/slide2.xml", "ppt/slides/slide15.xml",
+                "ppt/notesSlides/notesSlide1.xml", "ppt/notesSlides/notesSlide2.xml",
+                "docProps/core.xml", "docProps/app.xml",
+            }
+            with zipfile.ZipFile(OUTPUT / "AI超表面结构色智能设计系统_答辩修订版_v21.pptx") as previous:
+                assert set(parts) == set(previous.namelist())
+                changed_parts = {p for p in parts if package.read(p) != previous.read(p)}
+                assert changed_parts == expected_changed_parts, changed_parts
+            assert "undefined" not in combined
+        elif version == "v18":
             assert team_rows == [["成员", "分工"], ["乔安琪", "项目负责人、核心算法、系统开发与主讲"], ["陈雍杰", "UI设计"], ["郭千弘", "PPT制作"]], team_rows
         else:
             with zipfile.ZipFile(BUILD / "source_v18_snapshot.pptx") as source:
@@ -101,6 +131,9 @@ def verify(version: str) -> dict:
 
     reader = PdfReader(pdf)
     assert len(reader.pages) == 15
+    if anonymous:
+        assert not reader.metadata.get("/Author")
+        assert not any(term in str(reader.metadata) for term in identity_terms)
     assert all(abs(float(page.mediabox.width) - 960) < 0.01 and abs(float(page.mediabox.height) - 540) < 0.01 for page in reader.pages)
     differences = []
     for n in range(1, 16):
@@ -117,12 +150,20 @@ def verify(version: str) -> dict:
         if version == "v18" and n != 4:
             previous = BUILD / "final_slides_v16" / f"slide-{n}.png"
             assert sha256(previous) == sha256(BUILD / f"final_slides_{version}" / f"slide-{n}.png"), n
-        elif version != "v18" and n in [1, 2, 11, 12, 13]:
+        elif anonymous and n not in [2, 15]:
+            previous = Image.open(BUILD / "final_slides_v21" / f"slide-{n}.png").convert("RGB")
+            assert ImageChops.difference(previous, source).getbbox() is None, n
+        elif not anonymous and version != "v18" and n in [1, 2, 11, 12, 13]:
             previous = Image.open(BUILD / "source_v18_current" / f"slide-{n}.png").convert("RGB")
             assert ImageChops.difference(previous, source).getbbox() is None, n
 
     handbook_text = handbook.read_text(encoding="utf-8")
     assert version in handbook_text and "### 20." in handbook_text
+    if anonymous:
+        assert "不作为匿名作品附件直接上传" in handbook_text
+        assert "公开汇报不报队员姓名" in handbook_text
+        for item in slide_meta:
+            assert not any(term in item["script"] for term in identity_terms), item["slide"]
     if version == "v18":
         assert "陈雍杰负责UI设计" in handbook_text and "郭千弘负责PPT制作" in handbook_text
     else:
@@ -138,14 +179,17 @@ def verify(version: str) -> dict:
         "suggested_speech_seconds": 560,
         "qa_count": 20,
         "version": version,
-        "changed_slides": [4] if version == "v18" else [3, 4, 5, 6, 7, 8, 9, 10, 14, 15],
-        "unchanged_slide_count": 14 if version == "v18" else 5,
-        "preserved_user_cover_and_team_edits": version != "v18",
-        "source_snapshot_sha256": sha256(BUILD / "source_v18_snapshot.pptx") if version != "v18" else None,
+        "changed_slides": [2, 15] if anonymous else [4] if version == "v18" else [3, 4, 5, 6, 7, 8, 9, 10, 14, 15],
+        "unchanged_slide_count": 13 if anonymous else 14 if version == "v18" else 5,
+        "preserved_user_cover_and_team_edits": version != "v18" and not anonymous,
+        "preserved_user_cover": version != "v18",
+        "anonymous_public_materials": anonymous,
+        "source_snapshot_sha256": sha256(OUTPUT / "AI超表面结构色智能设计系统_答辩修订版_v21.pptx") if anonymous else sha256(BUILD / "source_v18_snapshot.pptx") if version != "v18" else None,
         "grid_chart_points_verified": 0 if version == "v18" else 64,
         "reference_spectrum_points_verified": 81,
         "mapping_preview_cells_verified": 48,
         "public_material_identity_text_findings": forbidden,
+        "embedded_workbooks_identity_scanned": anonymous,
         "pdf_max_mean_channel_difference": max(differences),
         "native_powerpoint_open_verified": False,
         "pdf_fixed_layout_from_rendered_slides": True,

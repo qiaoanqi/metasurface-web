@@ -1,0 +1,55 @@
+{
+  "schema": "competition-defense-delivery-v1",
+  "scope": "local_only",
+  "status": "pass",
+  "slide_count": 15,
+  "speaker_note_count": 15,
+  "pdf_page_count": 15,
+  "suggested_speech_seconds": 560,
+  "qa_count": 20,
+  "version": "v22",
+  "changed_slides": [
+    2,
+    15
+  ],
+  "unchanged_slide_count": 13,
+  "preserved_user_cover_and_team_edits": false,
+  "preserved_user_cover": true,
+  "anonymous_public_materials": true,
+  "source_snapshot_sha256": "D97DC4C793A382BA40AB8E4920B03A089374F659BFD22AB6F704CCFE244B3520",
+  "grid_chart_points_verified": 64,
+  "reference_spectrum_points_verified": 81,
+  "mapping_preview_cells_verified": 48,
+  "public_material_identity_text_findings": [],
+  "embedded_workbooks_identity_scanned": true,
+  "pdf_max_mean_channel_difference": 3.3737098524305558,
+  "native_powerpoint_open_verified": false,
+  "pdf_fixed_layout_from_rendered_slides": true,
+  "video_recorded": false,
+  "cloud_updated": false,
+  "github_updated": false,
+  "files": [
+    {
+      "path": "competition\\答辩材料_20261009\\AI超表面结构色智能设计系统_答辩修订版_v22.pptx",
+      "bytes": 28794336,
+      "sha256": "E721AD59EDAEC65B79AC826D471D042FF8AEAEBD89D639DBF8849A8D7BBD52EF"
+    },
+    {
+      "path": "competition\\答辩材料_20261009\\AI超表面结构色智能设计系统_答辩修订版_v22.pdf",
+      "bytes": 1070250,
+      "sha256": "589DF66FBC8A0E5FD3C8746A8EBAFB450741620188FB465802BCFD94715C4839"
+    },
+    {
+      "path": "competition\\答辩材料_20261009\\答辩准备手册_v3_内部使用.md",
+      "bytes": 32121,
+      "sha256": "4EA21611C2B63B31C2BFF970BC3CB244A5142707244D903F1CCB9E6FAE636C8D"
+    }
+  ],
+  "source_data_sha256": "01BD65E80DF2A3C55BD92316CCD7882CD050969057278DB885BD0EAE83BB8403",
+  "limitations": [
+    "No new simulation or training",
+    "No new physical accuracy claim",
+    "MP4 and submission receipts pending",
+    "Official team number and QQ registration sequence pending"
+  ]
+}

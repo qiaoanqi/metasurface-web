@@ -20,7 +20,7 @@ def build_pdf(version: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     pdf = canvas.Canvas(str(output), pagesize=(WIDTH, HEIGHT), pageCompression=1)
     pdf.setTitle("AI超表面结构色智能设计系统 - 答辩修订版")
-    pdf.setAuthor("404 Not Found队")
+    pdf.setAuthor("" if version == "v22" else "404 Not Found队")
     for slide_path in slide_paths:
         pdf.drawImage(ImageReader(str(slide_path)), 0, 0, width=WIDTH, height=HEIGHT, preserveAspectRatio=True, mask="auto")
         pdf.showPage()
