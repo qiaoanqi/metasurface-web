@@ -82,11 +82,9 @@ text(s,'算法创新赛 · AI+软件创新   第 4 答辩室 · 序号 3',491,61
 footer(s,1);
 }
 {
-const script='本项目的算法与系统开发、数据审计和功能测试由我完成，我同时负责材料统筹和本次主讲。陈雍杰接下来负责排练计时、材料核对和问答记录，郭千弘负责演示备份、会议调试和录屏支持。表中分别标明开发工作和答辩筹备安排。';
+const script='团队成员为乔安琪、陈雍杰和郭千弘。我负责核心算法、系统开发和本次主讲。陈雍杰负责UI设计，郭千弘负责PPT制作。';
 const s=slide('团队成员与分工','404 Not Found队',2,25,script,['用户确认的成员与实际贡献','校赛通知附件名单']);
-table(s,[['成员','职责','工作阶段'],['乔安琪','项目负责人、核心开发、审计与主讲','已承担'],['陈雍杰','排练计时、材料核对、问答记录','答辩筹备安排'],['郭千弘','演示备份、会议调试、录屏支持','答辩筹备安排']],64,205,1152,300,[160,660,332],25);
-text(s,'核心技术贡献由项目负责人承担',65,550,1130,45,29,C.cyan,true);
-text(s,'其他成员按上述安排参与答辩筹备',65,604,1130,35,23,C.muted);
+table(s,[['成员','分工'],['乔安琪','项目负责人、核心算法、系统开发与主讲'],['陈雍杰','UI设计'],['郭千弘','PPT制作']],64,205,1152,300,[250,902],25);
 footer(s,2);
 }
 {
@@ -213,14 +211,14 @@ footer(s,15);
 }
 
 await fs.writeFile(path.join(BUILD,'slide_content.json'),JSON.stringify(meta,null,2));
-const finalPath=path.join(OUT,'AI超表面结构色智能设计系统_答辩修订版_v15.pptx');
-const candidate=path.join(BUILD,'candidate_v15.pptx');
+const finalPath=path.join(OUT,'AI超表面结构色智能设计系统_答辩修订版_v16.pptx');
+const candidate=path.join(BUILD,'candidate_v16.pptx');
 await (await PresentationFile.exportPptx(deck)).save(candidate);
-await finalizePresentation({workspaceDir:ROOT,candidatePath:candidate,finalPath,pythonExecutable:PYTHON,integrityValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_package_integrity.py'),layoutValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_layout_geometry.py'),layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-heading-fit','--validate-bullet-geometry',...[2,8,12,13].flatMap(n=>['--require-native-table-slide',String(n)])],explicitTotalSlideCount:15,requiredNativeTableOwnerSlides:[2,8,12,13],requiredNativeChartOwnerSlides:[9],materializeLiteralChartWorkbooks:true,fontPolicy:{basis:'design',families:[FONT]},verifyArtifactToolImport:true,receiptPath:path.join(BUILD,'validation_v15.json')});
+await finalizePresentation({workspaceDir:ROOT,candidatePath:candidate,finalPath,pythonExecutable:PYTHON,integrityValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_package_integrity.py'),layoutValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_layout_geometry.py'),layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-heading-fit','--validate-bullet-geometry',...[2,8,12,13].flatMap(n=>['--require-native-table-slide',String(n)])],explicitTotalSlideCount:15,requiredNativeTableOwnerSlides:[2,8,12,13],requiredNativeChartOwnerSlides:[9],materializeLiteralChartWorkbooks:true,fontPolicy:{basis:'design',families:[FONT]},verifyArtifactToolImport:true,receiptPath:path.join(BUILD,'validation_v16.json')});
 const finalDeck=await PresentationFile.importPptx(await FileBlob.load(finalPath));
-const rendered=path.join(BUILD,'final_slides_v15'); await fs.mkdir(rendered,{recursive:true});
+const rendered=path.join(BUILD,'final_slides_v16'); await fs.mkdir(rendered,{recursive:true});
 for(let i=0;i<finalDeck.slides.items.length;i++){
   const p=await finalDeck.export({slide:finalDeck.slides.items[i],format:'png',scale:1});await fs.writeFile(path.join(rendered,`slide-${i+1}.png`),Buffer.from(await p.arrayBuffer()));
 }
-await fs.writeFile(path.join(BUILD,'final_montage_v15.png'),Buffer.from(await (await finalDeck.export({format:'png',montage:true})).arrayBuffer()));
+await fs.writeFile(path.join(BUILD,'final_montage_v16.png'),Buffer.from(await (await finalDeck.export({format:'png',montage:true})).arrayBuffer()));
 console.log(JSON.stringify({finalPath,slides:15,totalSeconds:meta.reduce((n,s)=>n+s.seconds,0),font:FONT}));
