@@ -12,7 +12,7 @@ from pypdf import PdfReader
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "competition" / "答辩材料_20261009"
 BUILD = ROOT / ".defense-build-20261009"
-STEM = "AI超表面结构色智能设计系统_答辩修订版_v16"
+STEM = "AI超表面结构色智能设计系统_答辩修订版_v18"
 
 
 def sha256(path: Path) -> str:
@@ -24,7 +24,7 @@ def verify() -> dict:
     pptx = OUTPUT / f"{STEM}.pptx"
     pdf = OUTPUT / f"{STEM}.pdf"
     handbook = OUTPUT / "答辩准备手册_v1.md"
-    validation = json.loads((BUILD / "validation_v16.json").read_text(encoding="utf-8"))
+    validation = json.loads((BUILD / "validation_v18.json").read_text(encoding="utf-8"))
     assert validation["finalSha256"].upper() == sha256(pptx)
     assert validation["packageIntegrity"]["findingCount"] == 0
     assert validation["presentationLayout"]["findingCount"] == 0
@@ -52,14 +52,28 @@ def verify() -> dict:
         assert team_rows == [["成员", "分工"], ["乔安琪", "项目负责人、核心算法、系统开发与主讲"], ["陈雍杰", "UI设计"], ["郭千弘", "PPT制作"]], team_rows
         for stale in ["排练计时、材料核对", "演示备份、会议调试", "工作阶段", "核心技术贡献由项目负责人承担"]:
             assert stale not in combined, stale
+        slide_four = ElementTree.fromstring(package.read("ppt/slides/slide4.xml"))
+        slide_four_text = "".join(slide_four.itertext())
+        for expected in ["五个页面", "预览", "逆设计", "图案", "映射", "光谱", "查看 D-H 颜色"]:
+            assert expected in slide_four_text, expected
+        map_table = slide_four.findall(".//a:tbl", namespace)
+        assert len(map_table) == 1
+        map_rows = map_table[0].findall("a:tr", namespace)
+        assert len(map_rows) == 6
+        map_evidence = json.loads((ROOT / ".state" / "offline_flow_mapping_single_20261006.json").read_text(encoding="utf-8"))
+        for cell in map_evidence["payload"]["cells"]:
+            table_cell = map_rows[5 - cell["hi"]].findall("a:tc", namespace)[cell["di"]]
+            actual = table_cell.find("a:tcPr/a:solidFill/a:srgbClr", namespace).attrib["val"]
+            expected = "".join(f"{int(v * 255 + 0.5):02X}" for v in cell["rgb"])
+            assert actual.upper() == expected, (cell["hi"], cell["di"], actual, expected)
 
     reader = PdfReader(pdf)
     assert len(reader.pages) == 15
     assert all(abs(float(page.mediabox.width) - 960) < 0.01 and abs(float(page.mediabox.height) - 540) < 0.01 for page in reader.pages)
     differences = []
     for n in range(1, 16):
-        source = Image.open(BUILD / "final_slides_v16" / f"slide-{n}.png").convert("RGB")
-        rendered = Image.open(BUILD / "pdf_render_v16" / f"slide-{n:02}.png").convert("RGB")
+        source = Image.open(BUILD / "final_slides_v18" / f"slide-{n}.png").convert("RGB")
+        rendered = Image.open(BUILD / "pdf_render_v18" / f"slide-{n:02}.png").convert("RGB")
         assert source.size == rendered.size == (1280, 720)
         difference = ImageStat.Stat(ImageChops.difference(source, rendered)).mean
         differences.append(max(difference))
@@ -68,9 +82,12 @@ def verify() -> dict:
         # visual inspection; this threshold catches accidental scaling rather
         # than normal cross-renderer antialiasing drift.
         assert max(difference) < 5.0, (n, difference)
+        if n != 4:
+            previous = BUILD / "final_slides_v16" / f"slide-{n}.png"
+            assert sha256(previous) == sha256(BUILD / "final_slides_v18" / f"slide-{n}.png"), n
 
     handbook_text = handbook.read_text(encoding="utf-8")
-    assert "v16" in handbook_text and "### 20." in handbook_text
+    assert "v18" in handbook_text and "### 20." in handbook_text
     assert "陈雍杰负责UI设计" in handbook_text and "郭千弘负责PPT制作" in handbook_text
     assert "- [x] 已准备：" in handbook_text
     return {
@@ -82,6 +99,9 @@ def verify() -> dict:
         "pdf_page_count": 15,
         "suggested_speech_seconds": 560,
         "qa_count": 20,
+        "changed_slide": 4,
+        "unchanged_slide_count": 14,
+        "mapping_preview_cells_verified": 48,
         "public_material_identity_text_findings": forbidden,
         "pdf_max_mean_channel_difference": max(differences),
         "native_powerpoint_open_verified": False,
@@ -97,6 +117,6 @@ def verify() -> dict:
 
 if __name__ == "__main__":
     report = verify()
-    report_path = BUILD / "delivery_v16.json"
+    report_path = BUILD / "delivery_v18.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))

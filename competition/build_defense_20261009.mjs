@@ -23,12 +23,14 @@ const audit = await readJSON('competition/tio2_air_day_audit_20260930.json');
 const colorAudit = await readJSON('competition/tio2_air_day_color_audit_20260930.json');
 const runtimeAudit = await readJSON('.state/offline_feature_runtime_audit_final_20261006.json');
 const appAudit = await readJSON('.state/offline_real_app_flows_final_20261006.json');
+const mappingFlow = await readJSON('.state/offline_flow_mapping_single_20261006.json');
 const lines = readline.createInterface({ input: createReadStream(path.join(ROOT, 'competition/tio2_air_reference_records_v1.jsonl')), crlfDelay: Infinity });
 let record;
 for await (const line of lines) { if (line.trim()) { record = JSON.parse(line); break; } }
 lines.close();
 if (record.index !== 4 || record.polarization !== 'p' || audit.records !== 21088 || flow.candidates.length !== 3) throw new Error('Unexpected evidence identity');
 if ([runtimeAudit, appAudit].some(a => a.status !== 'pass' || a.checks.some(c => c.status !== 'pass'))) throw new Error('Audit not passing');
+if (mappingFlow.payload.status !== 'available' || mappingFlow.payload.cells.length !== 48) throw new Error('Unexpected mapping evidence');
 const C = { bg:'#0C111A', ink:'#F6F8FC', muted:'#ADB8C7', line:'#394252', cyan:'#56D5E9', amber:'#FFD173', green:'#78D5AD', violet:'#BAACFF' };
 const deck = Presentation.create({ slideSize:{ width:1280, height:720 } });
 const meta=[];
@@ -100,9 +102,37 @@ footer(s,3);
 const script='这张图来自已保存的真实离线界面。用户先选结构、材料、偏振和角度，再输入目标色并运行搜索。得到候选后，可以应用到预览页，继续查看光谱或导出数据。预览、逆设计、图案、映射、光谱共五个页面，围绕同一参数上下文工作。这里强调的是可用的软件流程。后面会单独说明候选的质量和参考数据，避免把“按钮运行成功”当作物理精度结论。';
 const s=slide('实际软件流程','输入目标色，生成候选，再应用、分析和导出',4,35,script,['.state/ui_previews/offline_smart_grid_verified_20261006.png','.state/offline_real_app_flows_final_20261006.json']);
 await photo(s,'.state/ui_previews/offline_smart_grid_verified_20261006.png',64,181,866,467,{left:'25%',top:'7%',right:'2%',bottom:'1%'});
-text(s,'五个页面',968,213,248,40,28,C.cyan,true);
-text(s,'预览\n逆设计\n图案\n映射\n光谱',968,282,245,270,28);
-footer(s,4,'来源：2026-10-06 离线界面与应用流程记录');
+text(s,'五个页面',883,183,330,37,26,C.ink,true);
+const pages=[
+  ['预览','查看结构与颜色',C.cyan],
+  ['逆设计','目标色生成候选',C.amber],
+  ['图案','图片转结构参数',C.violet],
+  ['映射','查看 D-H 颜色',C.green],
+  ['光谱','分析波长响应','#F39EAC'],
+];
+// Native page-navigation diagram, paired with saved UI crops and mapping data.
+s.shapes.add({geometry:'line',position:{left:902,top:252,width:0,height:340},fill:'none',line:{fill:C.line,width:2}});
+for (let i=0;i<pages.length;i++){
+  const [title,description,color]=pages[i],y=231+i*85;
+  s.shapes.add({geometry:'ellipse',position:{left:883,top:y+5,width:38,height:38},fill:C.bg,line:{fill:color,width:1.6}});
+  text(s,String(i+1),887,y+10,30,27,19,color,true,'center');
+  text(s,title,938,y+2,177,34,27,color,true);
+  text(s,description,938,y+42,177,30,20,C.muted);
+}
+await photo(s,'output/playwright/main8503-preview-1440.png',1124,232,92,64,{left:'24.9%',top:'50.3%',right:'66.2%',bottom:'36.7%'});
+await photo(s,'.state/ui_previews/offline_smart_grid_verified_20261006.png',1124,317,92,64,{left:'51.3%',top:'12.6%',right:'42.8%',bottom:'75.1%'});
+await photo(s,'.state/ui_previews/offline_pattern_verified_20261006.png',1124,402,92,64,{left:'26.4%',top:'50.4%',right:'56.2%',bottom:'26.2%'});
+const mapPreview=s.tables.add({rows:6,columns:8,left:1124,top:487,width:92,height:64,values:Array.from({length:6},()=>Array(8).fill(''))});
+mapPreview.borders.assign({fill:C.bg,width:0.2,style:'solid'});
+mapPreview.cells.block({row:0,column:0,rowCount:6,columnCount:8}).assign({textStyle:{typeface:FONT,fontSize:1},margins:{left:0,right:0,top:0,bottom:0}});
+for(let row=0;row<6;row++)mapPreview.rows[row].height=64/6;
+for(const cell of mappingFlow.payload.cells){
+  const rgb='#'+cell.rgb.map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
+  mapPreview.getCell(5-cell.hi,cell.di).fill=rgb;
+}
+await photo(s,'output/playwright/main8503-spectrum-1440.png',1124,572,92,64,{left:'26.8%',top:'48.7%',right:'33.4%',bottom:'13.3%'});
+s.speakerNotes.textFrame.setText(`建议用时 35 秒\n${script}\n\n证据来源\n.state/ui_previews/offline_smart_grid_verified_20261006.png\n.state/offline_real_app_flows_final_20261006.json\noutput/playwright/main8503-preview-1440.png\n.state/ui_previews/offline_pattern_verified_20261006.png\n.state/offline_flow_mapping_single_20261006.json\noutput/playwright/main8503-spectrum-1440.png\n\n右侧为五页功能索引。缩略图来自已保存界面，映射色格使用2026-10-06的48格解析路线存档，未重新仿真。不同页面示例不作为同一次结果或同一物理路线的对照。`);
+footer(s,4,'来源：本地界面存档与应用流程记录');
 }
 {
 const script='系统分为界面、计算路由、颜色表达和结果导出几个部分。路由首先检查结构、材料、衬底以及入射条件，再决定使用注册代理模型、解析近似或腔体TMM。每个结果带有模型版本和适用范围。修改参数后，旧候选和旧分析不能继续冒充新条件下的结果。资源不匹配时，只有独立实现且明确标注的基线路线可以回落，否则就返回不可用。这样把能力边界落实到程序行为，而不是只在文档里写一行提醒。';
@@ -211,14 +241,14 @@ footer(s,15);
 }
 
 await fs.writeFile(path.join(BUILD,'slide_content.json'),JSON.stringify(meta,null,2));
-const finalPath=path.join(OUT,'AI超表面结构色智能设计系统_答辩修订版_v16.pptx');
-const candidate=path.join(BUILD,'candidate_v16.pptx');
+const finalPath=path.join(OUT,'AI超表面结构色智能设计系统_答辩修订版_v18.pptx');
+const candidate=path.join(BUILD,'candidate_v18.pptx');
 await (await PresentationFile.exportPptx(deck)).save(candidate);
-await finalizePresentation({workspaceDir:ROOT,candidatePath:candidate,finalPath,pythonExecutable:PYTHON,integrityValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_package_integrity.py'),layoutValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_layout_geometry.py'),layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-heading-fit','--validate-bullet-geometry',...[2,8,12,13].flatMap(n=>['--require-native-table-slide',String(n)])],explicitTotalSlideCount:15,requiredNativeTableOwnerSlides:[2,8,12,13],requiredNativeChartOwnerSlides:[9],materializeLiteralChartWorkbooks:true,fontPolicy:{basis:'design',families:[FONT]},verifyArtifactToolImport:true,receiptPath:path.join(BUILD,'validation_v16.json')});
+await finalizePresentation({workspaceDir:ROOT,candidatePath:candidate,finalPath,pythonExecutable:PYTHON,integrityValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_package_integrity.py'),layoutValidatorPath:path.join(SKILL,'container_tools/inspect_presentation_layout_geometry.py'),layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-heading-fit','--validate-bullet-geometry',...[2,4,8,12,13].flatMap(n=>['--require-native-table-slide',String(n)])],explicitTotalSlideCount:15,requiredNativeTableOwnerSlides:[2,4,8,12,13],requiredNativeChartOwnerSlides:[9],materializeLiteralChartWorkbooks:true,fontPolicy:{basis:'design',families:[FONT]},verifyArtifactToolImport:true,receiptPath:path.join(BUILD,'validation_v18.json')});
 const finalDeck=await PresentationFile.importPptx(await FileBlob.load(finalPath));
-const rendered=path.join(BUILD,'final_slides_v16'); await fs.mkdir(rendered,{recursive:true});
+const rendered=path.join(BUILD,'final_slides_v18'); await fs.mkdir(rendered,{recursive:true});
 for(let i=0;i<finalDeck.slides.items.length;i++){
   const p=await finalDeck.export({slide:finalDeck.slides.items[i],format:'png',scale:1});await fs.writeFile(path.join(rendered,`slide-${i+1}.png`),Buffer.from(await p.arrayBuffer()));
 }
-await fs.writeFile(path.join(BUILD,'final_montage_v16.png'),Buffer.from(await (await finalDeck.export({format:'png',montage:true})).arrayBuffer()));
+await fs.writeFile(path.join(BUILD,'final_montage_v18.png'),Buffer.from(await (await finalDeck.export({format:'png',montage:true})).arrayBuffer()));
 console.log(JSON.stringify({finalPath,slides:15,totalSeconds:meta.reduce((n,s)=>n+s.seconds,0),font:FONT}));

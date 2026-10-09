@@ -5,8 +5,8 @@ from reportlab.pdfgen import canvas
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SLIDES = ROOT / ".defense-build-20261009" / "final_slides_v16"
-OUTPUT = ROOT / "competition" / "答辩材料_20261009" / "AI超表面结构色智能设计系统_答辩修订版_v16.pdf"
+SLIDES = ROOT / ".defense-build-20261009" / "final_slides_v18"
+OUTPUT = ROOT / "competition" / "答辩材料_20261009" / "AI超表面结构色智能设计系统_答辩修订版_v18.pdf"
 WIDTH, HEIGHT = 960, 540
 
 
