@@ -1,0 +1,32 @@
+{
+  "schema": "ecs-web-release-receipt-v1",
+  "status": "deployed_verified",
+  "verified_at": "2026-10-11",
+  "instance_id": "i-bp1i86274h1rwzgoi2k8",
+  "public_ip": "47.111.14.70",
+  "local_package": "dist/ai_metasurface_web_bundle_20261011_v5.zip",
+  "local_sha256": "AE1C8725E0F776FB74E085346AADD13A56D50776B549927D4C3157CB3B76A75C",
+  "package_bytes": 204589348,
+  "remote_package": "/root/ai_metasurface_web_bundle_20261011_v5.zip",
+  "remote_sha256": "AE1C8725E0F776FB74E085346AADD13A56D50776B549927D4C3157CB3B76A75C",
+  "remote_bytes": 204589348,
+  "release_root": "/opt/ai-metasurface-web.release.20261011_v5",
+  "backup_root": "/opt/ai-metasurface-web.backup.20261011015514",
+  "services": {
+    "metasurface_streamlit": "active",
+    "nginx": "active"
+  },
+  "internal_health": {
+    "root_health": "200 ok",
+    "streamlit_health": "200 ok"
+  },
+  "public_pages": {
+    "showcase": "http://47.111.14.70/",
+    "interactive": "http://47.111.14.70/app/",
+    "showcase_browser_title": "AI超表面结构色智能设计系统",
+    "interactive_browser_title": "AI超表面结构色设计"
+  },
+  "reference_records_sha256": "01BD65E80DF2A3C55BD92316CCD7882CD050969057278DB885BD0EAE83BB8403",
+  "deployment_method": "uploaded through Aliyun Workbench file manager; extracted update_release.sh from verified archive because the previous release root did not contain the switch script",
+  "old_release_preserved": true
+}

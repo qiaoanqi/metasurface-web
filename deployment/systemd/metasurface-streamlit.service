@@ -13,7 +13,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=OMP_NUM_THREADS=1
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=MKL_NUM_THREADS=1
-ExecStart=/opt/ai-metasurface-web/.venv/bin/streamlit run /opt/ai-metasurface-web/app.py --server.address=127.0.0.1 --server.port=8501 --server.baseUrlPath=app --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false
+ExecStart=/opt/ai-metasurface-web/.venv/bin/python -m streamlit run /opt/ai-metasurface-web/app.py --server.address=127.0.0.1 --server.port=8501 --server.baseUrlPath=app --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

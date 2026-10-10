@@ -402,7 +402,7 @@ def inverse_method_registry(
             states["compare"] = InverseMethodState(
                 "compare", "跨结构方案对比", "TiO2 / a-Si 解析候选与 FP-TMM 对比",
                 bool(context.geometry_valid),
-                "可用：这是跨结构比较，不作为当前结构的推荐主方法。" if context.geometry_valid
+                "可用：用于查看不同结构路线的差异。" if context.geometry_valid
                 else "不可用：当前几何无效。",
                 scope="cross_structure",
             )

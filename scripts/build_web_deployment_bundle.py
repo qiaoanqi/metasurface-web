@@ -9,6 +9,11 @@ import shutil
 import tempfile
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+if __package__:
+    from .verify_complete_offline_bundle import validate_analysis_runtime
+else:
+    from verify_complete_offline_bundle import validate_analysis_runtime
+
 
 CORE_FILES = (
     "app.py", "engine.py", "ccm.py", "color_utils.py", "fp_cavity.py",
@@ -22,6 +27,9 @@ CORE_FILES = (
     "models/evidence/forward_mlp_v8_sub_conversion_v1.json",
     "models/forward_mlp_v8_sub.onnx", "models/forward_mlp_v8_sub.onnx.data",
     "models/forward_mlp_v8_sub.pt", "models/rl_qtable.npy", "models/rl_qtable_meta.npy",
+    "scripts/audit_offline_feature_runtime.py",
+    "scripts/audit_offline_app_flows.py",
+    "scripts/verify_complete_offline_bundle.py",
 )
 
 COMPETITION_FILES = (
@@ -66,6 +74,13 @@ def build(root: Path, output: Path) -> dict[str, object]:
             copy_file(root, staging, relative)
         for source in sorted(root.glob(MODEL_GLOB)):
             copy_file(root, staging, source.relative_to(root).as_posix())
+        # Use the same checked dependency inventory as the complete offline app.
+        # It includes registered gradient weights, the bound conversion auditor,
+        # and historical figure assets; no research datasets are copied.
+        analysis_runtime = validate_analysis_runtime(root)
+        for relative in analysis_runtime["files"]:
+            copy_file(root, staging, relative)
+        validate_analysis_runtime(staging)
 
         static_target = staging / "static"
         shutil.copytree(
@@ -78,6 +93,7 @@ def build(root: Path, output: Path) -> dict[str, object]:
             "deployment/nginx/metasurface.conf",
             "deployment/systemd/metasurface-streamlit.service",
             "deployment/scripts/healthcheck.sh",
+            "deployment/scripts/update_release.sh",
         ):
             copy_file(root, staging, relative)
 
@@ -89,6 +105,7 @@ def build(root: Path, output: Path) -> dict[str, object]:
         manifest = {
             "schema": "ai-metasurface-web-bundle-v1",
             "status": "pass",
+            "analysis_runtime": analysis_runtime,
             "entrypoints": {"showcase": "/", "streamlit": "/app/"},
             "reference_records_sha256": files.get(
                 "competition/tio2_air_reference_records_v1.jsonl", ""
@@ -116,7 +133,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument(
         "--output", type=Path,
-        default=Path(__file__).resolve().parents[1] / "dist" / "ai_metasurface_web_bundle_v1.zip",
+        default=Path(__file__).resolve().parents[1] / "dist" / "ai_metasurface_web_bundle_20261011_v5.zip",
     )
     args = parser.parse_args()
     manifest = build(args.root, args.output)

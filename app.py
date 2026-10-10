@@ -4282,8 +4282,8 @@ with tab2:
 
     if "compare" in _method_states:
         _compare_method = _method_states["compare"]
-        with st.expander("跨结构比较（不作为推荐主方法）", expanded=False):
-            st.caption(f"{_compare_method.summary}。{_compare_method.reason}")
+        with st.expander("跨结构方案对比", expanded=False):
+            st.caption(f"{_compare_method.summary}。用于查看不同结构路线的差异。")
             if _compare_method.available:
                 ai_btn = st.button(
                     _compare_method.label, key="inverse_cross_structure_compare",
@@ -4372,7 +4372,10 @@ with tab2:
                     result = ml_module.smart_grid_search(
                         target_rgb_norm, material=material, substrate=substrate,
                         angle_deg=angle, polarization=polarization,
-                        coarse_n=12, top_k=5, fine_steps=5, fine_range=6.0
+                        # Keep the click path responsive on the shipped CPU runtime.
+                        # The registered models use a fixed batch of one, so a larger
+                        # grid multiplies Python-to-ONNX calls instead of vectorizing.
+                        coarse_n=8, top_k=3, fine_steps=3, fine_range=8.0
                     )
                 if not inverse_candidates_available(result):
                     st.warning("智能网格搜索不可用: 需要 RCWA/ML 模型")
@@ -5861,7 +5864,10 @@ with tab5:
                     result = ml_module.smart_grid_search(
                         target_rgb, material=mat, substrate=sub,
                         angle_deg=0.0, polarization="TE (s-pol)",
-                        coarse_n=12, top_k=1, fine_steps=5, fine_range=6.0,
+                        # Keep the benchmark path consistent with the interactive
+                        # route; the registered ONNX exports accept batch=1, so
+                        # the larger legacy grid multiplies inference calls.
+                        coarse_n=8, top_k=1, fine_steps=3, fine_range=8.0,
                     )
                 elapsed = time.perf_counter() - t0
                 if not result:

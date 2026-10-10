@@ -25,6 +25,7 @@ fi
 
 python3 -m venv "${INSTALL_ROOT}/.venv"
 "${INSTALL_ROOT}/.venv/bin/python" -m pip install --upgrade pip
+"${INSTALL_ROOT}/.venv/bin/pip" install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.2,<3'
 "${INSTALL_ROOT}/.venv/bin/pip" install --requirement "${INSTALL_ROOT}/requirements-web.txt"
 
 install -d -m 0750 -o metasurface -g metasurface "${INSTALL_ROOT}/.runtime-home"

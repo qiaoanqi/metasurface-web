@@ -2,12 +2,12 @@
 
 ## 1. 本地发布包
 
-文件：`dist/ai_metasurface_web_bundle_v1.zip`
+文件：`dist/ai_metasurface_web_bundle_20261011_v5.zip`
 
 本版 SHA-256（精简模型差异分析默认展示）：
 
 ```text
-E05312F3364036C4542C86B5B008D4168C21D4FBD68BE0254D530DDC766E4044
+AE1C8725E0F776FB74E085346AADD13A56D50776B549927D4C3157CB3B76A75C
 ```
 
 包内 TiO2/SiO2/air 参考记录 SHA-256：
@@ -21,10 +21,10 @@ E05312F3364036C4542C86B5B008D4168C21D4FBD68BE0254D530DDC766E4044
 在 ECS 实例详情页进入“上传/下载文件”，选择本地 ZIP，目标路径填写：
 
 ```text
-/root/ai_metasurface_web_bundle_v1_release_20261001.zip
+/root/ai_metasurface_web_bundle_20261011_v5.zip
 ```
 
-注意：目标是一个以 `.zip` 结尾的普通文件，不要先创建同名目录，也不要把 ZIP 上传到 `/root/ai_metasurface_web_bundle_v1_release_20261001.zip/`。Cloud Assistant 的“发送文件”入口只适合几十 KB 的脚本；这个 168 MB 发布包应使用实例详情页的文件上传入口。
+注意：目标是一个以 `.zip` 结尾的普通文件，不要先创建同名目录，也不要把 ZIP 上传到 `/root/ai_metasurface_web_bundle_20261010_v3.zip/`。Cloud Assistant 的“发送文件”入口只适合几十 KB 的脚本；这个约 195.1 MB 发布包应使用实例详情页或 Workbench 文件管理的上传入口。
 
 ## 3. Cloud Assistant 执行部署命令
 
@@ -33,8 +33,8 @@ E05312F3364036C4542C86B5B008D4168C21D4FBD68BE0254D530DDC766E4044
 ```bash
 set -eu
 
-ZIP=/root/ai_metasurface_web_bundle_v1_release_20261001.zip
-EXPECTED=E05312F3364036C4542C86B5B008D4168C21D4FBD68BE0254D530DDC766E4044
+ZIP=/root/ai_metasurface_web_bundle_20261011_v5.zip
+EXPECTED=AE1C8725E0F776FB74E085346AADD13A56D50776B549927D4C3157CB3B76A75C
 test -f "$ZIP"
 printf '%s  %s\n' "$EXPECTED" "$ZIP" | sha256sum -c -
 

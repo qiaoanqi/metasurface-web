@@ -22,7 +22,7 @@ def _ensure_model_file(rel_path):
     except Exception:
         return local
 
-from color_utils import CIE_X, CIE_Y, CIE_Z, WL, CIE_NORM, SRGB_M, spectrum_to_srgb
+from color_utils import CIE_X, CIE_Y, CIE_Z, WL, CIE_NORM, SRGB_M, spectrum_to_srgb, xyz_to_srgb
 
 # ---- globals ----
 _ORT_AVAILABLE = False
@@ -42,6 +42,16 @@ SUBSTRATE_CODES = {"SiO2 (fused silica)": 0, "Si3N4 (nitride)": 1, "Al2O3 (sapph
 
 def _spectrum_to_rgb(spec: np.ndarray) -> np.ndarray:
     return spectrum_to_srgb(WL, np.clip(spec, 0, None))
+
+
+def _spectra_to_rgb_batch(spectra: np.ndarray) -> np.ndarray:
+    """Convert a stack of 81-point spectra without one Python call per row."""
+    values = np.nan_to_num(np.asarray(spectra, dtype=float), nan=0.0, posinf=1.0, neginf=0.0)
+    if values.ndim != 2 or values.shape[1] != len(CIE_X):
+        raise ValueError(f"spectra must have shape (N, {len(CIE_X)}), got {values.shape}")
+    cmfs = np.stack((CIE_X, CIE_Y, CIE_Z), axis=1)
+    xyz = (5.0 * values @ cmfs) / CIE_NORM
+    return np.nan_to_num(np.clip(xyz_to_srgb(xyz), 0, 1), nan=0.0)
 
 # ---- ONNX init ----
 def _cpu_onnx_session(path):
@@ -717,8 +727,8 @@ def ml_grid_search_refined(target_rgb, material="TiO2 (anatase)", substrate="SiO
 
 
 def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fused silica)",
-                      angle_deg=0.0, polarization="TE", coarse_n=12, top_k=5,
-                      fine_steps=5, fine_range=6.0, max_results=3):
+                      angle_deg=0.0, polarization="TE", coarse_n=8, top_k=3,
+                      fine_steps=3, fine_range=8.0, max_results=3):
     """
     Two-stage smart grid search using the registered RCWA ONNX ensemble.
     Gradient search separately uses the corresponding PyTorch weights.
@@ -780,7 +790,7 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
 
     x_batch = np.array(batch_inputs, dtype=np.float32)
     all_specs = _batch_predict(x_batch)
-    all_rgbs = np.array([spectrum_to_srgb(WL, np.clip(s, 0, None)) for s in all_specs])
+    all_rgbs = _spectra_to_rgb_batch(all_specs)
 
     de2000s = []
     for rgb in all_rgbs:
@@ -815,7 +825,7 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
     if fine_inputs:
         x_fine = np.array(fine_inputs, dtype=np.float32)
         fine_specs = _batch_predict(x_fine)
-        fine_rgbs = np.array([spectrum_to_srgb(WL, np.clip(s, 0, None)) for s in fine_specs])
+        fine_rgbs = _spectra_to_rgb_batch(fine_specs)
 
         for (D, H, P), rgb in zip(fine_params, fine_rgbs):
             try:
@@ -861,7 +871,7 @@ def smart_grid_search(target_rgb, material="TiO2 (anatase)", substrate="SiO2 (fu
             (None, row[1], list(rgb), float(np.linalg.norm(rgb_to_lab(rgb) - target_lab)),
              float(delta_e2000(rgb_to_lab(rgb), target_lab)))
             for row, spec in zip(result, final_specs)
-            for rgb in [spectrum_to_srgb(WL, np.clip(spec, 0, None))]
+            for rgb in [_spectra_to_rgb_batch(np.asarray(spec)[None, :])[0]]
         ]
         result.sort(key=lambda row: row[4])
     return result if result else None

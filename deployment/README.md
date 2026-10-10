@@ -2,7 +2,7 @@
 
 这个目录对应“网站发布”，与 `competition/*cloud*.zip` 的 RCWA 批量计算包分开。
 
-当前竞赛发布入口：展示页 `http://47.111.14.70/`，交互页 `http://47.111.14.70/app/`，代码和文档见 `https://github.com/qiaoanqi/metasurface-web`，离线包见 GitHub Release `competition-web-v1.0.0`。二维码绑定交互页；公网 IP 变更后需要重新生成二维码并复测。
+当前竞赛发布入口：展示页 `http://47.111.14.70/`，交互页 `http://47.111.14.70/app/`，代码和文档见 `https://github.com/qiaoanqi/metasurface-web`，离线包见 GitHub Release `competition-web-v5.0.0`。当前 ECS 对齐包为 `ai_metasurface_web_bundle_20261011_v5.zip`，包的 SHA-256 记录在包外的部署说明和部署回执中。二维码绑定展示页；展示页内可进入交互页；公网 IP 变更后需要重新生成二维码并复测。
 
 部署后：
 
@@ -33,7 +33,7 @@ sudo systemctl status metasurface-streamlit --no-pager
 bash deployment/scripts/healthcheck.sh http://127.0.0.1
 ```
 
-首次启动会按需加载 ONNX 模型和 21,088 条已审核 TiO2/SiO2/air 参考记录。参考库只做精确命中，不做最近邻、插值或训练。
+首次启动会按需加载 ONNX 模型和 21,088 条已审核 TiO2/SiO2/air 参考记录。参考库只做精确命中，不做最近邻、插值或训练。发布包同时包含注册模型的梯度搜索权重、RL 表、分析证据及图像资源；ECS 使用 CPU PyTorch 支持相应功能。
 
 ## 运行边界
 

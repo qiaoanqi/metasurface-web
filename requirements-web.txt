@@ -1,0 +1,13 @@
+# Complete application runtime. ECS installs the CPU PyTorch wheel first
+# to support gradient searches and analytical routes without CUDA packages.
+streamlit==1.58.0
+numpy>=1.26.0,<3.0.0
+pillow==12.2.0
+matplotlib==3.10.9
+scipy>=1.10.0,<2.0.0
+# ONNX Runtime 1.26 requires Python >=3.11.  The ECS web image is Ubuntu
+# 22.04/Python 3.10, so keep a compatible wheel there while retaining the
+# newer runtime on Python 3.11+ development hosts.
+onnxruntime==1.23.2; python_version < "3.11"
+onnxruntime==1.26.0; python_version >= "3.11"
+torch>=2.2,<3

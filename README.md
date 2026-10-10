@@ -8,7 +8,7 @@
 - 在线交互页：<http://47.111.14.70/app/>
 - GitHub 代码仓库：<https://github.com/qiaoanqi/metasurface-web>
 - 系统文档与资源索引：[competition/13_公开资源索引.md](competition/13_公开资源索引.md)
-- 离线包：<https://github.com/qiaoanqi/metasurface-web/releases/download/competition-web-v1.0.0/ai_metasurface_web_bundle_v1.zip>
+- 离线包（ECS v5）：<https://github.com/qiaoanqi/metasurface-web/releases/download/competition-web-v5.0.0/ai_metasurface_web_bundle_20261011_v5.zip>
 
 二维码当前直接指向在线交互页 `/app/`。公网 IP 变更后，需要同步更新二维码、网站链接和本文件中的地址。
 
@@ -103,6 +103,6 @@ python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8512
 - 资源索引：[competition/13_公开资源索引.md](competition/13_公开资源索引.md)
 - 本地交付清单：[competition/12_校赛本地交付清单.md](competition/12_校赛本地交付清单.md)
 - ECS 部署说明：[deployment/README.md](deployment/README.md)
-- 离线包：<https://github.com/qiaoanqi/metasurface-web/releases/tag/competition-web-v1.0.0>
+- 离线包：<https://github.com/qiaoanqi/metasurface-web/releases/tag/competition-web-v5.0.0>
 
 公网可访问只表示竞赛展示服务正常，不代表科研控制面或实验验证已经完成。

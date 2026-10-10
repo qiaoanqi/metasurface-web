@@ -1569,7 +1569,7 @@ def test_inverse_workflow_disables_unavailable_methods_before_execution():
         assert len(smart_secondary) == 1
         assert smart_secondary[0].disabled is True
         assert "缺少智能网格所需 .pt 权重" in text
-    assert "跨结构比较（不作为推荐主方法）" in [item.label for item in at.expander]
+    assert "跨结构方案对比" in [item.label for item in at.expander]
     assert "#80C8FF" in text
     assert "RGB(128, 200, 255)" in text
     assert not any(button.label == "应用此候选" for button in at.button)
