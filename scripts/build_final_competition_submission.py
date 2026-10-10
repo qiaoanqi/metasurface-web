@@ -89,15 +89,11 @@ def refresh_runtime_manifest(runtime: Path) -> str:
     manifest_path = runtime / "RELEASE_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     files = {}
-    for path in sorted(runtime.rglob("*")):
-        if not path.is_file() or path == manifest_path:
-            continue
-        relative = path.relative_to(runtime).as_posix()
-        if ".venv" in path.relative_to(runtime).parts or "__pycache__" in path.relative_to(runtime).parts:
-            continue
-        if relative.startswith("logs/") and relative != "logs/README.md":
-            continue
-        files[relative] = "sha256:" + sha256(path)
+    for relative, expected in manifest['files'].items():
+        actual = "sha256:" + sha256(runtime / relative)
+        if actual != expected:
+            raise ValueError(f'Offline source has changed since release sealing: {relative}')
+        files[relative] = actual
     manifest["status"] = "pass"
     manifest["files"] = files
     manifest["file_count"] = len(files)
@@ -270,10 +266,23 @@ def main(argv: list[str] | None = None) -> int:
 
     STAGING.mkdir(parents=True)
     runtime = STAGING / "04_可运行软件" / RUNTIME_SOURCE.name
-    copy_tree(RUNTIME_SOURCE, runtime)
+    # Copy only sealed assets, never a user's initialized environment or logs.
+    runtime_manifest = json.loads((RUNTIME_SOURCE / 'RELEASE_MANIFEST.json').read_text(encoding='utf-8'))
+    for relative in [*runtime_manifest['files'], 'RELEASE_MANIFEST.json']:
+        if '\\' in relative or Path(relative).is_absolute() or '..' in Path(relative).parts:
+            raise ValueError(f'Unsafe offline source path: {relative}')
+        copy(RUNTIME_SOURCE / relative, runtime / relative)
     runtime_manifest_sha256 = refresh_runtime_manifest(runtime)
     add_submission_files()
     write_submission_manifest(runtime_manifest_sha256)
+
+    if __package__:
+        from .audit_submission_source_sync import audit_directory
+    else:
+        from audit_submission_source_sync import audit_directory
+    source_sync = audit_directory(STAGING, ROOT)
+    if source_sync['status'] != 'pass':
+        raise ValueError(json.dumps(source_sync['failures'], ensure_ascii=False) + str(source_sync['latest_versions']))
 
     with ZipFile(OUTPUT, "w", compression=ZIP_DEFLATED, compresslevel=6) as archive:
         for path in sorted(STAGING.rglob("*")):

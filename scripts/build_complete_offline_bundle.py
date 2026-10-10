@@ -29,6 +29,8 @@ RUNTIME_REFRESH_FILES = (
     'scripts/audit_offline_app_flows.py',
     'data/fano_vs_fdtd_smallD.png',
 )
+OFFLINE_REQUIREMENTS = '-r requirements-web.txt\n# Full offline features require autograd and analytical Torch routes.\ntorch>=2.2,<3\n'
+SHOWCASE_SOURCE = Path('competition/website展示页_校赛副本')
 
 
 README = """# AI 超表面结构色智能设计系统：完整离线交付包
@@ -399,8 +401,52 @@ def write_launchers(project_root: Path, package_root: Path) -> None:
     write_text(package_root / "start_offline.ps1", START_PS1, bom=True)
     copy_file(project_root / 'scripts' / 'offline_desktop_host.py', package_root / 'desktop_host.py')
     write_batch(package_root / "启动离线演示.bat", START_BAT)
-    write_text(package_root / 'runtime' / 'requirements-offline.txt',
-               '-r requirements-web.txt\n# Full offline features require autograd and analytical Torch routes.\ntorch>=2.2,<3\n')
+    write_text(package_root / 'runtime' / 'requirements-offline.txt', OFFLINE_REQUIREMENTS)
+
+
+def render_offline_showcase(html: str) -> str:
+    """Adapt the current public page without losing the launcher's actual port."""
+    replacements = {
+        "const ONLINE_DEMO_URL = 'http://47.111.14.70/app/';":
+            "const OFFLINE_DEMO_URL = window.OFFLINE_APP_URL || 'http://127.0.0.1:8512/';",
+        'competitionLink.href = ONLINE_DEMO_URL;': 'competitionLink.href = OFFLINE_DEMO_URL;',
+        "const suffix = 'online';": "const suffix = 'local';",
+        "demo_launch_local: '本地预览模式：按钮打开云端交互台。',":
+            "demo_launch_local: '离线演示：先启动交互台，再点击此按钮。',",
+        "demo_launch_local: 'Local preview: the button opens the cloud interaction app.',":
+            "demo_launch_local: 'Offline demo: start the interaction app first, then click this button.',",
+        '// Use one explicit public URL so file:// previews and an accidentally\n            // opened HTTPS showcase cannot resolve to a dead localhost/HTTPS path.':
+            '// The launcher writes its selected port into local-demo-config.js.',
+        'id="competitionLocalLink" href="http://47.111.14.70/app/"':
+            'id="competitionLocalLink" href="http://127.0.0.1:8512/"',
+    }
+    for before, after in replacements.items():
+        if html.count(before) != 1:
+            raise ValueError(f'Offline showcase adapter no longer matches source: {before}')
+        html = html.replace(before, after, 1)
+    if html.count('</head>') != 1:
+        raise ValueError('Expected one showcase head')
+    return html.replace('</head>', '<script src="local-demo-config.js"></script>\n</head>', 1)
+
+
+def refresh_shipped_sources(project_root: Path, package_root: Path, files: dict) -> None:
+    """Refresh the frozen release inventory only, never glob research assets."""
+    for relative in files:
+        parts = Path(relative).parts
+        source = None
+        if parts[0] in ('runtime', 'deployment', 'protocols'):
+            if relative != 'runtime/requirements-offline.txt':
+                source = project_root.joinpath(*parts[1:]) if parts[0] == 'runtime' else project_root / relative
+        elif parts[0] == 'showcase' and relative != 'showcase/index.html':
+            source = project_root / SHOWCASE_SOURCE / Path(*parts[1:])
+        elif parts[0] == 'audit' and parts[-1] in ('tio2_air_day_audit_20260930.json', 'tio2_air_day_color_audit_20260930.json'):
+            source = project_root / 'competition' / parts[-1]
+        if source is not None:
+            copy_file(source, package_root / relative)
+    for name in ('12_校赛本地交付清单.md', '13_公开资源索引.md'):
+        copy_file(project_root / 'competition' / name, package_root / 'docs' / name)
+    source_html = (project_root / SHOWCASE_SOURCE / 'index.html').read_text(encoding='utf-8')
+    write_text(package_root / 'showcase' / 'index.html', render_offline_showcase(source_html))
 
 
 def copy_gradient_weights(project_root: Path, runtime: Path) -> None:
@@ -414,6 +460,7 @@ def refresh_launchers(project_root: Path, output_zip: Path, staging: Path, *, re
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     write_launchers(project_root, staging)
     if refresh_runtime:
+        refresh_shipped_sources(project_root, staging, manifest['files'])
         for name in RUNTIME_REFRESH_FILES:
             copy_file(project_root / name, staging / 'runtime' / name)
         copy_gradient_weights(project_root, staging / 'runtime')
@@ -474,11 +521,6 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     copy_tree(source_package / "deployment", staging / "deployment")
     copy_tree(source_package / "protocols", staging / "protocols")
     copy_tree(source_package / "protocols", runtime / "protocols")
-    showcase_index = staging / "showcase" / "index.html"
-    html = showcase_index.read_text(encoding="utf-8")
-    html = html.replace("</head>", '<script src="local-demo-config.js"></script>\n</head>', 1)
-    html = html.replace("localDemoHost ? 'http://127.0.0.1:8512' : '/app/'", "localDemoHost ? (window.OFFLINE_APP_URL || 'http://127.0.0.1:8512/') : '/app/'")
-    write_text(showcase_index, html)
 
     docs = staging / "docs"
     audit = staging / "audit"
@@ -494,6 +536,10 @@ def build(project_root: Path, source_package: Path, output_zip: Path, staging: P
     write_text(audit / "README_证据索引.md", AUDIT_README)
 
     write_launchers(project_root, staging)
+    refresh_shipped_sources(project_root, staging, {
+        path.relative_to(staging).as_posix(): ''
+        for path in staging.rglob('*') if path.is_file()
+    })
     analysis_runtime = validate_analysis_runtime(runtime)
     refresh_ui_manifest(staging)
     write_text(staging / "logs" / "README.md", LOG_README)

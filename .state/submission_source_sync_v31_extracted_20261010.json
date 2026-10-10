@@ -1,0 +1,1710 @@
+{
+  "schema": "submission-source-sync-v1",
+  "checked_at": "2026-10-10T08:05:10.566759+00:00",
+  "scope": "local_submission_sources_only",
+  "status": "pass",
+  "files_checked": 207,
+  "failures": [],
+  "latest_versions": {
+    "pptx": {
+      "status": "pass",
+      "latest_source": "competition/答辩材料_20261009/AI超表面结构色智能设计系统_答辩修订版_v23.pptx",
+      "selected": [
+        "01_作品材料/04_答辩PPT_匿名公开_v23.pptx"
+      ]
+    },
+    "ppt_pdf": {
+      "status": "pass",
+      "latest_source": "competition/答辩材料_20261009/AI超表面结构色智能设计系统_答辩修订版_v23.pdf",
+      "selected": [
+        "01_作品材料/05_答辩PPT_匿名公开_v23.pdf"
+      ]
+    },
+    "video": {
+      "status": "pass",
+      "latest_source": "competition/AI超表面结构色智能设计系统_自然旁白_AI配乐_v5.mp4",
+      "selected": [
+        "05_演示视频/AI超表面结构色智能设计系统_演示视频_v5.mp4"
+      ]
+    }
+  },
+  "classification_counts": {
+    "dated_evidence": 8,
+    "direct": 187,
+    "generated": 8,
+    "generated_manifest": 2,
+    "offline_adapter": 1,
+    "pinned_historical_evidence": 1
+  },
+  "boundary": "Historical audits are byte-verified evidence, not fresh functional tests. Research and cloud assets are out of scope.",
+  "files": [
+    {
+      "path": "01_作品材料/01_报名简介_最终版.md",
+      "packaged_sha256": "9C2CBC052CFE01AE35F0A7C200962DA47E71E769F7C7D089DF44455594F561DD",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/01_作品材料/01_报名简介_最终版.md",
+      "source_sha256": "9C2CBC052CFE01AE35F0A7C200962DA47E71E769F7C7D089DF44455594F561DD",
+      "status": "pass"
+    },
+    {
+      "path": "01_作品材料/02_作品简介_最终版_v1.pdf",
+      "packaged_sha256": "79F83DF73DAD04B3E289E47E4C42ED7B3C60380B9FF336E44633001A9D40F5F1",
+      "kind": "direct",
+      "source": "competition/作品简介_最终版_v1.pdf",
+      "source_sha256": "79F83DF73DAD04B3E289E47E4C42ED7B3C60380B9FF336E44633001A9D40F5F1",
+      "status": "pass"
+    },
+    {
+      "path": "01_作品材料/03_技术方案_最终版_v1.pdf",
+      "packaged_sha256": "FD35AE2857D65DDC0119D568BD14FB09920BAF4D7A20549CD4DEC9572FE0BBE9",
+      "kind": "direct",
+      "source": "competition/技术方案_最终版_v1.pdf",
+      "source_sha256": "FD35AE2857D65DDC0119D568BD14FB09920BAF4D7A20549CD4DEC9572FE0BBE9",
+      "status": "pass"
+    },
+    {
+      "path": "01_作品材料/04_答辩PPT_匿名公开_v23.pptx",
+      "packaged_sha256": "F1CF75672A93C2F2E9520883F232D29082F2737F3D778A52D888093C40D66A3C",
+      "kind": "direct",
+      "source": "competition/答辩材料_20261009/AI超表面结构色智能设计系统_答辩修订版_v23.pptx",
+      "source_sha256": "F1CF75672A93C2F2E9520883F232D29082F2737F3D778A52D888093C40D66A3C",
+      "status": "pass"
+    },
+    {
+      "path": "01_作品材料/05_答辩PPT_匿名公开_v23.pdf",
+      "packaged_sha256": "1F4B5CB742C243D15B0C8B6E427D273D00AB7D5690F2BB5D377A8913F09F97D1",
+      "kind": "direct",
+      "source": "competition/答辩材料_20261009/AI超表面结构色智能设计系统_答辩修订版_v23.pdf",
+      "source_sha256": "1F4B5CB742C243D15B0C8B6E427D273D00AB7D5690F2BB5D377A8913F09F97D1",
+      "status": "pass"
+    },
+    {
+      "path": "02_软件与算法/软件说明与核心算法说明_最终版.md",
+      "packaged_sha256": "CCCBE92AF6FE8976EA6CD66AD60B55460818C3F3B5CE19136A53AD711EDC9BFC",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/02_软件与算法/软件说明与核心算法说明_最终版.md",
+      "source_sha256": "CCCBE92AF6FE8976EA6CD66AD60B55460818C3F3B5CE19136A53AD711EDC9BFC",
+      "status": "pass"
+    },
+    {
+      "path": "02_软件与算法/运行环境与部署说明_最终版.md",
+      "packaged_sha256": "35F6D7AAA042F3480B520D07C78C6EF4C0BAEA209259CAA4C2FE789EA58FA0ED",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/02_软件与算法/运行环境与部署说明_最终版.md",
+      "source_sha256": "35F6D7AAA042F3480B520D07C78C6EF4C0BAEA209259CAA4C2FE789EA58FA0ED",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_feature_runtime_audit_final_20261006.json",
+      "packaged_sha256": "AADD64CC15390D7467967032B51FF326D5D873A8EE96188C320AA28DE5B76777",
+      "kind": "dated_evidence",
+      "source": ".state/offline_feature_runtime_audit_final_20261006.json",
+      "source_sha256": "AADD64CC15390D7467967032B51FF326D5D873A8EE96188C320AA28DE5B76777",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_flow_smart_20261006.json",
+      "packaged_sha256": "D39F908BD03D420AC90C7323562CF1C00683E7DF2C475B18D91D65A82EA56619",
+      "kind": "dated_evidence",
+      "source": ".state/offline_flow_smart_20261006.json",
+      "source_sha256": "D39F908BD03D420AC90C7323562CF1C00683E7DF2C475B18D91D65A82EA56619",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_full_feature_review_20261006.json",
+      "packaged_sha256": "F9BF542EA9B0A260AB39DAB7612B3EED88604BF0F1B4321F384246C18AEA1B8C",
+      "kind": "dated_evidence",
+      "source": ".state/offline_full_feature_review_20261006.json",
+      "source_sha256": "F9BF542EA9B0A260AB39DAB7612B3EED88604BF0F1B4321F384246C18AEA1B8C",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_light_pattern_verified_20261006.png",
+      "packaged_sha256": "0471F2D34D3977DE1A6989E07C04560E4ABC5205A0A37915A0D0AC33EB6945D3",
+      "kind": "dated_evidence",
+      "source": ".state/ui_previews/offline_light_pattern_verified_20261006.png",
+      "source_sha256": "0471F2D34D3977DE1A6989E07C04560E4ABC5205A0A37915A0D0AC33EB6945D3",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_real_app_flows_final_20261006.json",
+      "packaged_sha256": "B078BBAA3D9C54A9833EF966493E45C979B98693F30531D2A10AB7385159111D",
+      "kind": "dated_evidence",
+      "source": ".state/offline_real_app_flows_final_20261006.json",
+      "source_sha256": "B078BBAA3D9C54A9833EF966493E45C979B98693F30531D2A10AB7385159111D",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/offline_smart_grid_verified_20261006.png",
+      "packaged_sha256": "38A4B950402B41428CDF5F57BC7AC53517E50068D30450326280823F6A4D9079",
+      "kind": "dated_evidence",
+      "source": ".state/ui_previews/offline_smart_grid_verified_20261006.png",
+      "source_sha256": "38A4B950402B41428CDF5F57BC7AC53517E50068D30450326280823F6A4D9079",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/tio2_air_day_audit_20260930.json",
+      "packaged_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "kind": "dated_evidence",
+      "source": "competition/tio2_air_day_audit_20260930.json",
+      "source_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/evidence/tio2_air_day_color_audit_20260930.json",
+      "packaged_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "kind": "dated_evidence",
+      "source": "competition/tio2_air_day_color_audit_20260930.json",
+      "source_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "status": "pass"
+    },
+    {
+      "path": "03_测试与审计/测试报告_最终版.md",
+      "packaged_sha256": "02C227BE37646E3528B8B6898133DABF4288A4B6B2859B1DF409F769EA11AFE2",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/03_测试与审计/测试报告_最终版.md",
+      "source_sha256": "02C227BE37646E3528B8B6898133DABF4288A4B6B2859B1DF409F769EA11AFE2",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/README_先看这里.md",
+      "packaged_sha256": "6B336B5005458CC297341DDA178DFACA1445DB7FAB39D39CA1609BCD53FE0CC8",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:README_先看这里.md",
+      "source_sha256": "6B336B5005458CC297341DDA178DFACA1445DB7FAB39D39CA1609BCD53FE0CC8",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/RELEASE_MANIFEST.json",
+      "packaged_sha256": "2A4A818C5460059D7D6BE0D9FE10471B342671C090CF3F9239936DB937104EE6",
+      "kind": "generated_manifest",
+      "source": "RELEASE_MANIFEST.json",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/audit/README_证据索引.md",
+      "packaged_sha256": "5BF7B2B074181581143C9B0695F2AFABD6FABA67B4E17C547A52886505325EE0",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:audit/README_证据索引.md",
+      "source_sha256": "5BF7B2B074181581143C9B0695F2AFABD6FABA67B4E17C547A52886505325EE0",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/audit/RELEASE_MANIFEST_v3.json",
+      "packaged_sha256": "007D40749544BAFB71DD10F600DA5E6A439F89D232F98AECE14D2CB8114C3382",
+      "kind": "pinned_historical_evidence",
+      "source": "_archive/legacy_web_releases_20261006/AI超表面结构色智能设计系统_发布包_v3/RELEASE_MANIFEST.json",
+      "source_sha256": "007D40749544BAFB71DD10F600DA5E6A439F89D232F98AECE14D2CB8114C3382",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/audit/tio2_air_day_audit_20260930.json",
+      "packaged_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "kind": "direct",
+      "source": "competition/tio2_air_day_audit_20260930.json",
+      "source_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/audit/tio2_air_day_color_audit_20260930.json",
+      "packaged_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "kind": "direct",
+      "source": "competition/tio2_air_day_color_audit_20260930.json",
+      "source_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/audit/ui-release-manifest.json",
+      "packaged_sha256": "39CB0BCA01AC55CC6CBC310EB48ACE49CFEC3154B5E94744BCDDD2BB2B76C023",
+      "kind": "generated_manifest",
+      "source": "audit/ui-release-manifest.json",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/common_offline.ps1",
+      "packaged_sha256": "CD261D7AA676F2EF4FDDCE6D9D3FB2799114F5100A90F6FF00384FB6967D0B45",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:common_offline.ps1",
+      "source_sha256": "CD261D7AA676F2EF4FDDCE6D9D3FB2799114F5100A90F6FF00384FB6967D0B45",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/deployment/README.md",
+      "packaged_sha256": "10EDCDCDAF481C5DC164C0D729ED11AEE33C12C92CBE39DB4F3025C3353D75D7",
+      "kind": "direct",
+      "source": "deployment/README.md",
+      "source_sha256": "10EDCDCDAF481C5DC164C0D729ED11AEE33C12C92CBE39DB4F3025C3353D75D7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/deployment/install.sh",
+      "packaged_sha256": "9AA10B17C04BA43564CA0C094809A7DE354D74273EBB3A50B3970A6A4DD9AD46",
+      "kind": "direct",
+      "source": "deployment/install.sh",
+      "source_sha256": "9AA10B17C04BA43564CA0C094809A7DE354D74273EBB3A50B3970A6A4DD9AD46",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/deployment/nginx/metasurface.conf",
+      "packaged_sha256": "D75DC436BCC74220C3DDF7F954BF48973D06DEE28932CC5D8D4B0DF355B424C0",
+      "kind": "direct",
+      "source": "deployment/nginx/metasurface.conf",
+      "source_sha256": "D75DC436BCC74220C3DDF7F954BF48973D06DEE28932CC5D8D4B0DF355B424C0",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/deployment/scripts/healthcheck.sh",
+      "packaged_sha256": "2D3061F48FA6F3124101CCDDAAE36198E2470DD627F333B4BDDB7DABCAE5016E",
+      "kind": "direct",
+      "source": "deployment/scripts/healthcheck.sh",
+      "source_sha256": "2D3061F48FA6F3124101CCDDAAE36198E2470DD627F333B4BDDB7DABCAE5016E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/deployment/systemd/metasurface-streamlit.service",
+      "packaged_sha256": "DAD2383A9E1D61D2988313B7562FAA7A0863F568C498338D14DE01C8FE46ED65",
+      "kind": "direct",
+      "source": "deployment/systemd/metasurface-streamlit.service",
+      "source_sha256": "DAD2383A9E1D61D2988313B7562FAA7A0863F568C498338D14DE01C8FE46ED65",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/desktop_host.py",
+      "packaged_sha256": "DE189C741A510E5413B9FBEEB362A56E67BC75F9B1F5F1DB021BCC5DA2E2EADE",
+      "kind": "direct",
+      "source": "scripts/offline_desktop_host.py",
+      "source_sha256": "DE189C741A510E5413B9FBEEB362A56E67BC75F9B1F5F1DB021BCC5DA2E2EADE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/docs/11_本地离线演示说明.md",
+      "packaged_sha256": "BE5515474D68E9F427080453F8499F02B49A33DA1D570D0DC108F0EC27025AB1",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:docs/11_本地离线演示说明.md",
+      "source_sha256": "BE5515474D68E9F427080453F8499F02B49A33DA1D570D0DC108F0EC27025AB1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/docs/12_校赛本地交付清单.md",
+      "packaged_sha256": "72B5154E1F31D8088307DAFA0069DCEE2AB16E03486B6F5610228E5FD47762AB",
+      "kind": "direct",
+      "source": "competition/12_校赛本地交付清单.md",
+      "source_sha256": "72B5154E1F31D8088307DAFA0069DCEE2AB16E03486B6F5610228E5FD47762AB",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/docs/13_公开资源索引.md",
+      "packaged_sha256": "3FCC0880E9CE62CABEA69339B78BAF08D2CA1139F3EF47D57DA16C00E2B57AF5",
+      "kind": "direct",
+      "source": "competition/13_公开资源索引.md",
+      "source_sha256": "3FCC0880E9CE62CABEA69339B78BAF08D2CA1139F3EF47D57DA16C00E2B57AF5",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/docs/14_离线功能核对.md",
+      "packaged_sha256": "676FCF03741F96185481448A680B757572612B0EC9D9A75423D87908AC7EF521",
+      "kind": "direct",
+      "source": "competition/14_离线功能核对.md",
+      "source_sha256": "676FCF03741F96185481448A680B757572612B0EC9D9A75423D87908AC7EF521",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/logs/README.md",
+      "packaged_sha256": "6BE9B9E336A38B0FAA7B9F5919692F3AC228651D47439C7185EE077D14349C21",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:logs/README.md",
+      "source_sha256": "6BE9B9E336A38B0FAA7B9F5919692F3AC228651D47439C7185EE077D14349C21",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/protocols/forward_mlp_v8_sub_conversion_v1.json",
+      "packaged_sha256": "5C3D964B767F37E6C4730B319EA4112352F42197966B977F43EC4D2FD77E3143",
+      "kind": "direct",
+      "source": "protocols/forward_mlp_v8_sub_conversion_v1.json",
+      "source_sha256": "5C3D964B767F37E6C4730B319EA4112352F42197966B977F43EC4D2FD77E3143",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/.streamlit/config.toml",
+      "packaged_sha256": "60E66832AEF178B7762FFBC903D48E4675148987DE07E32B1A6AF94F6AA866B7",
+      "kind": "direct",
+      "source": ".streamlit/config.toml",
+      "source_sha256": "60E66832AEF178B7762FFBC903D48E4675148987DE07E32B1A6AF94F6AA866B7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/app.py",
+      "packaged_sha256": "5D56ABE99F84CFF272EB752CAA16B328A3541771EA2D15546A6241B1163B379A",
+      "kind": "direct",
+      "source": "app.py",
+      "source_sha256": "5D56ABE99F84CFF272EB752CAA16B328A3541771EA2D15546A6241B1163B379A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ccm.py",
+      "packaged_sha256": "57E30EA99B7977A07E0D2BB0C5326372BBB1FB492F822E4DAEE31AB1B68A7480",
+      "kind": "direct",
+      "source": "ccm.py",
+      "source_sha256": "57E30EA99B7977A07E0D2BB0C5326372BBB1FB492F822E4DAEE31AB1B68A7480",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/color_utils.py",
+      "packaged_sha256": "389BE1B749D1D2BD85F91F72B747ACF83C2549E28F299E08F0A4ECD49903190E",
+      "kind": "direct",
+      "source": "color_utils.py",
+      "source_sha256": "389BE1B749D1D2BD85F91F72B747ACF83C2549E28F299E08F0A4ECD49903190E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/competition/reference_library.py",
+      "packaged_sha256": "0FFB3A892322A8247E394B8496CB1E9D7216464494AA862938F5811D2C1F731F",
+      "kind": "direct",
+      "source": "competition/reference_library.py",
+      "source_sha256": "0FFB3A892322A8247E394B8496CB1E9D7216464494AA862938F5811D2C1F731F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/competition/tio2_air_day_audit_20260930.json",
+      "packaged_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "kind": "direct",
+      "source": "competition/tio2_air_day_audit_20260930.json",
+      "source_sha256": "D5014C581F1241335D755C099472EC53CAA0463F6CFFEE2C35DBD6ADB9D8742E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/competition/tio2_air_day_color_audit_20260930.json",
+      "packaged_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "kind": "direct",
+      "source": "competition/tio2_air_day_color_audit_20260930.json",
+      "source_sha256": "77DFA60BB729BD326E46A8736CAA3F7F750A288E22E9C7F38F1D1EB96BCB02E1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/competition/tio2_air_reference_records_v1.jsonl",
+      "packaged_sha256": "01BD65E80DF2A3C55BD92316CCD7882CD050969057278DB885BD0EAE83BB8403",
+      "kind": "direct",
+      "source": "competition/tio2_air_reference_records_v1.jsonl",
+      "source_sha256": "01BD65E80DF2A3C55BD92316CCD7882CD050969057278DB885BD0EAE83BB8403",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/data/fano_vs_fdtd_smallD.png",
+      "packaged_sha256": "7926A398859FAFAC594CBAAFAF801BE2A778BAA88344BEF013B3757108DC54F6",
+      "kind": "direct",
+      "source": "data/fano_vs_fdtd_smallD.png",
+      "source_sha256": "7926A398859FAFAC594CBAAFAF801BE2A778BAA88344BEF013B3757108DC54F6",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/engine.py",
+      "packaged_sha256": "2A33FFAFFC0A53E7CCFE2C2D451A136598DA8331A18B06835C553F91F3CA6628",
+      "kind": "direct",
+      "source": "engine.py",
+      "source_sha256": "2A33FFAFFC0A53E7CCFE2C2D451A136598DA8331A18B06835C553F91F3CA6628",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/fp_cavity.py",
+      "packaged_sha256": "EAF208AB1470C2571D52BC396DF5261F8FC2CE3C12617E70E23D83468E41D1BA",
+      "kind": "direct",
+      "source": "fp_cavity.py",
+      "source_sha256": "EAF208AB1470C2571D52BC396DF5261F8FC2CE3C12617E70E23D83468E41D1BA",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ml_module.py",
+      "packaged_sha256": "90550E877103755162ED2664707570187A6DC7290F2FE5E11043E80115C300DD",
+      "kind": "direct",
+      "source": "ml_module.py",
+      "source_sha256": "90550E877103755162ED2664707570187A6DC7290F2FE5E11043E80115C300DD",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/evidence/forward_mlp_v8_sub_conversion_v1.json",
+      "packaged_sha256": "0272278396B8B53845B1C8E7F6D69E2FFDBD63A1FD6D6D25F6E23A3EDCFBF99E",
+      "kind": "direct",
+      "source": "models/evidence/forward_mlp_v8_sub_conversion_v1.json",
+      "source_sha256": "0272278396B8B53845B1C8E7F6D69E2FFDBD63A1FD6D6D25F6E23A3EDCFBF99E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Al2O3_s1.onnx",
+      "packaged_sha256": "0F89F1E1C5727CBE923ABC943C84A3723917279F4011EA4CB6A3718EB418D385",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Al2O3_s1.onnx",
+      "source_sha256": "0F89F1E1C5727CBE923ABC943C84A3723917279F4011EA4CB6A3718EB418D385",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Al2O3_s1.pt",
+      "packaged_sha256": "1639AFB4CEC7FDEB6620DB7B48E00FAB4EC03D3F55CEAB585BE87312B50D8632",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Al2O3_s1.pt",
+      "source_sha256": "1639AFB4CEC7FDEB6620DB7B48E00FAB4EC03D3F55CEAB585BE87312B50D8632",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s1.onnx",
+      "packaged_sha256": "EB10819B48C932E9617780A751DA7AE4C2A812345E318B2A38A501C9E023C88A",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s1.onnx",
+      "source_sha256": "EB10819B48C932E9617780A751DA7AE4C2A812345E318B2A38A501C9E023C88A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s1.pt",
+      "packaged_sha256": "C358029558F7E2E5195532B139561EE9B4D2C3C057DF8D2A636E15437D793166",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s1.pt",
+      "source_sha256": "C358029558F7E2E5195532B139561EE9B4D2C3C057DF8D2A636E15437D793166",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s2.onnx",
+      "packaged_sha256": "9F55926D991F0BD7396AE3C40B6A672558C69F7E64D0184B51074D518F5E5EFD",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s2.onnx",
+      "source_sha256": "9F55926D991F0BD7396AE3C40B6A672558C69F7E64D0184B51074D518F5E5EFD",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s2.pt",
+      "packaged_sha256": "CC1890F0CBD51ED09CE584BB53E24626B2E19BA6EA4940D0C997A8479FC955D7",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s2.pt",
+      "source_sha256": "CC1890F0CBD51ED09CE584BB53E24626B2E19BA6EA4940D0C997A8479FC955D7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s3.onnx",
+      "packaged_sha256": "3257811D8A9E56755FA2B9A1B34AA32CF1D10DE65CDC28A3019AC2725751A215",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s3.onnx",
+      "source_sha256": "3257811D8A9E56755FA2B9A1B34AA32CF1D10DE65CDC28A3019AC2725751A215",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_GaN_s3.pt",
+      "packaged_sha256": "33ABDD3DB950D230D389F2553B52B77DDF1FC0045584632EFFAB5EF62E3A68F1",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_GaN_s3.pt",
+      "source_sha256": "33ABDD3DB950D230D389F2553B52B77DDF1FC0045584632EFFAB5EF62E3A68F1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s1.onnx",
+      "packaged_sha256": "E3DAB1CE01334E94CE2A99D43121CE38AA4639B59FC525F205D98ABBD3942A3D",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s1.onnx",
+      "source_sha256": "E3DAB1CE01334E94CE2A99D43121CE38AA4639B59FC525F205D98ABBD3942A3D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s1.pt",
+      "packaged_sha256": "E98C8FD8782988BD18608AB78E447EFAD40141422F1597F852962F05012CB294",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s1.pt",
+      "source_sha256": "E98C8FD8782988BD18608AB78E447EFAD40141422F1597F852962F05012CB294",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s2.onnx",
+      "packaged_sha256": "E49D74BA1B2B67018ABBAC48473ED2EAA334CA9B4BD07BDDC3588BCDB3E54E8B",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s2.onnx",
+      "source_sha256": "E49D74BA1B2B67018ABBAC48473ED2EAA334CA9B4BD07BDDC3588BCDB3E54E8B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s2.pt",
+      "packaged_sha256": "5D0E11FA1D4A63D7F9AD54C36342CAFE7E02B8562A6F7BE0FE9000294E103D2F",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s2.pt",
+      "source_sha256": "5D0E11FA1D4A63D7F9AD54C36342CAFE7E02B8562A6F7BE0FE9000294E103D2F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s3.onnx",
+      "packaged_sha256": "C030887F37CDA14690E16EDDF8FE4B5A65CADD5CEC0B5291FED3F6A3958E4F19",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s3.onnx",
+      "source_sha256": "C030887F37CDA14690E16EDDF8FE4B5A65CADD5CEC0B5291FED3F6A3958E4F19",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_HfO2_s3.pt",
+      "packaged_sha256": "5DD73C3DFF250E0C27C811F9BEA74DC7CFE767475B36753AA849B0536E69E5D9",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_HfO2_s3.pt",
+      "source_sha256": "5DD73C3DFF250E0C27C811F9BEA74DC7CFE767475B36753AA849B0536E69E5D9",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_256_s1.onnx",
+      "packaged_sha256": "B7A098DEF87AB31DBDCF409BDB7E3F2EB0E2AFB5B8F589F8C45CF669E5DA061C",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_256_s1.onnx",
+      "source_sha256": "B7A098DEF87AB31DBDCF409BDB7E3F2EB0E2AFB5B8F589F8C45CF669E5DA061C",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_256_s2.onnx",
+      "packaged_sha256": "D84A5BEF39914F7C0840FAAB92659B7C058D8C5D6CB6B682123F67A49FA4BF71",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_256_s2.onnx",
+      "source_sha256": "D84A5BEF39914F7C0840FAAB92659B7C058D8C5D6CB6B682123F67A49FA4BF71",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_256_s3.onnx",
+      "packaged_sha256": "9534661BCA12483839DCFE4A9FFC88EFB9805D96EC3415F1FE512A8450ABD6EA",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_256_s3.onnx",
+      "source_sha256": "9534661BCA12483839DCFE4A9FFC88EFB9805D96EC3415F1FE512A8450ABD6EA",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s1.onnx",
+      "packaged_sha256": "15516AC9375E70AAF2DE4DF01DA1F53DC6E5ECC065EEC66E3031B6A2EF61495B",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s1.onnx",
+      "source_sha256": "15516AC9375E70AAF2DE4DF01DA1F53DC6E5ECC065EEC66E3031B6A2EF61495B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s1.pt",
+      "packaged_sha256": "0BED1261BA71665D7745EE2384F358D95A550CD2D3182F3F9E5F73486887601A",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s1.pt",
+      "source_sha256": "0BED1261BA71665D7745EE2384F358D95A550CD2D3182F3F9E5F73486887601A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s123.onnx",
+      "packaged_sha256": "C0639474C7D4D658DDB25658B89DD48CE6A80E4A607975B533AB0AE25F994F87",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s123.onnx",
+      "source_sha256": "C0639474C7D4D658DDB25658B89DD48CE6A80E4A607975B533AB0AE25F994F87",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s2.onnx",
+      "packaged_sha256": "FE6591DA16678126E026EE56A4915B8A168825C2443A8F2667E076E6BAA4C327",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s2.onnx",
+      "source_sha256": "FE6591DA16678126E026EE56A4915B8A168825C2443A8F2667E076E6BAA4C327",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s2.pt",
+      "packaged_sha256": "130369DD93E414CD3717B8B2E77AA9DA4CE890BE31160AEECB9CA9157475A89D",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s2.pt",
+      "source_sha256": "130369DD93E414CD3717B8B2E77AA9DA4CE890BE31160AEECB9CA9157475A89D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s3.onnx",
+      "packaged_sha256": "A23961574ECD32AE4DF4D47364DBFFAC3222308EE8B0C57B1FA5C1838F5F598B",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s3.onnx",
+      "source_sha256": "A23961574ECD32AE4DF4D47364DBFFAC3222308EE8B0C57B1FA5C1838F5F598B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s3.pt",
+      "packaged_sha256": "224C4623044BD1AFD87C9549A3F3C8E3D94047B5D725380AA7A0F9F4AF7E45E6",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s3.pt",
+      "source_sha256": "224C4623044BD1AFD87C9549A3F3C8E3D94047B5D725380AA7A0F9F4AF7E45E6",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s42.onnx",
+      "packaged_sha256": "F3D1FEB485A146CC85C6F0C4EB4612FF8124C233D1C261903FC9010B3CBA64A1",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s42.onnx",
+      "source_sha256": "F3D1FEB485A146CC85C6F0C4EB4612FF8124C233D1C261903FC9010B3CBA64A1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Si3N4_s456.onnx",
+      "packaged_sha256": "13B25E9361867BDDE077741A022413F2A27AC0522CAE1CCBF4DAD8607A0F6CA8",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Si3N4_s456.onnx",
+      "source_sha256": "13B25E9361867BDDE077741A022413F2A27AC0522CAE1CCBF4DAD8607A0F6CA8",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s1.onnx",
+      "packaged_sha256": "BB69F4282E23862CAEE0FA8A46AB5639E9458970DCDFD6711A3898F4EB04D5CB",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s1.onnx",
+      "source_sha256": "BB69F4282E23862CAEE0FA8A46AB5639E9458970DCDFD6711A3898F4EB04D5CB",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s1.pt",
+      "packaged_sha256": "7EDA9045131380CFEDA91E51B6B22BFFD8B567748A86C19E2215490F755316AE",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s1.pt",
+      "source_sha256": "7EDA9045131380CFEDA91E51B6B22BFFD8B567748A86C19E2215490F755316AE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s2.onnx",
+      "packaged_sha256": "F37D5C2373D1A463310BE961215D81E0D44A0E41DD3B5E3307A18361B2920C02",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s2.onnx",
+      "source_sha256": "F37D5C2373D1A463310BE961215D81E0D44A0E41DD3B5E3307A18361B2920C02",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s2.pt",
+      "packaged_sha256": "F2E4CEE81753E60B5F7CE8C74BC78B2C4DC431A6D0504FD61873CB49F83BA022",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s2.pt",
+      "source_sha256": "F2E4CEE81753E60B5F7CE8C74BC78B2C4DC431A6D0504FD61873CB49F83BA022",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s3.onnx",
+      "packaged_sha256": "45A216387D06F72BE6C9CE955F6C364F184A84AEC9FE69D1778B28A78967857D",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s3.onnx",
+      "source_sha256": "45A216387D06F72BE6C9CE955F6C364F184A84AEC9FE69D1778B28A78967857D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_Ta2O5_s3.pt",
+      "packaged_sha256": "7FCCFA659EB5D0DCF2D340ADD5D811B8F5D4DF44AE98E82DA1A468954C39FC77",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_Ta2O5_s3.pt",
+      "source_sha256": "7FCCFA659EB5D0DCF2D340ADD5D811B8F5D4DF44AE98E82DA1A468954C39FC77",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s1.onnx",
+      "packaged_sha256": "89BC2B37185B887E546DDDEA49F2C0143955831410E2A871CD2B1462DC0CD5B7",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s1.onnx",
+      "source_sha256": "89BC2B37185B887E546DDDEA49F2C0143955831410E2A871CD2B1462DC0CD5B7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s1.pt",
+      "packaged_sha256": "DB9195D2252D75072CC363F15F7C8997D728DB33750A85262E4480E851BC193A",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s1.pt",
+      "source_sha256": "DB9195D2252D75072CC363F15F7C8997D728DB33750A85262E4480E851BC193A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s2.onnx",
+      "packaged_sha256": "87E9390D22D854CF42565960259696C4E9EB3D2DEDEA50A9E05B2F90850BFC82",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s2.onnx",
+      "source_sha256": "87E9390D22D854CF42565960259696C4E9EB3D2DEDEA50A9E05B2F90850BFC82",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s2.pt",
+      "packaged_sha256": "DC859658AE1EEC51BF9E8C9CBDFB838A5A0BE03A0D2DCCCD84F18DD2B4996B46",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s2.pt",
+      "source_sha256": "DC859658AE1EEC51BF9E8C9CBDFB838A5A0BE03A0D2DCCCD84F18DD2B4996B46",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s3.onnx",
+      "packaged_sha256": "8D8A25FA10C16BFBA7E9A4762FE69BC06A2F279F7CFB352A36853C8FE9C2E605",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s3.onnx",
+      "source_sha256": "8D8A25FA10C16BFBA7E9A4762FE69BC06A2F279F7CFB352A36853C8FE9C2E605",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_TiO2_s3.pt",
+      "packaged_sha256": "F485EA17B75CA75A8046E226867AF95016D93B22840D66C1510113A02213D11B",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_TiO2_s3.pt",
+      "source_sha256": "F485EA17B75CA75A8046E226867AF95016D93B22840D66C1510113A02213D11B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_256_s1.onnx",
+      "packaged_sha256": "1E60D50D0F2FBF081960D352B6DAD8723DB53A397682D880B7C64249C42581B8",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_256_s1.onnx",
+      "source_sha256": "1E60D50D0F2FBF081960D352B6DAD8723DB53A397682D880B7C64249C42581B8",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_256_s2.onnx",
+      "packaged_sha256": "2D996A3F2CFBA6189A92ED2AC6702CCDF311CD81181A31E0556A90C4AD606FCB",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_256_s2.onnx",
+      "source_sha256": "2D996A3F2CFBA6189A92ED2AC6702CCDF311CD81181A31E0556A90C4AD606FCB",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_256_s3.onnx",
+      "packaged_sha256": "B3311875591D0EE704852DB230ADC258F48DF1E9E1C6FF0B99E9C735646AA265",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_256_s3.onnx",
+      "source_sha256": "B3311875591D0EE704852DB230ADC258F48DF1E9E1C6FF0B99E9C735646AA265",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Al2O3_s1.onnx",
+      "packaged_sha256": "C2906201A81C7ACE16722004E9D8C3B91E7753DDE5015CF2139419A02B1CE04D",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Al2O3_s1.onnx",
+      "source_sha256": "C2906201A81C7ACE16722004E9D8C3B91E7753DDE5015CF2139419A02B1CE04D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Al2O3_s2.onnx",
+      "packaged_sha256": "80CFC150A6B8EDC9FA6C69D7CDD370B857BB792323EEFB367540F1EFBE97ED27",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Al2O3_s2.onnx",
+      "source_sha256": "80CFC150A6B8EDC9FA6C69D7CDD370B857BB792323EEFB367540F1EFBE97ED27",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Al2O3_s3.onnx",
+      "packaged_sha256": "F235D0FD93276DB5BF2D733BD5EFBDD8E0EFEC269C7A70B90D61446AC46B9CC1",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Al2O3_s3.onnx",
+      "source_sha256": "F235D0FD93276DB5BF2D733BD5EFBDD8E0EFEC269C7A70B90D61446AC46B9CC1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s123.onnx",
+      "packaged_sha256": "C1637EC493670B291951F725DF724B10FBD63FDEE92186C8862BEA81372E7D7C",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s123.onnx",
+      "source_sha256": "C1637EC493670B291951F725DF724B10FBD63FDEE92186C8862BEA81372E7D7C",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s123.pt",
+      "packaged_sha256": "8D43C5B967AEB9C3BB2B894A94D4188A8522853E899E122912A305534B79C95C",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s123.pt",
+      "source_sha256": "8D43C5B967AEB9C3BB2B894A94D4188A8522853E899E122912A305534B79C95C",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s42.onnx",
+      "packaged_sha256": "7396BDD29B91A4E17474D0033A9B3569276AA3A913BB535F093BFD393AD72607",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s42.onnx",
+      "source_sha256": "7396BDD29B91A4E17474D0033A9B3569276AA3A913BB535F093BFD393AD72607",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s42.pt",
+      "packaged_sha256": "413008719695DC82063EEB81AF8D3DFCD930A1971FCAD9A5FFDDB00F59897514",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s42.pt",
+      "source_sha256": "413008719695DC82063EEB81AF8D3DFCD930A1971FCAD9A5FFDDB00F59897514",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s456.onnx",
+      "packaged_sha256": "45BC16309025115879BC08E1041B297AA4366B185685D9A679288C982188A0B6",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s456.onnx",
+      "source_sha256": "45BC16309025115879BC08E1041B297AA4366B185685D9A679288C982188A0B6",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_PS_s456.pt",
+      "packaged_sha256": "BBC5EA544D531AB6821B1FB8D1B777A7E0D5DCCB8140E8EE2B960DDBC954D6E0",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_PS_s456.pt",
+      "source_sha256": "BBC5EA544D531AB6821B1FB8D1B777A7E0D5DCCB8140E8EE2B960DDBC954D6E0",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Si3N4_s1.onnx",
+      "packaged_sha256": "06EB2F4CAB47714D940E0A259FA28F0D2D55BFE2C08735E4628868FD4F45137A",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Si3N4_s1.onnx",
+      "source_sha256": "06EB2F4CAB47714D940E0A259FA28F0D2D55BFE2C08735E4628868FD4F45137A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Si3N4_s2.onnx",
+      "packaged_sha256": "BA9A06FA56211765F25470F975353EFE41A1167F35CF95DD5CCC409A060D14B9",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Si3N4_s2.onnx",
+      "source_sha256": "BA9A06FA56211765F25470F975353EFE41A1167F35CF95DD5CCC409A060D14B9",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_Si3N4_s3.onnx",
+      "packaged_sha256": "FCB19A25325D6BC266A3EAAC16A2C29079670F4A069630F8AE5B3AA7C4FD51BC",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_Si3N4_s3.onnx",
+      "source_sha256": "FCB19A25325D6BC266A3EAAC16A2C29079670F4A069630F8AE5B3AA7C4FD51BC",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_k_s1.onnx",
+      "packaged_sha256": "5E89F2814078A5E9343864BAE9BFDA4D1886659E138C970CABB242C051C65F77",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_k_s1.onnx",
+      "source_sha256": "5E89F2814078A5E9343864BAE9BFDA4D1886659E138C970CABB242C051C65F77",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_k_s2.onnx",
+      "packaged_sha256": "F81367F5A6FA2F4C732A67D822F8FFAB8D47584FD18CF72421D2DF613436E497",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_k_s2.onnx",
+      "source_sha256": "F81367F5A6FA2F4C732A67D822F8FFAB8D47584FD18CF72421D2DF613436E497",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_k_s3.onnx",
+      "packaged_sha256": "707DA25C4FBEBD053733735EC7A6E2FE0254B8ADAE2AD6BA13C5143BBF70B5B1",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_k_s3.onnx",
+      "source_sha256": "707DA25C4FBEBD053733735EC7A6E2FE0254B8ADAE2AD6BA13C5143BBF70B5B1",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s1.onnx",
+      "packaged_sha256": "58DF37B7C89240D681FB25CCCB5A5537D32483029B0020084722D645F5672560",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s1.onnx",
+      "source_sha256": "58DF37B7C89240D681FB25CCCB5A5537D32483029B0020084722D645F5672560",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s123.onnx",
+      "packaged_sha256": "EF4460AD193D6F7A64D48317DBBF1B88739C5FDFBEBCC9E253C376D517443C8D",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s123.onnx",
+      "source_sha256": "EF4460AD193D6F7A64D48317DBBF1B88739C5FDFBEBCC9E253C376D517443C8D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s2.onnx",
+      "packaged_sha256": "A7760D917012FC9C51B1F6AB1E5B99A37A3BA4F83EF540B57B25A000CC9AA205",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s2.onnx",
+      "source_sha256": "A7760D917012FC9C51B1F6AB1E5B99A37A3BA4F83EF540B57B25A000CC9AA205",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s3.onnx",
+      "packaged_sha256": "3442410EA332418F60D395FFBE7AA66EECFE6C2E305B5128E6CF0F0685219E93",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s3.onnx",
+      "source_sha256": "3442410EA332418F60D395FFBE7AA66EECFE6C2E305B5128E6CF0F0685219E93",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s42.onnx",
+      "packaged_sha256": "575345392E80CA01BD529F2FB48EC3907876A3B468BB934A15A96D2242F2284A",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s42.onnx",
+      "source_sha256": "575345392E80CA01BD529F2FB48EC3907876A3B468BB934A15A96D2242F2284A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_rcwa_aSi_s456.onnx",
+      "packaged_sha256": "2B84B84C46E1250CF7728A476B15A9E91AE4A98BD6A6BA7E78D3429AE94F7DC3",
+      "kind": "direct",
+      "source": "models/forward_mlp_rcwa_aSi_s456.onnx",
+      "source_sha256": "2B84B84C46E1250CF7728A476B15A9E91AE4A98BD6A6BA7E78D3429AE94F7DC3",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_v8_sub.onnx",
+      "packaged_sha256": "DDF41CFE8CBDBAB2DBB669AB6C39C10FFFE7B8FAB3126CDC13BEE6A6A6A9AEDE",
+      "kind": "direct",
+      "source": "models/forward_mlp_v8_sub.onnx",
+      "source_sha256": "DDF41CFE8CBDBAB2DBB669AB6C39C10FFFE7B8FAB3126CDC13BEE6A6A6A9AEDE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_v8_sub.onnx.data",
+      "packaged_sha256": "F9572FE9D39D0DB6FABDA60A0E8BB5EEF808972B2786BBAC08610CA1EE0E39A4",
+      "kind": "direct",
+      "source": "models/forward_mlp_v8_sub.onnx.data",
+      "source_sha256": "F9572FE9D39D0DB6FABDA60A0E8BB5EEF808972B2786BBAC08610CA1EE0E39A4",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/forward_mlp_v8_sub.pt",
+      "packaged_sha256": "01FB06258DD941A01F8ADAC71101B998376821CE8600D1A0745D21E7DFA5FD47",
+      "kind": "direct",
+      "source": "models/forward_mlp_v8_sub.pt",
+      "source_sha256": "01FB06258DD941A01F8ADAC71101B998376821CE8600D1A0745D21E7DFA5FD47",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/rl_qtable.npy",
+      "packaged_sha256": "DBB6375742E1322AEC92028664CB7513A5B76DFC70EB6497FF493138900D1C39",
+      "kind": "direct",
+      "source": "models/rl_qtable.npy",
+      "source_sha256": "DBB6375742E1322AEC92028664CB7513A5B76DFC70EB6497FF493138900D1C39",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/models/rl_qtable_meta.npy",
+      "packaged_sha256": "D13BAB448A58CFFF3FB7336525998915B7CDE741811292A048F4F925E89EDB8F",
+      "kind": "direct",
+      "source": "models/rl_qtable_meta.npy",
+      "source_sha256": "D13BAB448A58CFFF3FB7336525998915B7CDE741811292A048F4F925E89EDB8F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/protocols/forward_mlp_v8_sub_conversion_v1.json",
+      "packaged_sha256": "5C3D964B767F37E6C4730B319EA4112352F42197966B977F43EC4D2FD77E3143",
+      "kind": "direct",
+      "source": "protocols/forward_mlp_v8_sub_conversion_v1.json",
+      "source_sha256": "5C3D964B767F37E6C4730B319EA4112352F42197966B977F43EC4D2FD77E3143",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/requirements-offline.txt",
+      "packaged_sha256": "C7303B063437F87B06339E6657746D6FC02D09DE6A4E86CA8BAEB8CC863C9ECE",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:runtime/requirements-offline.txt",
+      "source_sha256": "C7303B063437F87B06339E6657746D6FC02D09DE6A4E86CA8BAEB8CC863C9ECE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/requirements-web.txt",
+      "packaged_sha256": "4521DF50AC35D9E69DEBA8AA3BE24D9257DE19D81DCEA882E91C922311E0F6A0",
+      "kind": "direct",
+      "source": "requirements-web.txt",
+      "source_sha256": "4521DF50AC35D9E69DEBA8AA3BE24D9257DE19D81DCEA882E91C922311E0F6A0",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/rl_design.py",
+      "packaged_sha256": "4E8197AE040E1D88CB8D73D93A688B7DC249C390ADB0739B027130A5A812635C",
+      "kind": "direct",
+      "source": "rl_design.py",
+      "source_sha256": "4E8197AE040E1D88CB8D73D93A688B7DC249C390ADB0739B027130A5A812635C",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/scripts/audit_forward_mlp_v8_sub_conversion.py",
+      "packaged_sha256": "AC1302131EA10919175B3131A981DD544A957F14E4DA03890A9DE1C6494B1CFD",
+      "kind": "direct",
+      "source": "scripts/audit_forward_mlp_v8_sub_conversion.py",
+      "source_sha256": "AC1302131EA10919175B3131A981DD544A957F14E4DA03890A9DE1C6494B1CFD",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/scripts/audit_offline_app_flows.py",
+      "packaged_sha256": "78D7C2F48A57E70FD8B6D9DD56686BE552320881FE329736E411A4F7A67CB490",
+      "kind": "direct",
+      "source": "scripts/audit_offline_app_flows.py",
+      "source_sha256": "78D7C2F48A57E70FD8B6D9DD56686BE552320881FE329736E411A4F7A67CB490",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/scripts/audit_offline_feature_runtime.py",
+      "packaged_sha256": "9BCE2A3003B059C365645099F2AD4AC0189DDB61F1FD4893FED3C044DD6B72F7",
+      "kind": "direct",
+      "source": "scripts/audit_offline_feature_runtime.py",
+      "source_sha256": "9BCE2A3003B059C365645099F2AD4AC0189DDB61F1FD4893FED3C044DD6B72F7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/torch_model.py",
+      "packaged_sha256": "61AB515736E949D56D460A462EE8725865281B36EEEF71474A17CB92CE232323",
+      "kind": "direct",
+      "source": "torch_model.py",
+      "source_sha256": "61AB515736E949D56D460A462EE8725865281B36EEEF71474A17CB92CE232323",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_analysis_snapshots.py",
+      "packaged_sha256": "7A7989D0A0CADCAB1EC27207656EEED2132C4FF2698DFE99534FBA344D780133",
+      "kind": "direct",
+      "source": "ui_analysis_snapshots.py",
+      "source_sha256": "7A7989D0A0CADCAB1EC27207656EEED2132C4FF2698DFE99534FBA344D780133",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_benchmark_contracts.py",
+      "packaged_sha256": "36846572846354A52D5EC3ACD1C637DD6CD39FAE181C888C3AD8FBFDAB738FA0",
+      "kind": "direct",
+      "source": "ui_benchmark_contracts.py",
+      "source_sha256": "36846572846354A52D5EC3ACD1C637DD6CD39FAE181C888C3AD8FBFDAB738FA0",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_cie_contracts.py",
+      "packaged_sha256": "40F4D9349B218E9D7B3613A91EC1B78C05F8C8A8EE88136420AAC575D924967C",
+      "kind": "direct",
+      "source": "ui_cie_contracts.py",
+      "source_sha256": "40F4D9349B218E9D7B3613A91EC1B78C05F8C8A8EE88136420AAC575D924967C",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_engine_session.py",
+      "packaged_sha256": "14B36BF3A739510054F077CE4EC37FF6094FCA52DAD7BA5F4216974AEA4AA0B7",
+      "kind": "direct",
+      "source": "ui_engine_session.py",
+      "source_sha256": "14B36BF3A739510054F077CE4EC37FF6094FCA52DAD7BA5F4216974AEA4AA0B7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_fdtd_asset.py",
+      "packaged_sha256": "E6FE846A9B71A365C74DD896B497006E14290A54B1AD6BC8B4CA48A4A0278FA7",
+      "kind": "direct",
+      "source": "ui_fdtd_asset.py",
+      "source_sha256": "E6FE846A9B71A365C74DD896B497006E14290A54B1AD6BC8B4CA48A4A0278FA7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_forward_routes.py",
+      "packaged_sha256": "436B396A644C066D99B001154986F7B8DB51FA717479B4E71EDFAD77D5C4A356",
+      "kind": "direct",
+      "source": "ui_forward_routes.py",
+      "source_sha256": "436B396A644C066D99B001154986F7B8DB51FA717479B4E71EDFAD77D5C4A356",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_inverse_contracts.py",
+      "packaged_sha256": "7360A33F2B03B22B0E9E0E36B2783CE361E9351AC95C40BBF2A7E8233C33CEDE",
+      "kind": "direct",
+      "source": "ui_inverse_contracts.py",
+      "source_sha256": "7360A33F2B03B22B0E9E0E36B2783CE361E9351AC95C40BBF2A7E8233C33CEDE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_model_difference_contracts.py",
+      "packaged_sha256": "8CC31A6D52ECDF421C7DDE9F6FC9C947FF5D22A8513635D2A0456A59E24F0D8F",
+      "kind": "direct",
+      "source": "ui_model_difference_contracts.py",
+      "source_sha256": "8CC31A6D52ECDF421C7DDE9F6FC9C947FF5D22A8513635D2A0456A59E24F0D8F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_model_resources.py",
+      "packaged_sha256": "DFAB11FA5487EAB66A8B6D0F4F966DA6425E1B6281B29DA619E14CEC6CA17644",
+      "kind": "direct",
+      "source": "ui_model_resources.py",
+      "source_sha256": "DFAB11FA5487EAB66A8B6D0F4F966DA6425E1B6281B29DA619E14CEC6CA17644",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_pattern_contracts.py",
+      "packaged_sha256": "5FB0043E30B4F69FB2CF7E2C74222199ED9A905B3A9843766FE1B4055F792094",
+      "kind": "direct",
+      "source": "ui_pattern_contracts.py",
+      "source_sha256": "5FB0043E30B4F69FB2CF7E2C74222199ED9A905B3A9843766FE1B4055F792094",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/runtime/ui_session_migration.py",
+      "packaged_sha256": "50DA9F4BE6611ED63440022EEAA6751A81A9EC21A1A595BD56483A1075A6CC33",
+      "kind": "direct",
+      "source": "ui_session_migration.py",
+      "source_sha256": "50DA9F4BE6611ED63440022EEAA6751A81A9EC21A1A595BD56483A1075A6CC33",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/architecture.png",
+      "packaged_sha256": "78169E8559C7DD360337204864BFDCEB7C55284ACE83C5E9D796A88A99902797",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/architecture.png",
+      "source_sha256": "78169E8559C7DD360337204864BFDCEB7C55284ACE83C5E9D796A88A99902797",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/cie-chart.png",
+      "packaged_sha256": "AD19BF0BFAF5A9C04DC11B787BE1C4922358CC36E1A5878127257E0FFA044769",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/cie-chart.png",
+      "source_sha256": "AD19BF0BFAF5A9C04DC11B787BE1C4922358CC36E1A5878127257E0FFA044769",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/deployment.png",
+      "packaged_sha256": "C66EA51B3FB2D72F9DF832659321EEBE811E52E463588713C546E3984781C9A2",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/deployment.png",
+      "source_sha256": "C66EA51B3FB2D72F9DF832659321EEBE811E52E463588713C546E3984781C9A2",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/fano_vs_fdtd_smallD.png",
+      "packaged_sha256": "7926A398859FAFAC594CBAAFAF801BE2A778BAA88344BEF013B3757108DC54F6",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/fano_vs_fdtd_smallD.png",
+      "source_sha256": "7926A398859FAFAC594CBAAFAF801BE2A778BAA88344BEF013B3757108DC54F6",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/fdtd-comparison.png",
+      "packaged_sha256": "ACCE92A6A9A6C2DED349360AC0BACF8D84D5928F958E847C34C9FE8A570B277F",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/fdtd-comparison.png",
+      "source_sha256": "ACCE92A6A9A6C2DED349360AC0BACF8D84D5928F958E847C34C9FE8A570B277F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/fdtd_preview_P200.png",
+      "packaged_sha256": "A2BF49CECDFC8F004F8330D4F3542D4761B804F8B5488AF1120F49303726DEFE",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/fdtd_preview_P200.png",
+      "source_sha256": "A2BF49CECDFC8F004F8330D4F3542D4761B804F8B5488AF1120F49303726DEFE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/fdtd_preview_P300.png",
+      "packaged_sha256": "D17474B49D782382F74EEFE67F27C3D9EEF45E7AB15347F093C7D4251D59AAFA",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/fdtd_preview_P300.png",
+      "source_sha256": "D17474B49D782382F74EEFE67F27C3D9EEF45E7AB15347F093C7D4251D59AAFA",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/ml-model.png",
+      "packaged_sha256": "264C7A8BFCA20A4F79CC76899C5112BF417D78A4290A0766971757F2E63A2243",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/ml-model.png",
+      "source_sha256": "264C7A8BFCA20A4F79CC76899C5112BF417D78A4290A0766971757F2E63A2243",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/performance-chart.png",
+      "packaged_sha256": "2F0716F9D866F27B70AD8DBD3E65E657E0A40F1F524FFC061F9CFDF077D8F8AF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/performance-chart.png",
+      "source_sha256": "2F0716F9D866F27B70AD8DBD3E65E657E0A40F1F524FFC061F9CFDF077D8F8AF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/qr-code.png",
+      "packaged_sha256": "717C66CFA5587A9C2E92F321106D83CF56215B7A9C918F23FC3120FD89012E3F",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/qr-code.png",
+      "source_sha256": "717C66CFA5587A9C2E92F321106D83CF56215B7A9C918F23FC3120FD89012E3F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_10_img_27.png",
+      "packaged_sha256": "209CF4923F000F330764D2C297CE825C9508E13FC747162EF6631E23E0135336",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_10_img_27.png",
+      "source_sha256": "209CF4923F000F330764D2C297CE825C9508E13FC747162EF6631E23E0135336",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_11_img_28.png",
+      "packaged_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_11_img_28.png",
+      "source_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_11_img_29.png",
+      "packaged_sha256": "6B8871E614C2CC2938539F9FBD6E66A9ED6B25ECB01F851BFE2BE952202F21FF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_11_img_29.png",
+      "source_sha256": "6B8871E614C2CC2938539F9FBD6E66A9ED6B25ECB01F851BFE2BE952202F21FF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_30.png",
+      "packaged_sha256": "7AB877FEB1905F112B16DC1864EF875E022627784DE72E550E11D95624EF1209",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_30.png",
+      "source_sha256": "7AB877FEB1905F112B16DC1864EF875E022627784DE72E550E11D95624EF1209",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_31.png",
+      "packaged_sha256": "51E764F6313F6E7CEDE8D7A26695869E6526E3837E87B69DEE78B40E34ED8D87",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_31.png",
+      "source_sha256": "51E764F6313F6E7CEDE8D7A26695869E6526E3837E87B69DEE78B40E34ED8D87",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_32.png",
+      "packaged_sha256": "1DB628FAEAB4B4DA822A25BDD894F2CE086DF97A5C88BCA55AF0357CBA93518B",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_32.png",
+      "source_sha256": "1DB628FAEAB4B4DA822A25BDD894F2CE086DF97A5C88BCA55AF0357CBA93518B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_33.png",
+      "packaged_sha256": "8154E644D5EDB3B20A964DA856B8E8A5C6A6A6521C2D753F89B3C721F585F355",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_33.png",
+      "source_sha256": "8154E644D5EDB3B20A964DA856B8E8A5C6A6A6521C2D753F89B3C721F585F355",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_34.png",
+      "packaged_sha256": "A79A17E739A27AC69D3859DD113B22C03076EFA8B1B43F1BCCF8AA48D5F3FDCD",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_34.png",
+      "source_sha256": "A79A17E739A27AC69D3859DD113B22C03076EFA8B1B43F1BCCF8AA48D5F3FDCD",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_12_img_35.png",
+      "packaged_sha256": "8EDB4656A60B5484211BE2D1B747CA497E7E1F4A3EA0ABD423C9CCF7EE5203D4",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_12_img_35.png",
+      "source_sha256": "8EDB4656A60B5484211BE2D1B747CA497E7E1F4A3EA0ABD423C9CCF7EE5203D4",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_13_img_36.png",
+      "packaged_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_13_img_36.png",
+      "source_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_13_img_37.png",
+      "packaged_sha256": "2F0716F9D866F27B70AD8DBD3E65E657E0A40F1F524FFC061F9CFDF077D8F8AF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_13_img_37.png",
+      "source_sha256": "2F0716F9D866F27B70AD8DBD3E65E657E0A40F1F524FFC061F9CFDF077D8F8AF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_14_img_38.png",
+      "packaged_sha256": "7E6384EBA4565FB27FB101A6EBAE7CEAD291C8FF3AE2A8816D532FB36AC8C677",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_14_img_38.png",
+      "source_sha256": "7E6384EBA4565FB27FB101A6EBAE7CEAD291C8FF3AE2A8816D532FB36AC8C677",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_14_img_39.png",
+      "packaged_sha256": "7BA9188D27AF846853E78268DE649F36460D40E64F0E2458BADC1EA140369952",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_14_img_39.png",
+      "source_sha256": "7BA9188D27AF846853E78268DE649F36460D40E64F0E2458BADC1EA140369952",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_14_img_40.png",
+      "packaged_sha256": "ACCE92A6A9A6C2DED349360AC0BACF8D84D5928F958E847C34C9FE8A570B277F",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_14_img_40.png",
+      "source_sha256": "ACCE92A6A9A6C2DED349360AC0BACF8D84D5928F958E847C34C9FE8A570B277F",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_15_img_41.png",
+      "packaged_sha256": "CC0C8E7303157E39C0EEEE6BAC532FB86262CEDB210760DD842704FD0692ECCF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_15_img_41.png",
+      "source_sha256": "CC0C8E7303157E39C0EEEE6BAC532FB86262CEDB210760DD842704FD0692ECCF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_15_img_42.png",
+      "packaged_sha256": "AD19BF0BFAF5A9C04DC11B787BE1C4922358CC36E1A5878127257E0FFA044769",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_15_img_42.png",
+      "source_sha256": "AD19BF0BFAF5A9C04DC11B787BE1C4922358CC36E1A5878127257E0FFA044769",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_16_img_43.png",
+      "packaged_sha256": "97F026BC1C33B1DB36AD11F55BB1495DD0302171D2DBFC14A8C9F307C35EAFA9",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_16_img_43.png",
+      "source_sha256": "97F026BC1C33B1DB36AD11F55BB1495DD0302171D2DBFC14A8C9F307C35EAFA9",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_16_img_44.png",
+      "packaged_sha256": "C66EA51B3FB2D72F9DF832659321EEBE811E52E463588713C546E3984781C9A2",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_16_img_44.png",
+      "source_sha256": "C66EA51B3FB2D72F9DF832659321EEBE811E52E463588713C546E3984781C9A2",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_16_img_45.png",
+      "packaged_sha256": "123061B0223C689542EAC62BAF5C3A4E463C47D8F98D52BBE4ABD0B4A468A312",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_16_img_45.png",
+      "source_sha256": "123061B0223C689542EAC62BAF5C3A4E463C47D8F98D52BBE4ABD0B4A468A312",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_18_img_46.png",
+      "packaged_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_18_img_46.png",
+      "source_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_18_img_47.png",
+      "packaged_sha256": "E54D1E311B4660D6E4E67AA57DAF12894133572CE711E63D6539D0F81A58DAFB",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_18_img_47.png",
+      "source_sha256": "E54D1E311B4660D6E4E67AA57DAF12894133572CE711E63D6539D0F81A58DAFB",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_18_img_48.jpg",
+      "packaged_sha256": "C888AC45E6D04FE994F606431BFBE22EBCFE2A02F19965F348BA1E65852E753E",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_18_img_48.jpg",
+      "source_sha256": "C888AC45E6D04FE994F606431BFBE22EBCFE2A02F19965F348BA1E65852E753E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_18_img_49.png",
+      "packaged_sha256": "8A5326923EE64F8EDB17B4F52AFE95FC9C336454289D457372333CEC27FF3703",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_18_img_49.png",
+      "source_sha256": "8A5326923EE64F8EDB17B4F52AFE95FC9C336454289D457372333CEC27FF3703",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_19_img_50.png",
+      "packaged_sha256": "59402E4E9A0880CA496206DB482F3F8E7CD59A02145751B542CF9CBFCEE22263",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_19_img_50.png",
+      "source_sha256": "59402E4E9A0880CA496206DB482F3F8E7CD59A02145751B542CF9CBFCEE22263",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_19_img_51.png",
+      "packaged_sha256": "123061B0223C689542EAC62BAF5C3A4E463C47D8F98D52BBE4ABD0B4A468A312",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_19_img_51.png",
+      "source_sha256": "123061B0223C689542EAC62BAF5C3A4E463C47D8F98D52BBE4ABD0B4A468A312",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_1_img_0.png",
+      "packaged_sha256": "F1E9FF75A4875AEEA9B053C1EE89E687EA7CF54A6E80A75D3A1F6970EC600266",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_1_img_0.png",
+      "source_sha256": "F1E9FF75A4875AEEA9B053C1EE89E687EA7CF54A6E80A75D3A1F6970EC600266",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_1_img_1.png",
+      "packaged_sha256": "7253D9CCBACE140373143BBB9A8101E122B0AEFB093C402244DC6E5A2AD9C7A8",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_1_img_1.png",
+      "source_sha256": "7253D9CCBACE140373143BBB9A8101E122B0AEFB093C402244DC6E5A2AD9C7A8",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_1_img_2.png",
+      "packaged_sha256": "2A4B7A97C1CB4924CC31BDE01A22C7B516B0F271D6CEF9C6711BC1513DECEC6B",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_1_img_2.png",
+      "source_sha256": "2A4B7A97C1CB4924CC31BDE01A22C7B516B0F271D6CEF9C6711BC1513DECEC6B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_2_img_3.png",
+      "packaged_sha256": "67AB691ACA2FAD67E39A4F97E07A8EC8218FF874C962C17A32AB78EB8BBA8239",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_2_img_3.png",
+      "source_sha256": "67AB691ACA2FAD67E39A4F97E07A8EC8218FF874C962C17A32AB78EB8BBA8239",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_2_img_4.png",
+      "packaged_sha256": "CBCC96457EAC752F9FB52ACC742C6D41A6E753FFBAF1B5C4DF25E69D0BB5E793",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_2_img_4.png",
+      "source_sha256": "CBCC96457EAC752F9FB52ACC742C6D41A6E753FFBAF1B5C4DF25E69D0BB5E793",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_2_img_5.png",
+      "packaged_sha256": "FF8262553AC3B5DDFFC095FACA50CDBA3152DF15138C3BC309E4294796E08133",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_2_img_5.png",
+      "source_sha256": "FF8262553AC3B5DDFFC095FACA50CDBA3152DF15138C3BC309E4294796E08133",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_2_img_6.png",
+      "packaged_sha256": "EAA32C41F33AEE10A5B0A894259179F857DE481DF1A362E5304C2B8B6029FF6A",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_2_img_6.png",
+      "source_sha256": "EAA32C41F33AEE10A5B0A894259179F857DE481DF1A362E5304C2B8B6029FF6A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_2_img_7.png",
+      "packaged_sha256": "DEC4D83853EB63FCC9008CE2E36860D8A86B90A7C8A184D59F3F5DA5E0F2B18A",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_2_img_7.png",
+      "source_sha256": "DEC4D83853EB63FCC9008CE2E36860D8A86B90A7C8A184D59F3F5DA5E0F2B18A",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_3_img_10.png",
+      "packaged_sha256": "389737EBF952CBC53A35CA6034245A5E3DD131F59A99A9F02D2C97A263A9F6A7",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_3_img_10.png",
+      "source_sha256": "389737EBF952CBC53A35CA6034245A5E3DD131F59A99A9F02D2C97A263A9F6A7",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_3_img_8.png",
+      "packaged_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_3_img_8.png",
+      "source_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_3_img_9.png",
+      "packaged_sha256": "C35D670899061EF4A3BC354090FB7FB724049B81524744FC20581A4E27557948",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_3_img_9.png",
+      "source_sha256": "C35D670899061EF4A3BC354090FB7FB724049B81524744FC20581A4E27557948",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_4_img_11.png",
+      "packaged_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_4_img_11.png",
+      "source_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_4_img_12.png",
+      "packaged_sha256": "CBB2508A841F4AE784EC981062AE0F216FEBED523F547298214C6F9210838279",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_4_img_12.png",
+      "source_sha256": "CBB2508A841F4AE784EC981062AE0F216FEBED523F547298214C6F9210838279",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_4_img_13.png",
+      "packaged_sha256": "BF92349B4E5DCF47877D5E093AB8B0C51AC6832F690E413D8906CB972F2B972D",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_4_img_13.png",
+      "source_sha256": "BF92349B4E5DCF47877D5E093AB8B0C51AC6832F690E413D8906CB972F2B972D",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_4_img_14.png",
+      "packaged_sha256": "2102BE133A094AD8C38C08CB4585B6F143F92EC2716B6AD528412A94A42DF8D6",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_4_img_14.png",
+      "source_sha256": "2102BE133A094AD8C38C08CB4585B6F143F92EC2716B6AD528412A94A42DF8D6",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_4_img_15.png",
+      "packaged_sha256": "D9D916D2CBAA5F9EF5D8992173CD282A7CF99A63A9F6A6CDE8CBF07F2098EBEE",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_4_img_15.png",
+      "source_sha256": "D9D916D2CBAA5F9EF5D8992173CD282A7CF99A63A9F6A6CDE8CBF07F2098EBEE",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_6_img_16.png",
+      "packaged_sha256": "753616813AC5700C6020D83C84C310A7EE3FAE13709063148D5A0E54E33AF7FF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_6_img_16.png",
+      "source_sha256": "753616813AC5700C6020D83C84C310A7EE3FAE13709063148D5A0E54E33AF7FF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_6_img_17.png",
+      "packaged_sha256": "321AD505290DF526881D95A9CDAAE94A737BB1E92AE22860BF5AF1229D0F6997",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_6_img_17.png",
+      "source_sha256": "321AD505290DF526881D95A9CDAAE94A737BB1E92AE22860BF5AF1229D0F6997",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_6_img_18.png",
+      "packaged_sha256": "78169E8559C7DD360337204864BFDCEB7C55284ACE83C5E9D796A88A99902797",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_6_img_18.png",
+      "source_sha256": "78169E8559C7DD360337204864BFDCEB7C55284ACE83C5E9D796A88A99902797",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_7_img_19.png",
+      "packaged_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_7_img_19.png",
+      "source_sha256": "A6C1DB284B3CAAE1BCAB10F7D7566B9E2F5743FA02A14825071C1F567F52F350",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_7_img_20.png",
+      "packaged_sha256": "FAB4450E8AD0616CF0A499EB59F28B93F2A714E2214DF47B977AE60097F6AF2E",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_7_img_20.png",
+      "source_sha256": "FAB4450E8AD0616CF0A499EB59F28B93F2A714E2214DF47B977AE60097F6AF2E",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_7_img_21.png",
+      "packaged_sha256": "30DBAC36217B26569A304E2A87F8EB87991506FB28105C413422D562F703F223",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_7_img_21.png",
+      "source_sha256": "30DBAC36217B26569A304E2A87F8EB87991506FB28105C413422D562F703F223",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_8_img_22.png",
+      "packaged_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_8_img_22.png",
+      "source_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_8_img_23.png",
+      "packaged_sha256": "A572C2A09FA1EE0CF67BB5CB0749D5E5CBC1DD533AC7A8584A24329A673E244B",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_8_img_23.png",
+      "source_sha256": "A572C2A09FA1EE0CF67BB5CB0749D5E5CBC1DD533AC7A8584A24329A673E244B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_9_img_24.png",
+      "packaged_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_9_img_24.png",
+      "source_sha256": "3878570F4A62A0D65F57CF1754E0269E56EC797F4E36E26B44C172EB6E800401",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_9_img_25.png",
+      "packaged_sha256": "C8E33F5989F7A3C5130DC5ECF7E8BE6EBCACE67E2A1644624A53030B13F15E6B",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_9_img_25.png",
+      "source_sha256": "C8E33F5989F7A3C5130DC5ECF7E8BE6EBCACE67E2A1644624A53030B13F15E6B",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/slide_9_img_26.png",
+      "packaged_sha256": "264C7A8BFCA20A4F79CC76899C5112BF417D78A4290A0766971757F2E63A2243",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/slide_9_img_26.png",
+      "source_sha256": "264C7A8BFCA20A4F79CC76899C5112BF417D78A4290A0766971757F2E63A2243",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/images/system-screenshot.png",
+      "packaged_sha256": "6B8871E614C2CC2938539F9FBD6E66A9ED6B25ECB01F851BFE2BE952202F21FF",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/images/system-screenshot.png",
+      "source_sha256": "6B8871E614C2CC2938539F9FBD6E66A9ED6B25ECB01F851BFE2BE952202F21FF",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/index.html",
+      "packaged_sha256": "BF09A58702BBE195E94883A75D72C8201BC11ACDD0E6008075432AD7B21634F4",
+      "kind": "offline_adapter",
+      "source": "competition/website展示页_校赛副本/index.html",
+      "source_sha256": "BF09A58702BBE195E94883A75D72C8201BC11ACDD0E6008075432AD7B21634F4",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/网站首页_桌面长图.png",
+      "packaged_sha256": "FE5B70F4CC3C560941705EF321D6CC75DC52D7DE08000E04E52F13A87B0AE9C2",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/网站首页_桌面长图.png",
+      "source_sha256": "FE5B70F4CC3C560941705EF321D6CC75DC52D7DE08000E04E52F13A87B0AE9C2",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/showcase/网站首页_首屏.png",
+      "packaged_sha256": "211A3F7C3DC60CED8FAA684B82933202092AB401997757D77CBED3FBDA63CF03",
+      "kind": "direct",
+      "source": "competition/website展示页_校赛副本/网站首页_首屏.png",
+      "source_sha256": "211A3F7C3DC60CED8FAA684B82933202092AB401997757D77CBED3FBDA63CF03",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/start_offline.ps1",
+      "packaged_sha256": "9F4042E3829C1F28FC66BE729B5513E54937569621738658B084362674143F31",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:start_offline.ps1",
+      "source_sha256": "9F4042E3829C1F28FC66BE729B5513E54937569621738658B084362674143F31",
+      "status": "pass"
+    },
+    {
+      "path": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/启动离线演示.bat",
+      "packaged_sha256": "22EF2CB7A52D834F69018A2F20E492CC68FF6B10F2E1D1700B80FB5BC080E138",
+      "kind": "generated",
+      "source": "scripts/build_complete_offline_bundle.py:启动离线演示.bat",
+      "source_sha256": "22EF2CB7A52D834F69018A2F20E492CC68FF6B10F2E1D1700B80FB5BC080E138",
+      "status": "pass"
+    },
+    {
+      "path": "05_演示视频/AI超表面结构色智能设计系统_演示视频_v5.mp4",
+      "packaged_sha256": "9CFEC8CAAC570D6D86BCAEE1BBF0729DC48672FB3E7EB6628518609A7F98B94E",
+      "kind": "direct",
+      "source": "competition/AI超表面结构色智能设计系统_自然旁白_AI配乐_v5.mp4",
+      "source_sha256": "9CFEC8CAAC570D6D86BCAEE1BBF0729DC48672FB3E7EB6628518609A7F98B94E",
+      "status": "pass"
+    },
+    {
+      "path": "05_演示视频/AI超表面结构色智能设计系统_演示视频_v5_验证回执.json",
+      "packaged_sha256": "1631894A5CA6ECCCD65C09357657BACAE1A308250FBF14E92161509BF22E36E3",
+      "kind": "direct",
+      "source": "competition/AI超表面结构色智能设计系统_答辩视频_v5_verification-receipt.json",
+      "source_sha256": "1631894A5CA6ECCCD65C09357657BACAE1A308250FBF14E92161509BF22E36E3",
+      "status": "pass"
+    },
+    {
+      "path": "06_来源与授权/来源与授权说明.md",
+      "packaged_sha256": "D5513505B92461E74CC9ECD628BE40395FBCA9A13E4E88E6CAEC3B210EB16161",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/06_来源与授权/来源与授权说明.md",
+      "source_sha256": "D5513505B92461E74CC9ECD628BE40395FBCA9A13E4E88E6CAEC3B210EB16161",
+      "status": "pass"
+    },
+    {
+      "path": "README_提交包先看.md",
+      "packaged_sha256": "FD315743A09C2DC5F8DCB74B49D722D7EF7AD77BA12D83669865B21476F17DFD",
+      "kind": "direct",
+      "source": "competition/submission_materials_20261010/README_提交包先看.md",
+      "source_sha256": "FD315743A09C2DC5F8DCB74B49D722D7EF7AD77BA12D83669865B21476F17DFD",
+      "status": "pass"
+    }
+  ],
+  "extracted_files": {
+    "files_checked": 208,
+    "mismatches": [],
+    "status": "pass"
+  },
+  "archive": {
+    "path": "C:\\Users\\A\\Desktop\\AI超表面结构色智能设计系统\\dist\\3_算法创新赛_AI+软件创新_404 Not Found队_v31.zip",
+    "status": "pass",
+    "files_verified": 207,
+    "zip_entries": 208,
+    "video_version": "v5",
+    "video_sha256": "9CFEC8CAAC570D6D86BCAEE1BBF0729DC48672FB3E7EB6628518609A7F98B94E",
+    "sha256": "E116F19A708B6343FCDD0C4427BAC311047D13068C7B2DCA81EDBF4C69001A9D"
+  }
+}
