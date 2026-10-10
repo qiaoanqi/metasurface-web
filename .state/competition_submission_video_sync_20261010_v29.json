@@ -1,0 +1,53 @@
+{
+  "schema": "competition-submission-video-sync-v1",
+  "status": "pass",
+  "scope": "local_only",
+  "root_cause": "Submission builder selected v4 although the search-layout correction had already been rendered and verified in v5.",
+  "source_video": {
+    "path": "competition/AI超表面结构色智能设计系统_自然旁白_AI配乐_v5.mp4",
+    "sha256": "9CFEC8CAAC570D6D86BCAEE1BBF0729DC48672FB3E7EB6628518609A7F98B94E",
+    "bytes": 13514980,
+    "receipt": "competition/AI超表面结构色智能设计系统_答辩视频_v5_verification-receipt.json",
+    "receipt_hash_matches": true,
+    "fresh_full_decode_exit_code": 0,
+    "duration_seconds": 263.916667,
+    "frames": 6334,
+    "resolution": [1920, 1080],
+    "fps": 24
+  },
+  "submission": {
+    "archive": "dist/3_算法创新赛_AI+软件创新_404 Not Found队_v29.zip",
+    "sha256": "5329AA196C70930E6F83A35F4E444930814F90ED10EE0B0464A368F1AE36B776",
+    "bytes": 247731412,
+    "files_verified_in_zip": 207,
+    "files_verified_after_extraction": 207,
+    "zip_entries": 208,
+    "video_version": "v5",
+    "old_v4_video_absent": true,
+    "desktop_directory": "C:/Users/A/Desktop/3_算法创新赛_AI+软件创新_404 Not Found队_v29_验收"
+  },
+  "visual_verification": {
+    "seconds": 92.25,
+    "source_frame": ".state/ui_previews/submission_video_v5_search_fresh_20261010.png",
+    "packaged_frame": ".state/ui_previews/submission_v29_embedded_video_search_20261010.png",
+    "frame_sha256": "80FD79435E715B914DCC8B37415852DEEC8912776768D905014D84922EA58FD2",
+    "source_and_packaged_frames_identical": true,
+    "text_grid_overlap": false
+  },
+  "offline_runtime": {
+    "status": "pass",
+    "release_files_verified": 186,
+    "analysis_dependencies_verified": 60,
+    "source_archive_sha256": "8BB89DD28A58FD105E156C39B021C000FCA9014FDA81AB726A54176A290717AE"
+  },
+  "regression_tests": {
+    "command": "python -m pytest tests/test_final_competition_submission.py -q",
+    "passed": 16,
+    "failed": 0
+  },
+  "builder_checkpoint_commit": "a383845",
+  "cloud_changed": false,
+  "github_changed": false,
+  "new_simulation": false,
+  "training": false
+}

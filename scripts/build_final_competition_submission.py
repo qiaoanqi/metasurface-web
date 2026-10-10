@@ -6,8 +6,10 @@ after extracting one archive.  It does not touch cloud or GitHub state.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,9 +19,9 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_SOURCE = ROOT / "dist" / "AI超表面结构色智能设计系统_完整离线包_v1"
 MATERIAL_SOURCE = ROOT / "competition" / "submission_materials_20261010"
-STAGING = ROOT / "dist" / "AI超表面结构色智能设计系统_算法创新赛_AI+软件创新_404 Not Found队_最终提交包_20261010_v26"
-OUTPUT = ROOT / "dist" / "3_算法创新赛_AI+软件创新_404 Not Found队_v26.zip"
-PACKAGE_NAME = STAGING.name
+STAGING = ROOT / "dist" / "AI超表面结构色智能设计系统_算法创新赛_AI+软件创新_404 Not Found队_最终提交包_20261010_v29"
+OUTPUT = ROOT / "dist" / "3_算法创新赛_AI+软件创新_404 Not Found队_v29.zip"
+VIDEO_VERSION = "v5"
 
 
 def sha256(path: Path) -> str:
@@ -28,6 +30,41 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest().upper()
+
+
+def version_arg(value: str) -> str:
+    if not re.fullmatch(r"v[1-9][0-9]*", value):
+        raise argparse.ArgumentTypeError("Expected a version such as v29")
+    return value
+
+
+def video_sources() -> tuple[Path, Path]:
+    return (
+        ROOT / "competition" / f"AI超表面结构色智能设计系统_自然旁白_AI配乐_{VIDEO_VERSION}.mp4",
+        ROOT / "competition" / f"AI超表面结构色智能设计系统_答辩视频_{VIDEO_VERSION}_verification-receipt.json",
+    )
+
+
+def video_destinations() -> tuple[str, str]:
+    return (
+        f"05_演示视频/AI超表面结构色智能设计系统_演示视频_{VIDEO_VERSION}.mp4",
+        f"05_演示视频/AI超表面结构色智能设计系统_演示视频_{VIDEO_VERSION}_验证回执.json",
+    )
+
+
+def verify_video_artifact(video: Path, receipt_path: Path) -> dict:
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if receipt.get("status") != "verified":
+        raise ValueError("Demo video does not have a verified receipt")
+    if receipt.get("filename") != video.name:
+        raise ValueError("Demo video receipt filename mismatch")
+    if receipt.get("bytes") != video.stat().st_size:
+        raise ValueError("Demo video receipt size mismatch")
+    if receipt.get("sha256", "").upper() != sha256(video):
+        raise ValueError("Demo video receipt SHA-256 mismatch")
+    if receipt.get("fullDecode", {}).get("exitCode") != 0:
+        raise ValueError("Demo video has no successful full-decode check")
+    return receipt
 
 
 def copy(source: Path, target: Path) -> None:
@@ -99,8 +136,13 @@ def add_submission_files() -> None:
     for source, name in audit_files.items():
         copy(source, STAGING / "03_测试与审计" / "evidence" / name)
 
-    copy(ROOT / "competition" / "AI超表面结构色智能设计系统_自然旁白_AI配乐_v4.mp4", STAGING / "05_演示视频" / "AI超表面结构色智能设计系统_演示视频_v4.mp4")
-    copy(ROOT / "competition" / "AI超表面结构色智能设计系统_答辩视频_v4_verification-receipt.json", STAGING / "05_演示视频" / "AI超表面结构色智能设计系统_演示视频_v4_验证回执.json")
+    video, receipt_path = video_sources()
+    video_relative, receipt_relative = video_destinations()
+    copy(video, STAGING / video_relative)
+    copy(receipt_path, STAGING / receipt_relative)
+    verify_video_artifact(video, STAGING / receipt_relative)
+    if sha256(STAGING / video_relative) != sha256(video):
+        raise ValueError("Packaged demo video differs from the verified source")
 
 
 def write_submission_manifest(runtime_manifest_sha256: str) -> None:
@@ -110,6 +152,8 @@ def write_submission_manifest(runtime_manifest_sha256: str) -> None:
         if not path.is_file() or path == manifest_path:
             continue
         files[path.relative_to(STAGING).as_posix()] = "sha256:" + sha256(path)
+    video, receipt_path = video_sources()
+    video_relative, receipt_relative = video_destinations()
     manifest = {
         "schema": "ai-metasurface-competition-submission-v1",
         "status": "pass",
@@ -121,12 +165,21 @@ def write_submission_manifest(runtime_manifest_sha256: str) -> None:
         "cloud_updated": False,
         "github_updated": False,
         "runtime_release_manifest_sha256": runtime_manifest_sha256,
+        "video_delivery": {
+            "version": VIDEO_VERSION,
+            "path": video_relative,
+            "sha256": sha256(video),
+            "source_filename": video.name,
+            "receipt": receipt_relative,
+            "receipt_sha256": sha256(receipt_path),
+        },
         "required_items": {
             "software_description": "02_软件与算法/软件说明与核心算法说明_最终版.md",
             "test_report": "03_测试与审计/测试报告_最终版.md",
             "pptx": "01_作品材料/04_答辩PPT_匿名公开_v23.pptx",
             "ppt_pdf": "01_作品材料/05_答辩PPT_匿名公开_v23.pdf",
-            "demo_video": "05_演示视频/AI超表面结构色智能设计系统_演示视频_v4.mp4",
+            "demo_video": video_relative,
+            "demo_video_receipt": receipt_relative,
             "offline_entrypoint": "04_可运行软件/AI超表面结构色智能设计系统_完整离线包_v1/启动离线演示.bat",
         },
         "file_count": len(files),
@@ -135,11 +188,85 @@ def write_submission_manifest(runtime_manifest_sha256: str) -> None:
     write_utf8(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
-def main() -> int:
+def verify_submission_archive(archive_path: Path) -> dict:
+    with ZipFile(archive_path) as archive:
+        names = archive.namelist()
+        manifests = [name for name in names if name.count("/") == 1 and name.endswith("/SUBMISSION_MANIFEST.json")]
+        if len(manifests) != 1 or len(names) != len(set(names)):
+            raise ValueError("Expected a single submission root without duplicate entries")
+        prefix = manifests[0].rsplit("/", 1)[0] + "/"
+        manifest = json.loads(archive.read(manifests[0]))
+        files = manifest["files"]
+        if manifest.get("status") != "pass" or manifest.get("file_count") != len(files):
+            raise ValueError("Invalid submission manifest status or file count")
+        if set(names) != {prefix + name for name in files} | {manifests[0]}:
+            raise ValueError("Submission ZIP inventory differs from its manifest")
+        for relative, expected in files.items():
+            if "\\" in relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
+                raise ValueError(f"Unsafe submission path: {relative}")
+            digest = "sha256:" + hashlib.sha256(archive.read(prefix + relative)).hexdigest().upper()
+            if digest != expected:
+                raise ValueError(f"Submission ZIP hash mismatch: {relative}")
+        for relative in manifest["required_items"].values():
+            if relative not in files:
+                raise ValueError(f"Missing required submission item: {relative}")
+
+        delivery = manifest["video_delivery"]
+        if delivery["path"] != manifest["required_items"]["demo_video"]:
+            raise ValueError("Submission video entry point differs from the delivery binding")
+        if delivery["receipt"] != manifest["required_items"]["demo_video_receipt"]:
+            raise ValueError("Submission video receipt entry point differs from the delivery binding")
+        if [name for name in files if name.startswith("05_演示视频/") and name.endswith(".mp4")] != [delivery["path"]]:
+            raise ValueError("Submission must contain exactly one selected demo video")
+        receipt = json.loads(archive.read(prefix + delivery["receipt"]))
+        video = archive.read(prefix + delivery["path"])
+        video_hash = hashlib.sha256(video).hexdigest().upper()
+        if (receipt.get("status") != "verified" or receipt.get("fullDecode", {}).get("exitCode") != 0
+                or receipt.get("filename") != delivery["source_filename"]
+                or receipt.get("bytes") != len(video)
+                or receipt.get("sha256", "").upper() != video_hash
+                or delivery["sha256"] != video_hash
+                or files[delivery["receipt"]] != "sha256:" + delivery["receipt_sha256"]):
+            raise ValueError("Packaged demo video differs from its verified receipt")
+
+        runtime_root = str(Path(manifest["required_items"]["offline_entrypoint"]).parent).replace("\\", "/")
+        runtime_manifest_path = runtime_root + "/RELEASE_MANIFEST.json"
+        if files[runtime_manifest_path] != "sha256:" + manifest["runtime_release_manifest_sha256"]:
+            raise ValueError("Offline runtime manifest binding mismatch")
+        runtime_manifest = json.loads(archive.read(prefix + runtime_manifest_path))
+        if runtime_manifest.get("status") != "pass" or runtime_manifest.get("file_count") != len(runtime_manifest["files"]):
+            raise ValueError("Invalid offline runtime manifest")
+        for relative, expected in runtime_manifest["files"].items():
+            if files.get(runtime_root + "/" + relative) != expected:
+                raise ValueError(f"Offline runtime hash binding mismatch: {relative}")
+    return {
+        "status": "pass", "files_verified": len(files), "zip_entries": len(names),
+        "video_version": delivery["version"], "video_sha256": video_hash,
+        "sha256": sha256(archive_path),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    global STAGING, OUTPUT, RUNTIME_SOURCE, VIDEO_VERSION
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", type=version_arg, default="v29")
+    parser.add_argument("--video-version", type=version_arg, default="v5")
+    parser.add_argument("--runtime-source", type=Path, default=RUNTIME_SOURCE)
+    parser.add_argument("--verify", type=Path, help="Verify an existing submission ZIP without changing it")
+    args = parser.parse_args(argv)
+    if args.verify:
+        print(json.dumps(verify_submission_archive(args.verify), ensure_ascii=False, sort_keys=True))
+        return 0
+    STAGING = ROOT / "dist" / f"AI超表面结构色智能设计系统_算法创新赛_AI+软件创新_404 Not Found队_最终提交包_20261010_{args.version}"
+    OUTPUT = ROOT / "dist" / f"3_算法创新赛_AI+软件创新_404 Not Found队_{args.version}.zip"
+    RUNTIME_SOURCE = args.runtime_source.resolve()
+    VIDEO_VERSION = args.video_version
     if not RUNTIME_SOURCE.is_dir():
         raise FileNotFoundError(RUNTIME_SOURCE)
     if STAGING.exists() or OUTPUT.exists():
         raise FileExistsError(f"Refusing to overwrite existing final package: {STAGING} or {OUTPUT}")
+    # Fail before creating any deliverables when the selected MP4 is stale.
+    verify_video_artifact(*video_sources())
 
     STAGING.mkdir(parents=True)
     runtime = STAGING / "04_可运行软件" / RUNTIME_SOURCE.name
@@ -153,12 +280,14 @@ def main() -> int:
             if not path.is_file():
                 continue
             relative = path.relative_to(STAGING).as_posix()
-            info = ZipInfo(f"{PACKAGE_NAME}/{relative}", date_time=(2020, 1, 1, 0, 0, 0))
+            info = ZipInfo(f"{STAGING.name}/{relative}", date_time=(2020, 1, 1, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             info.create_system = 3
             info.external_attr = 0o644 << 16
             archive.writestr(info, path.read_bytes(), compress_type=ZIP_DEFLATED)
+    verification = verify_submission_archive(OUTPUT)
     print(json.dumps({
+        "verification": verification,
         "staging": str(STAGING),
         "output": str(OUTPUT),
         "bytes": OUTPUT.stat().st_size,
